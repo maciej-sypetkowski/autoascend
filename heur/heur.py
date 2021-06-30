@@ -6,6 +6,10 @@ from nle.nethack import actions as A
 import nle.nethack as nh
 from glyph import SS, MON, C, ALL
 from itertools import chain
+import operator
+from functools import partial
+from pprint import pprint
+import time
 
 
 BLStats = namedtuple('BLStats', 'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
@@ -157,15 +161,17 @@ class Agent:
 
         for y in range(C.SIZE_Y):
             for x in range(C.SIZE_X):
-                if self.glyphs[y, x] in set.union(G.FLOOR, G.CORRIDOR, G.STAIR_UP,
-                                                  G.STAIR_DOWN, G.DOOR_OPENED):
+                if any(map(lambda s: operator.contains(s, self.glyphs[y, x]),
+                           [G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED])):
                     level.walkable[y, x] = True
                     level.seen[y, x] = True
                     level.objects[y, x] = self.glyphs[y, x]
-                elif self.glyphs[y, x] in set.union(G.WALL, G.DOOR_CLOSED):
+                elif any(map(lambda s: operator.contains(s, self.glyphs[y, x]),
+                             [G.WALL, G.DOOR_CLOSED])):
                     level.seen[y, x] = True
                     level.objects[y, x] = self.glyphs[y, x]
-                elif self.glyphs[y, x] in set.union(G.MONS, G.PETS):
+                elif any(map(lambda s: operator.contains(s, self.glyphs[y, x]),
+                             [G.MONS, G.PETS])):
                     level.seen[y, x] = True
                     level.walkable[y, x] = True
 
@@ -245,7 +251,9 @@ class Agent:
                 (dis == (dis * (to_explore) - 1).astype(np.uint16).min() + 1).nonzero()
         nonzero = [(y, x) for y, x in zip(nonzero_y, nonzero_x) if to_explore[y, x]]
         if len(nonzero) == 0:
-            self.step(A.Command.ESC) # TODO
+            # TODO
+            while 1:
+                self.step(A.Command.ESC)
             return
 
         nonzero_y, nonzero_x = zip(*nonzero)
@@ -384,16 +392,108 @@ class EnvWrapper:
         return obs, reward, done, info
 
 
+class EnvLimitWrapper:
+    def __init__(self, env, step_limit):
+        self.env = env
+        self.cur_step = 0
+        self.step_limit = step_limit
+
+    def reset(self):
+        self.cur_step = 0
+        return self.env.reset()
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(self.env._actions.index(action))
+        self.cur_step += 1
+        if self.cur_step == self.step_limit + 1:
+            return obs, reward, True, info
+        elif self.cur_step > self.step_limit + 1:
+            assert 0
+        return obs, reward, done, info
+
+
 if __name__ == '__main__':
     import sys, tty, os, termios
-    old_settings = termios.tcgetattr(sys.stdin)
-    tty.setcbreak(sys.stdin.fileno())
 
-    try:
-        env = EnvWrapper(gym.make('NetHackChallenge-v0'))
+    if len(sys.argv) > 1:
+        games = int(sys.argv[1])
 
-        agent = Agent(env)
-        agent.main()
+        from multiprocessing import Pool, Process, Queue
+        from matplotlib import pyplot as plt
+        import seaborn as sns
+        sns.set()
 
-    finally:
-        os.system('stty sane')
+
+        def single_simulation(_=None):
+            start_time = time.time()
+            env = EnvLimitWrapper(gym.make('NetHackChallenge-v0'), 500)
+            agent = Agent(env)
+            agent.main()
+            end_time = time.time()
+            return {
+                'score': agent.score,
+                'steps': env.env._steps,
+                'turns': env.env._turns,
+                'duration': end_time - start_time,
+            }
+
+        with Pool(16) as pool:
+            start_time = time.time()
+
+            plot_queue = Queue()
+            def plot_thread_func():
+                fig = plt.figure()
+                plt.show(block=False)
+                while 1:
+                    try:
+                        funcs = plot_queue.get(block=False)
+                    except:
+                        plt.pause(0.01)
+                        continue
+
+                    fig.clear()
+                    for func in funcs:
+                        func()
+                    plt.show(block=False)
+
+
+            plt_process = Process(target=plot_thread_func)
+            plt_process.start()
+
+            all_res = {}
+            for single_res in pool.imap(single_simulation, [()] * games):
+                if not all_res:
+                    all_res = {key: [] for key in single_res}
+                assert all_res.keys() == single_res.keys()
+
+                for k, v in single_res.items():
+                    all_res[k].append(v)
+
+
+                plot_queue.put([f for i, k in enumerate(sorted(all_res)) for f in [
+                    partial(plt.subplot, len(all_res), 1, i + 1),
+                    partial(plt.xlabel, k),
+                    partial(sns.histplot, all_res[k]),
+                ]])
+
+
+                total_duration = time.time() - start_time
+
+                print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
+                print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
+                print(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
+                print(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
+                print()
+
+    else:
+        old_settings = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+
+        try:
+            env = EnvWrapper(gym.make('NetHackChallenge-v0'))
+
+            agent = Agent(env)
+            agent.main()
+
+        finally:
+            os.system('stty sane')
