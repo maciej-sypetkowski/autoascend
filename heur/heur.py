@@ -52,31 +52,34 @@ class AgentFinished(Exception):
 class AgentPanic(Exception):
     pass
 
-
+class AgentChangeStrategy(Exception):
+    pass
 
 class Agent:
-    def __init__(self, env, seed=0):
+    def __init__(self, env, seed=0, verbose=False):
         self.env = env
-        self.last_observation = env.reset()
+        self.verbose = verbose
         self.rng = np.random.RandomState(seed)
+        self.all_panics = []
 
+        self.last_observation = env.reset()
         self.score = 0
-        self.update_map()
+        self.update_map(is_first=True)
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
+
         self.last_observation = obs
         self.score += reward
         if done:
             raise AgentFinished()
 
-        self.update_map()
+        self.update_map(is_first=False)
 
         return obs, reward, done, info
 
-    def update_map(self, obs=None):
-        if obs is None:
-            obs = self.last_observation
+    def update_map(self, is_first):
+        obs = self.last_observation
 
         self.blstats = BLStats(*obs['blstats'])
         self.glyphs = obs['glyphs']
@@ -85,11 +88,14 @@ class Agent:
 
         if b'--More--' in bytes(obs['tty_chars'].reshape(-1)):
             self.step(A.Command.ESC)
+            return
+
+        self.on_update(is_first)
 
 
     ######## TRIVIAL ACTIONS
 
-    def direction(self, from_y, from_x, to_y, to_x):
+    def calc_direction(self, from_y, from_x, to_y, to_x):
         assert abs(from_y - to_y) <= 1 and abs(from_x - to_x) <= 1
 
         ret = ''
@@ -101,35 +107,58 @@ class Agent:
 
         return ret
 
-    def move(self, y, x=None):
-        if y is not None:
-            # point
-            y = self.direction(self.blstats.y, self.blstats.x, y, x)
-            assert y != '.'
+    def open_door(self, y, x=None):
+        assert self.glyphs[y, x] in G.DOOR_CLOSED
+        self.direction(y, x)
+        return self.glyphs[y, x] not in G.DOOR_CLOSED
 
-        # direction
+    def fight(self, y, x=None):
+        assert self.glyphs[y, x] in G.MONS
+        self.direction(y, x)
+
+    def kick(self, y, x=None):
+        self.step(A.Command.KICK)
+        self.move(y, x)
+        return self.blstats.y == y and self.blstats.x == x
+
+    def direction(self, y, x=None):
+        if x is not None:
+            dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x)
+        else:
+            dir = y
         action = {
             'n': A.CompassDirection.N, 's': A.CompassDirection.S,
             'e': A.CompassDirection.E, 'w': A.CompassDirection.W,
             'ne': A.CompassDirection.NE, 'se': A.CompassDirection.SE,
             'nw': A.CompassDirection.NW, 'sw': A.CompassDirection.SW,
-        }[y]
-
-        expected_y = self.blstats.y + ('e' in y) - ('w' in y)
-        expected_x = self.blstats.x + ('s' in y) - ('n' in y)
+        }[dir]
 
         self.step(action)
 
+    def move(self, y, x=None):
+        if x is not None:
+            dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x)
+        else:
+            dir = y
+
+        expected_y = self.blstats.y + ('s' in dir) - ('n' in dir)
+        expected_x = self.blstats.x + ('e' in dir) - ('w' in dir)
+
+        self.direction(dir)
+
         if self.blstats.y != expected_y or self.blstats.x != expected_x:
-            raise AgentPanic()
+            raise AgentPanic(f'agent position do not match after "move": '
+                             f'expected ({expected_y}, {expected_x}), got ({self.blstats.y}, {self.blstats.x})')
 
     ########
 
-    def neighbors(self, y, x, shuffle=True):
+    def neighbors(self, y, x, shuffle=True, diagonal=True):
         ret = []
         for dy in [-1, 0, 1]:
             for dx in [-1, 0, 1]:
                 if dy == 0 and dx == 0:
+                    continue
+                if not diagonal and abs(dy) + abs(dx) > 1:
                     continue
                 ny = y + dy
                 nx = x + dx
@@ -180,7 +209,12 @@ class Agent:
                 level.seen[y, x] = True
                 level.objects[y, x] = self.glyphs[y, x]
 
-    def bfs(self, y, x):
+    def bfs(self, y=None, x=None):
+        if y is None:
+            y = self.blstats.y
+        if x is None:
+            x = self.blstats.x
+
         level = self.current_level()
 
         dis = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=np.int16)
@@ -233,12 +267,58 @@ class Agent:
         return path
 
 
+    def is_any_mon_on_map(self):
+        for y in range(C.SIZE_Y):
+            for x in range(C.SIZE_X):
+                if y != self.blstats.y or x != self.blstats.x:
+                    if self.glyphs[y, x] in G.MONS:
+                        return True
+        return False
+
+    def on_update(self, is_first):
+        if is_first:
+            return
+
+        if self.is_any_mon_on_map():
+            raise AgentChangeStrategy()
+
+
     ######## STRATEGIES ACTIONS
 
+    def fight1(self):
+        dis = self.bfs()
+        closest = None
+
+        # TODO: iter by distance
+        for y in range(C.SIZE_Y):
+            for x in range(C.SIZE_X):
+                if y != self.blstats.y or x != self.blstats.x:
+                    if self.glyphs[y, x] in G.MONS:
+                        if dis[y, x] != -1 and (closest is None or dis[y, x] < dis[closest]):
+                            closest = (y, x)
+
+        if closest is None:
+            return
+
+        y, x = closest
+        path = self.path(self.blstats.y, self.blstats.x, y, x)[1:] # TODO: allow diagonal fight from doors
+
+        if len(path) == 1:
+            self.fight(*path[0])
+        else:
+            self.move(*path[0])
+
     def explore1(self):
+        for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
+            if self.glyphs[py, px] in G.DOOR_CLOSED:
+                if not self.open_door(py, px):
+                    while self.glyphs[py, px] in G.DOOR_CLOSED:
+                        self.kick(py, px)
+                break
+
         level = self.current_level()
         to_explore = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
-        dis = self.bfs(self.blstats.y, self.blstats.x)
+        dis = self.bfs()
         for y in range(C.SIZE_Y):
             for x in range(C.SIZE_X):
                 if dis[y, x] != -1:
@@ -246,14 +326,15 @@ class Agent:
                         if not level.seen[py, px] and self.glyphs[py, px] in G.STONE:
                             to_explore[y, x] = True
                             break
+                    for py, px in self.neighbors(y, x, diagonal=False):
+                        if self.glyphs[py, px] in G.DOOR_CLOSED:
+                            to_explore[y, x] = True
+                            break
 
         nonzero_y, nonzero_x = \
                 (dis == (dis * (to_explore) - 1).astype(np.uint16).min() + 1).nonzero()
         nonzero = [(y, x) for y, x in zip(nonzero_y, nonzero_x) if to_explore[y, x]]
         if len(nonzero) == 0:
-            # TODO
-            while 1:
-                self.step(A.Command.ESC)
             return
 
         nonzero_y, nonzero_x = zip(*nonzero)
@@ -270,8 +351,14 @@ class Agent:
                 return
             self.move(y, x)
 
+
     def select_strategy(self):
+        if self.is_any_mon_on_map():
+            self.fight1()
+
         self.explore1()
+
+        self.direction(self.rng.choice(['n', 's', 'e', 'w']))
 
 
     ####### MAIN
@@ -281,7 +368,11 @@ class Agent:
             while 1:
                 try:
                     self.select_strategy()
-                except AgentPanic:
+                except AgentPanic as e:
+                    self.all_panics.append(e)
+                    if self.verbose:
+                        print(f'PANIC!!!! : {e}')
+                except AgentChangeStrategy:
                     pass
         except AgentFinished:
             pass
@@ -294,6 +385,7 @@ class EnvWrapper:
     def reset(self):
         print('\n' * 100)
         obs = self.env.reset()
+        self.score = 0
         self.render(obs)
 
         G.assert_map(obs['glyphs'], obs['chars'])
@@ -307,6 +399,7 @@ class EnvWrapper:
         print(bytes(obs['message']).decode())
         print()
         print(BLStats(*obs['blstats']))
+        print('Score:', self.score)
         print()
         for letter, text in zip(obs['inv_letters'], obs['inv_strs']):
             if (text != 0).any():
@@ -314,6 +407,7 @@ class EnvWrapper:
         print('-' * 20)
         self.env.render()
         print('-' * 20)
+        print()
 
     def print_help(self):
         scene_glyphs = set(self.env.last_observation[0].reshape(-1))
@@ -387,6 +481,7 @@ class EnvWrapper:
         print()
 
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
+        self.score += reward
         self.render(obs)
         G.assert_map(obs['glyphs'], obs['chars'])
         return obs, reward, done, info
@@ -395,16 +490,17 @@ class EnvWrapper:
 class EnvLimitWrapper:
     def __init__(self, env, step_limit):
         self.env = env
-        self.cur_step = 0
         self.step_limit = step_limit
 
     def reset(self):
         self.cur_step = 0
+        self.last_turn = 0
         return self.env.reset()
 
     def step(self, action):
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
         self.cur_step += 1
+        self.last_turn = max(self.last_turn, self.env._turns)
         if self.cur_step == self.step_limit + 1:
             return obs, reward, True, info
         elif self.cur_step > self.step_limit + 1:
@@ -426,14 +522,14 @@ if __name__ == '__main__':
 
         def single_simulation(_=None):
             start_time = time.time()
-            env = EnvLimitWrapper(gym.make('NetHackChallenge-v0'), 500)
-            agent = Agent(env)
+            env = EnvLimitWrapper(gym.make('NetHackChallenge-v0'), 10000)
+            agent = Agent(env, verbose=False)
             agent.main()
             end_time = time.time()
             return {
                 'score': agent.score,
                 'steps': env.env._steps,
-                'turns': env.env._turns,
+                'turns': env.last_turn,
                 'duration': end_time - start_time,
             }
 
@@ -461,11 +557,13 @@ if __name__ == '__main__':
             plt_process.start()
 
             all_res = {}
+            count = 0
             for single_res in pool.imap(single_simulation, [()] * games):
                 if not all_res:
                     all_res = {key: [] for key in single_res}
                 assert all_res.keys() == single_res.keys()
 
+                count += 1
                 for k, v in single_res.items():
                     all_res[k].append(v)
 
@@ -473,16 +571,19 @@ if __name__ == '__main__':
                 plot_queue.put([f for i, k in enumerate(sorted(all_res)) for f in [
                     partial(plt.subplot, len(all_res), 1, i + 1),
                     partial(plt.xlabel, k),
-                    partial(sns.histplot, all_res[k]),
+                    partial(sns.histplot, all_res[k], kde=np.var(all_res[k]) > 1e-6, bins=count // 5 + 1),
                 ]])
 
 
                 total_duration = time.time() - start_time
 
+                print(f'count                         : {count}')
                 print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
                 print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
                 print(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
                 print(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
+                print(f'score_mean                    : {np.mean(all_res["score"])}')
+                print(f'score_median                  : {np.median(all_res["score"])}')
                 print()
 
     else:
@@ -492,7 +593,7 @@ if __name__ == '__main__':
         try:
             env = EnvWrapper(gym.make('NetHackChallenge-v0'))
 
-            agent = Agent(env)
+            agent = Agent(env, verbose=True)
             agent.main()
 
         finally:
