@@ -32,6 +32,12 @@ class G: # Glyphs
     MONS = set(MON.ALL_MONS)
     PETS = set(MON.ALL_PETS)
 
+    SHOPKEEPER = {MON.fn('shopkeeper')}
+
+    BODIES = {nh.GLYPH_BODY_OFF + i for i in range(nh.NUMMONS)}
+    OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) != nh.ROCK_CLASS}
+    BIG_OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == nh.ROCK_CLASS}
+
 
     DICT = {k: v for k, v in locals().items() if not k.startswith('_')}
 
@@ -44,6 +50,14 @@ class G: # Glyphs
 
 G.INV_DICT = {i: [k for k, v in G.DICT.items() if i in v]
               for i in set.union(*map(set, G.DICT.values()))}
+
+
+class Hunger:
+    SATIATED = 0
+    NOT_HUNGRY = 1
+    HUNGRY = 2
+    WEAK = 3
+    FAINTING = 4
 
 
 class AgentFinished(Exception):
@@ -64,10 +78,12 @@ class Agent:
 
         self.last_observation = env.reset()
         self.score = 0
+        self.step_count = 0
         self.update_map(is_first=True)
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
+        self.step_count += 1
 
         self.last_observation = obs
         self.score += reward
@@ -90,7 +106,7 @@ class Agent:
             return
 
         if b'[yn]' in bytes(obs['tty_chars'].reshape(-1)):
-            self.step(A.CompassDirection.NW) # y
+            self.enter_text('y')
             return
 
         self.update_level()
@@ -111,6 +127,18 @@ class Agent:
         if ret == '': ret = '.'
 
         return ret
+
+    def enter_text(self, text):
+        for char in text:
+            char = ord(char)
+            self.step(A.ACTIONS[A.ACTIONS.index(char)])
+
+    def eat(self): # TODO: eat what
+        self.step(A.Command.EAT)
+        self.enter_text('y')
+        self.step(A.Command.ESC)
+        self.step(A.Command.ESC)
+        return True # TODO: return value
 
     def open_door(self, y, x=None):
         assert self.glyphs[y, x] in G.DOOR_CLOSED
@@ -215,7 +243,7 @@ class Agent:
                     level.seen[y, x] = True
                     level.objects[y, x] = self.glyphs[y, x]
                 elif any(map(lambda s: operator.contains(s, self.glyphs[y, x]),
-                             [G.MONS, G.PETS])):
+                             [G.MONS, G.PETS, G.BODIES, G.OBJECTS])):
                     level.seen[y, x] = True
                     level.walkable[y, x] = True
 
@@ -291,7 +319,18 @@ class Agent:
         for y in range(C.SIZE_Y):
             for x in range(C.SIZE_X):
                 if y != self.blstats.y or x != self.blstats.x:
-                    if self.glyphs[y, x] in G.MONS:
+                    if self.glyphs[y, x] in G.MONS and self.glyphs[y, x] not in G.SHOPKEEPER:
+                        return True
+        return False
+
+    def is_any_food_on_map(self):
+        for y in range(C.SIZE_Y):
+            for x in range(C.SIZE_X):
+                #if self.glyphs[y, x] in G.BODIES:
+                #    return True
+                if nh.glyph_is_normal_object(self.glyphs[y, x]):
+                    obj = nh.objclass(nh.glyph_to_obj(self.glyphs[y, x]))
+                    if ord(obj.oc_class) == nh.FOOD_CLASS:
                         return True
         return False
 
@@ -301,6 +340,10 @@ class Agent:
 
         if self.is_any_mon_on_map():
             raise AgentChangeStrategy()
+
+        if self.step_count % 3 == 0:
+            if self.blstats.hunger_state >= Hunger.NOT_HUNGRY and self.is_any_food_on_map():
+                raise AgentChangeStrategy()
 
 
     ######## STRATEGIES ACTIONS
@@ -313,7 +356,7 @@ class Agent:
         for y in range(C.SIZE_Y):
             for x in range(C.SIZE_X):
                 if y != self.blstats.y or x != self.blstats.x:
-                    if self.glyphs[y, x] in G.MONS:
+                    if self.glyphs[y, x] in G.MONS and self.glyphs[y, x] not in G.SHOPKEEPER:
                         if dis[y, x] != -1 and (closest is None or dis[y, x] < dis[closest]):
                             closest = (y, x)
 
@@ -327,6 +370,31 @@ class Agent:
             self.fight(*path[0])
         else:
             self.move(*path[0])
+
+    def eat1(self):
+        dis = self.bfs()
+        closest = None
+
+        # TODO: iter by distance
+        for y in range(C.SIZE_Y):
+            for x in range(C.SIZE_X):
+                if dis[y, x] != -1 and (closest is None or dis[y, x] < dis[closest]):
+                    #if self.glyphs[y, x] in G.BODIES:
+                    #    closest = (y, x)
+                    if nh.glyph_is_normal_object(self.glyphs[y, x]):
+                        obj = nh.objclass(nh.glyph_to_obj(self.glyphs[y, x]))
+                        if ord(obj.oc_class) == nh.FOOD_CLASS:
+                            closest = (y, x)
+
+        if closest is None:
+            return False
+
+        ty, tx = closest
+        path = self.path(self.blstats.y, self.blstats.x, ty, tx)
+
+        for y, x in path[1:]:
+            self.move(y, x)
+        self.eat() # TODO: what
 
     def explore1(self):
         for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
@@ -437,6 +505,11 @@ class Agent:
             if self.fight1() is not False:
                 return
 
+        if self.blstats.hunger_state >= Hunger.NOT_HUNGRY and self.is_any_food_on_map():
+            if self.eat1() is not False:
+                return
+
+
         if self.explore1() is not False:
             return
 
@@ -453,6 +526,11 @@ class Agent:
 
     def main(self):
         try:
+            try:
+                self.step(A.Command.AUTOPICKUP)
+            except AgentChangeStrategy:
+                pass
+
             while 1:
                 try:
                     self.select_strategy()
@@ -551,7 +629,7 @@ class EnvWrapper:
             if key == 63: # '?"
                 self.print_help()
                 continue
-            elif key == 10:
+            elif key == 10: # Enter
                 return None
             else:
                 actions = [a for a in self.env._actions if int(a) == key]
@@ -578,7 +656,8 @@ class EnvWrapper:
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
         self.score += reward
         self.render(obs)
-        G.assert_map(obs['glyphs'], obs['chars'])
+        if not done:
+            G.assert_map(obs['glyphs'], obs['chars'])
         return obs, reward, done, info
 
 
@@ -590,16 +669,28 @@ class EnvLimitWrapper:
     def reset(self):
         self.cur_step = 0
         self.last_turn = 0
+        self.score = 0
         self.levels = set()
+        self.end_reason = ''
         return self.env.reset()
 
     def step(self, action):
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
+        self.score += reward
         blstats = BLStats(*obs['blstats'])
         self.levels.add((blstats.dungeon_number, blstats.level_number))
         self.cur_step += 1
         self.last_turn = max(self.last_turn, self.env._turns)
+        if done:
+            end_reason = bytes(obs['tty_chars'].reshape(-1)).decode().replace('You made the top ten list!', '').split()
+            if end_reason[7].startswith('Agent'):
+                self.score = int(end_reason[6])
+                self.end_reason = ' '.join(end_reason[8:-2])
+            else:
+                assert self.score == 0
+                self.end_reason = ' '.join(end_reason[7:-2])
         if self.cur_step == self.step_limit + 1:
+            self.end_reason = self.end_reason or 'timelimit'
             return obs, reward, True, info
         elif self.cur_step > self.step_limit + 1:
             assert 0
@@ -625,12 +716,13 @@ if __name__ == '__main__':
             agent = Agent(env, verbose=False)
             agent.main()
             end_time = time.time()
+            print(env.end_reason)
             result_queue.put({
-                'score': agent.score,
+                'score': env.score,
                 'steps': env.env._steps,
                 'turns': env.last_turn,
                 'duration': end_time - start_time,
-                'level_num': len(agent.levels),
+                'level_num': len(env.levels),
                 'seed': seed,
             })
 
