@@ -83,12 +83,17 @@ class Agent:
 
         self.blstats = BLStats(*obs['blstats'])
         self.glyphs = obs['glyphs']
-
-        self.update_level()
+        self.message = bytes(obs['message']).decode()
 
         if b'--More--' in bytes(obs['tty_chars'].reshape(-1)):
             self.step(A.Command.ESC)
             return
+
+        if b'[yn]' in bytes(obs['tty_chars'].reshape(-1)):
+            self.step(A.CompassDirection.NW) # y
+            return
+
+        self.update_level()
 
         self.on_update(is_first)
 
@@ -115,25 +120,34 @@ class Agent:
     def fight(self, y, x=None):
         assert self.glyphs[y, x] in G.MONS
         self.direction(y, x)
+        return True
 
     def kick(self, y, x=None):
         self.step(A.Command.KICK)
         self.move(y, x)
         return self.blstats.y == y and self.blstats.x == x
 
+    def search(self):
+        self.step(A.Command.SEARCH)
+        self.current_level().search_count[self.blstats.y, self.blstats.x] += 1
+        return True
+
     def direction(self, y, x=None):
         if x is not None:
             dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x)
         else:
             dir = y
+
         action = {
             'n': A.CompassDirection.N, 's': A.CompassDirection.S,
             'e': A.CompassDirection.E, 'w': A.CompassDirection.W,
             'ne': A.CompassDirection.NE, 'se': A.CompassDirection.SE,
             'nw': A.CompassDirection.NW, 'sw': A.CompassDirection.SW,
+            '>': A.MiscDirection.DOWN, '<': A.MiscDirection.UP
         }[dir]
 
         self.step(action)
+        return True
 
     def move(self, y, x=None):
         if x is not None:
@@ -176,6 +190,7 @@ class Agent:
             self.seen = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
             self.objects = np.zeros((C.SIZE_Y, C.SIZE_X), np.int16)
             self.objects[:] = -1
+            self.search_count = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
 
     levels = {}
 
@@ -229,6 +244,11 @@ class Agent:
             y, x = buf[index]
             index += 1
 
+            # TODO: handle situations
+            # dir: SE
+            # @|
+            # -.
+            # TODO: debug diagonal moving into and from doors
             for py, px in self.neighbors(y, x):
                 if (level.walkable[py, px] and
                     (abs(py - y) + abs(px - x) <= 1 or
@@ -298,7 +318,7 @@ class Agent:
                             closest = (y, x)
 
         if closest is None:
-            return
+            return False
 
         y, x = closest
         path = self.path(self.blstats.y, self.blstats.x, y, x)[1:] # TODO: allow diagonal fight from doors
@@ -335,7 +355,7 @@ class Agent:
                 (dis == (dis * (to_explore) - 1).astype(np.uint16).min() + 1).nonzero()
         nonzero = [(y, x) for y, x in zip(nonzero_y, nonzero_x) if to_explore[y, x]]
         if len(nonzero) == 0:
-            return
+            return False
 
         nonzero_y, nonzero_x = zip(*nonzero)
         ty, tx = nonzero_y[0], nonzero_x[0]
@@ -351,14 +371,82 @@ class Agent:
                 return
             self.move(y, x)
 
+    def search1(self):
+        level = self.current_level()
+        dis = self.bfs()
+
+        prio = np.zeros((C.SIZE_Y, C.SIZE_X), np.float32)
+        for y in range(C.SIZE_Y):
+            for x in range(C.SIZE_X):
+                if not level.walkable[y, x] or dis[y, x] == -1:
+                    prio[y, x] = -np.inf
+                else:
+                    prio[y, x] = -20
+                    prio[y, x] -= dis[y, x]
+                    prio[y, x] -= level.search_count[y, x] ** 2 * 10
+                    prio[y, x] += (level.objects[y, x] in G.CORRIDOR) * 15 + (level.objects[y, x] in G.DOORS) * 80
+                    for py, px in self.neighbors(y, x, shuffle=False):
+                        prio[y, x] += (level.objects[py, px] in G.STONE) * 40 + (level.objects[py, px] in G.WALL) * 20
+
+        nonzero_y, nonzero_x = (prio == prio.max()).nonzero()
+        assert len(nonzero_y) >= 0
+
+        ty, tx = nonzero_y[0], nonzero_x[0]
+        path = self.path(self.blstats.y, self.blstats.x, ty, tx, dis=dis)
+        for y, x in path[1:]:
+            if not self.current_level().walkable[y, x]:
+                return
+            self.move(y, x)
+        self.search()
+
+    def move_down(self):
+        level = self.current_level()
+
+        pos = None
+        for y in range(C.SIZE_Y):
+            for x in range(C.SIZE_X):
+                if level.objects[y, x] in G.STAIR_DOWN:
+                    pos = (y, x)
+                    break
+            else:
+                continue
+            break
+
+        if pos is None:
+            return False
+
+        dis = self.bfs()
+        if dis[pos] == -1:
+            return False
+
+        ty, tx = pos
+
+        path = self.path(self.blstats.y, self.blstats.x, ty, tx, dis=dis)
+        for y, x in path[1:]:
+            if not self.current_level().walkable[y, x]:
+                return
+            self.move(y, x)
+
+        self.direction('>')
+
+
+
 
     def select_strategy(self):
         if self.is_any_mon_on_map():
-            self.fight1()
+            if self.fight1() is not False:
+                return
 
-        self.explore1()
+        if self.explore1() is not False:
+            return
 
-        self.direction(self.rng.choice(['n', 's', 'e', 'w']))
+        if self.move_down() is not False:
+            return
+
+        if self.search1() is not False:
+            return
+
+        assert 0
 
 
     ####### MAIN
@@ -376,6 +464,10 @@ class Agent:
                     pass
         except AgentFinished:
             pass
+
+
+
+
 
 
 class EnvWrapper:
@@ -400,6 +492,9 @@ class EnvWrapper:
         print()
         print(BLStats(*obs['blstats']))
         print('Score:', self.score)
+        print('Steps:', self.env._steps)
+        print('Turns:', self.env._turns)
+        print('Seed :', self.env.get_seeds())
         print()
         for letter, text in zip(obs['inv_letters'], obs['inv_strs']):
             if (text != 0).any():
@@ -476,7 +571,7 @@ class EnvWrapper:
         action = self.get_action()
         if action is None:
             action = agent_action
-        print('\n' * 100)
+        print('\n' * 10)
         print('action:', action)
         print()
 
@@ -495,10 +590,13 @@ class EnvLimitWrapper:
     def reset(self):
         self.cur_step = 0
         self.last_turn = 0
+        self.levels = set()
         return self.env.reset()
 
     def step(self, action):
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
+        blstats = BLStats(*obs['blstats'])
+        self.levels.add((blstats.dungeon_number, blstats.level_number))
         self.cur_step += 1
         self.last_turn = max(self.last_turn, self.env._turns)
         if self.cur_step == self.step_limit + 1:
@@ -508,90 +606,120 @@ class EnvLimitWrapper:
         return obs, reward, done, info
 
 
+
 if __name__ == '__main__':
     import sys, tty, os, termios
 
-    if len(sys.argv) > 1:
-        games = int(sys.argv[1])
-
+    if len(sys.argv) <= 1:
         from multiprocessing import Pool, Process, Queue
         from matplotlib import pyplot as plt
         import seaborn as sns
         sns.set()
 
 
-        def single_simulation(_=None):
+        result_queue = Queue()
+        def single_simulation(seed):
             start_time = time.time()
             env = EnvLimitWrapper(gym.make('NetHackChallenge-v0'), 10000)
+            env.env.seed(seed, seed)
             agent = Agent(env, verbose=False)
             agent.main()
             end_time = time.time()
-            return {
+            result_queue.put({
                 'score': agent.score,
                 'steps': env.env._steps,
                 'turns': env.last_turn,
                 'duration': end_time - start_time,
-            }
+                'level_num': len(agent.levels),
+                'seed': seed,
+            })
 
-        with Pool(16) as pool:
-            start_time = time.time()
 
-            plot_queue = Queue()
-            def plot_thread_func():
-                fig = plt.figure()
+        start_time = time.time()
+
+        plot_queue = Queue()
+        def plot_thread_func():
+            fig = plt.figure()
+            plt.show(block=False)
+            while 1:
+                try:
+                    res = plot_queue.get(block=False)
+                except:
+                    plt.pause(0.01)
+                    continue
+
+                fig.clear()
+                spec = fig.add_gridspec(len(res), 2)
+                for i, k in enumerate(sorted(res)):
+                    ax = fig.add_subplot(spec[i, 0])
+                    ax.set_title(k)
+                    sns.histplot(res[k], kde=np.var(res[k]) > 1e-6, bins=len(res[k]) // 5 + 1, ax=ax)
+
+                ax = fig.add_subplot(spec[:len(res) // 2, 1])
+                sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
+
+                ax = fig.add_subplot(spec[len(res) // 2:, 1])
+                sns.scatterplot(x='turns', y='score', data=res, ax=ax)
+
                 plt.show(block=False)
-                while 1:
-                    try:
-                        funcs = plot_queue.get(block=False)
-                    except:
-                        plt.pause(0.01)
-                        continue
-
-                    fig.clear()
-                    for func in funcs:
-                        func()
-                    plt.show(block=False)
 
 
-            plt_process = Process(target=plot_thread_func)
-            plt_process.start()
+        plt_process = Process(target=plot_thread_func)
+        plt_process.start()
 
-            all_res = {}
-            count = 0
-            for single_res in pool.imap(single_simulation, [()] * games):
-                if not all_res:
-                    all_res = {key: [] for key in single_res}
-                assert all_res.keys() == single_res.keys()
+        all_res = {}
+        count = 0
+        simulation_processes = []
+        for _ in range(16):
+            simulation_processes.append(Process(target=single_simulation, args=(count,)))
+            simulation_processes[-1].start()
+            count += 1
 
-                count += 1
-                for k, v in single_res.items():
-                    all_res[k].append(v)
+        while True:
+            simulation_processes = [p for p in simulation_processes if p.is_alive() or (p.close() and False)]
+            single_res = result_queue.get()
+
+            simulation_processes.append(Process(target=single_simulation, args=(count,)))
+            simulation_processes[-1].start()
+            count += 1
+
+            if not all_res:
+                all_res = {key: [] for key in single_res}
+            assert all_res.keys() == single_res.keys()
+
+            count += 1
+            for k, v in single_res.items():
+                all_res[k].append(v)
 
 
-                plot_queue.put([f for i, k in enumerate(sorted(all_res)) for f in [
-                    partial(plt.subplot, len(all_res), 1, i + 1),
-                    partial(plt.xlabel, k),
-                    partial(sns.histplot, all_res[k], kde=np.var(all_res[k]) > 1e-6, bins=count // 5 + 1),
-                ]])
+            plot_queue.put(all_res)
 
 
-                total_duration = time.time() - start_time
+            total_duration = time.time() - start_time
 
-                print(f'count                         : {count}')
-                print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
-                print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
-                print(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
-                print(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
-                print(f'score_mean                    : {np.mean(all_res["score"])}')
-                print(f'score_median                  : {np.median(all_res["score"])}')
-                print()
+            print(list(zip(all_res['seed'], all_res['score'], all_res['turns'], all_res['steps'])))
+            print(f'count                         : {count}')
+            print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
+            print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
+            print(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
+            print(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
+            print(f'score_mean                    : {np.mean(all_res["score"])}')
+            print(f'score_median                  : {np.median(all_res["score"])}')
+            print(f'score_05-95                   : {np.quantile(all_res["score"], 0.05)} '
+                                                    f'{np.quantile(all_res["score"], 0.95)}')
+            print(f'score_25-75                   : {np.quantile(all_res["score"], 0.25)} '
+                                                    f'{np.quantile(all_res["score"], 0.75)}')
+            print()
 
     else:
         old_settings = termios.tcgetattr(sys.stdin)
         tty.setcbreak(sys.stdin.fileno())
 
+        seed = int(sys.argv[1])
+
         try:
             env = EnvWrapper(gym.make('NetHackChallenge-v0'))
+            env.env.seed(seed, seed)
 
             agent = Agent(env, verbose=True)
             agent.main()
