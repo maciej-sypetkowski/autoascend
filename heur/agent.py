@@ -2,10 +2,14 @@ import numpy as np
 from collections import namedtuple
 from nle.nethack import actions as A
 import nle.nethack as nh
-from glyph import SS, MON, C, ALL
 import operator
 import contextlib
 from functools import partial
+from itertools import chain
+import numba as nb
+
+from glyph import SS, MON, C, ALL
+import utils
 
 
 BLStats = namedtuple('BLStats', 'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
@@ -33,6 +37,9 @@ class G: # Glyphs
     BODIES = {nh.GLYPH_BODY_OFF + i for i in range(nh.NUMMONS)}
     OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) != nh.ROCK_CLASS}
     BIG_OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == nh.ROCK_CLASS}
+
+    NORMAL_OBJECTS = {i for i in range(nh.MAX_GLYPH) if nh.glyph_is_normal_object(i)}
+    FOOD_OBJECTS = {i for i in NORMAL_OBJECTS if ord(nh.objclass(nh.glyph_to_obj(i)).oc_class) == nh.FOOD_CLASS}
 
 
     DICT = {k: v for k, v in locals().items() if not k.startswith('_')}
@@ -89,7 +96,11 @@ class Agent:
         self.score = 0
         self.step_count = 0
 
+        self.last_bfs_dis = None
+        self.last_bfs_step = None
+
         self.update_map()
+
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
@@ -105,6 +116,26 @@ class Agent:
         return obs, reward, done, info
 
     @contextlib.contextmanager
+    def panic_if_position_changes(self):
+        y, x = self.blstats.y, self.blstats.x
+
+        def f(self):
+            if (y, x) != (self.blstats.y, self.blstats.x):
+                raise AgentPanic('position changed')
+        fun = partial(f, self)
+
+        self.on_update.append(fun)
+
+        try:
+            yield
+        finally:
+            assert fun in self.on_update
+            self.on_update.pop(self.on_update.index(fun))
+
+        for f in self.on_update:
+            f()
+
+    @contextlib.contextmanager
     def stop_updating(self):
         on_update = self.on_update
         self.on_update = []
@@ -115,20 +146,23 @@ class Agent:
             assert self.on_update == []
             self.on_update = on_update
 
+        for f in self.on_update:
+            f()
+
     @contextlib.contextmanager
     def preempt(self, conditions):
         funcs = []
         for cond in conditions:
-            def f(self):
+            def f(self, f, cond):
                 if cond():
                     raise AgentChangeStrategy(f)
-            f = partial(f, self)
-            funcs.append(f)
-            self.on_update.append(f)
+            fun = partial(f, self, f, cond)
+            funcs.append(fun)
+            self.on_update.append(fun)
 
         outcome = None
-        for i, f in enumerate(funcs):
-            if f():
+        for i, cond in enumerate(conditions):
+            if cond():
                 outcome = i
                 break
 
@@ -173,27 +207,28 @@ class Agent:
             self.levels[key] = Level()
         return self.levels[key]
 
+    def glyphs_mask_in(self, *gset):
+        gset = list(chain(*gset))
+        return np.isin(self.glyphs, gset)
+
     def update_level(self):
         level = self.current_level()
 
         if '(for sale,' in self.message:
             level.shop[self.blstats.y, self.blstats.x] = 1
 
-        for y in range(C.SIZE_Y):
-            for x in range(C.SIZE_X):
-                if any(map(lambda s: operator.contains(s, self.glyphs[y, x]),
-                           [G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED])):
-                    level.walkable[y, x] = True
-                    level.seen[y, x] = True
-                    level.objects[y, x] = self.glyphs[y, x]
-                elif any(map(lambda s: operator.contains(s, self.glyphs[y, x]),
-                             [G.WALL, G.DOOR_CLOSED])):
-                    level.seen[y, x] = True
-                    level.objects[y, x] = self.glyphs[y, x]
-                elif any(map(lambda s: operator.contains(s, self.glyphs[y, x]),
-                             [G.MONS, G.PETS, G.BODIES, G.OBJECTS])):
-                    level.seen[y, x] = True
-                    level.walkable[y, x] = True
+        mask = self.glyphs_mask_in(G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED)
+        level.walkable[mask] = True
+        level.seen[mask] = True
+        level.objects[mask] = self.glyphs[mask]
+
+        mask = self.glyphs_mask_in(G.WALL, G.DOOR_CLOSED)
+        level.seen[mask] = True
+        level.objects[mask] = self.glyphs[mask]
+
+        mask = self.glyphs_mask_in(G.MONS, G.PETS, G.BODIES, G.OBJECTS)
+        level.seen[mask] = True
+        level.walkable[mask] = True
 
         for y, x in self.neighbors(self.blstats.y, self.blstats.x):
             if self.glyphs[y, x] in G.STONE:
@@ -216,15 +251,17 @@ class Agent:
         return ret
 
     def enter_text(self, text):
-        for char in text:
-            char = ord(char)
-            self.step(A.ACTIONS[A.ACTIONS.index(char)])
+        with self.panic_if_position_changes():
+            for char in text:
+                char = ord(char)
+                self.step(A.ACTIONS[A.ACTIONS.index(char)])
 
     def eat(self): # TODO: eat what
-        self.step(A.Command.EAT)
-        self.enter_text('y')
-        self.step(A.Command.ESC)
-        self.step(A.Command.ESC)
+        with self.panic_if_position_changes(): # TODO: anything, not only position
+            self.step(A.Command.EAT)
+            self.enter_text('y')
+            self.step(A.Command.ESC)
+            self.step(A.Command.ESC)
         return True # TODO: return value
 
     def open_door(self, y, x=None):
@@ -238,9 +275,9 @@ class Agent:
         return True
 
     def kick(self, y, x=None):
-        with self.stop_updating():
+        with self.panic_if_position_changes():
             self.step(A.Command.KICK)
-            self.move(y, x)
+            self.direction(self.calc_direction(self.blstats.y, self.blstats.x, y, x))
 
     def search(self):
         self.step(A.Command.SEARCH)
@@ -296,6 +333,7 @@ class Agent:
 
         if shuffle:
             self.rng.shuffle(ret)
+            pass
 
         return ret
 
@@ -305,34 +343,19 @@ class Agent:
         if x is None:
             x = self.blstats.x
 
+        if self.last_bfs_step == self.step_count and y == self.blstats.y and x == self.blstats.x:
+            return self.last_bfs_dis
+
         level = self.current_level()
 
-        dis = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=np.int16)
-        dis[:] = -1
-        dis[y, x] = 0
+        dis = utils.bfs(self.glyphs,
+                        level.walkable & ~self.glyphs_mask_in(G.SHOPKEEPER),
+                        level.walkable & self.glyphs_mask_in(G.DOORS),
+                        y, x)
 
-        buf = np.zeros((C.SIZE_Y * C.SIZE_X, 2), dtype=np.uint16)
-        index = 0
-        buf[index] = (y, x)
-        size = 1
-        while index < size:
-            y, x = buf[index]
-            index += 1
-
-            # TODO: handle situations
-            # dir: SE
-            # @|
-            # -.
-            # TODO: debug diagonal moving into and from doors
-            for py, px in self.neighbors(y, x):
-                if (level.walkable[py, px] and self.glyphs[py, px] not in G.SHOPKEEPER and
-                    (abs(py - y) + abs(px - x) <= 1 or
-                     (level.objects[py, px] not in G.DOORS and
-                      level.objects[y, x] not in G.DOORS))):
-                    if dis[py, px] == -1:
-                        dis[py, px] = dis[y, x] + 1
-                        buf[size] = (py, px)
-                        size += 1
+        if y == self.blstats.y and x == self.blstats.x:
+            self.last_bfs_dis = dis
+            self.last_bfs_step = self.step_count
 
         return dis
 
@@ -362,28 +385,21 @@ class Agent:
         return path
 
     def is_any_mon_on_map(self):
-        dis = self.bfs()
-        for y in range(C.SIZE_Y):
-            for x in range(C.SIZE_X):
-                if y != self.blstats.y or x != self.blstats.x:
-                    if dis[y, x] != -1:
-                        if self.glyphs[y, x] in G.MONS and self.glyphs[y, x] not in G.SHOPKEEPER:
-                            return True
-        return False
+        mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
+        mask[self.blstats.y, self.blstats.x] = 0
+        if not mask.any():
+            return False
+        return (mask & (self.bfs() != -1)).any()
 
     def is_any_food_on_map(self):
         level = self.current_level()
-        dis = self.bfs()
-        for y in range(C.SIZE_Y):
-            for x in range(C.SIZE_X):
-                if dis[y, x] != -1 and not level.shop[y, x]:
-                    if self.glyphs[y, x] in G.BODIES and self.blstats.time - level.corpse_age[y, x] <= 20:
-                        return True
-                    if nh.glyph_is_normal_object(self.glyphs[y, x]):
-                        obj = nh.objclass(nh.glyph_to_obj(self.glyphs[y, x]))
-                        if ord(obj.oc_class) == nh.FOOD_CLASS:
-                            return True
-        return False
+
+        mask = self.glyphs_mask_in(G.BODIES) & (self.blstats.time - level.corpse_age <= 20)
+        mask |= self.glyphs_mask_in(G.FOOD_OBJECTS)
+        mask &= ~level.shop
+        if not mask.any():
+            return False
+        return (mask & (self.bfs() != -1)).any()
 
 
     ######## NON-TRIVIAL ACTIONS
@@ -455,24 +471,29 @@ class Agent:
         for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
             if self.glyphs[py, px] in G.DOOR_CLOSED:
                 if not self.open_door(py, px):
-                    while self.glyphs[py, px] in G.DOOR_CLOSED:
-                        self.kick(py, px)
+                    if not 'locked' in self.message:
+                        for _ in range(6):
+                            if self.open_door(py, px):
+                                break
+                        else:
+                            while self.glyphs[py, px] in G.DOOR_CLOSED:
+                                self.kick(py, px)
+                    else:
+                        while self.glyphs[py, px] in G.DOOR_CLOSED:
+                            self.kick(py, px)
                 break
 
         level = self.current_level()
         to_explore = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
         dis = self.bfs()
-        for y in range(C.SIZE_Y):
-            for x in range(C.SIZE_X):
-                if dis[y, x] != -1:
-                    for py, px in self.neighbors(y, x):
-                        if not level.seen[py, px] and self.glyphs[py, px] in G.STONE:
-                            to_explore[y, x] = True
-                            break
-                    for py, px in self.neighbors(y, x, diagonal=False):
-                        if self.glyphs[py, px] in G.DOOR_CLOSED:
-                            to_explore[y, x] = True
-                            break
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                if dy != 0 or dx != 0:
+                    to_explore |= utils.translate(~level.seen & self.glyphs_mask_in(G.STONE), dy, dx)
+                    if dx == 0 or dy == 0:
+                        to_explore |= utils.translate(self.glyphs_mask_in(G.DOOR_CLOSED), dy, dx)
+
+        to_explore &= dis != -1
 
         nonzero_y, nonzero_x = \
                 (dis == (dis * (to_explore) - 1).astype(np.uint16).min() + 1).nonzero()

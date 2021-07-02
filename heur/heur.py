@@ -4,20 +4,27 @@ import gym
 import nle
 from nle.nethack import actions as A
 import nle.nethack as nh
-from glyph import ALL
 import time
+import multiprocessing.pool
+import sys
+import traceback
+from pathlib import Path
+import json
 
+from glyph import ALL
 from agent import Agent, BLStats, G
 
 
 class EnvWrapper:
-    def __init__(self, env):
+    def __init__(self, env, skip_to=0):
         self.env = env
+        self.skip_to = skip_to
 
     def reset(self):
         print('\n' * 100)
         obs = self.env.reset()
         self.score = 0
+        self.step_count = 0
         self.render(obs)
 
         G.assert_map(obs['glyphs'], obs['chars'])
@@ -88,10 +95,12 @@ class EnvWrapper:
                 print('wrong key', key)
                 continue
             key = key[0]
+            if key == 10:
+                key = 13
             if key == 63: # '?"
                 self.print_help()
                 continue
-            elif key == 10: # Enter
+            elif key == 127: # Backspace
                 return None
             else:
                 actions = [a for a in self.env._actions if int(a) == key]
@@ -108,15 +117,21 @@ class EnvWrapper:
         print('agent_action:', agent_action)
         print()
 
-        action = self.get_action()
+        if self.step_count < self.skip_to:
+            action = None
+        else:
+            action = self.get_action()
+
         if action is None:
             action = agent_action
+
         print('\n' * 10)
         print('action:', action)
         print()
 
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
         self.score += reward
+        self.step_count += 1
         self.render(obs)
         if not done:
             G.assert_map(obs['glyphs'], obs['chars'])
@@ -140,7 +155,8 @@ class EnvLimitWrapper:
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
         self.score += reward
         blstats = BLStats(*obs['blstats'])
-        self.levels.add((blstats.dungeon_number, blstats.level_number))
+        if self.levels.add((blstats.dungeon_number, blstats.level_number)) != (0, 0):
+            self.levels.add((blstats.dungeon_number, blstats.level_number))
         self.cur_step += 1
         self.last_turn = max(self.last_turn, self.env._turns)
         if done:
@@ -153,11 +169,12 @@ class EnvLimitWrapper:
                 end_reason = ' '.join(end_reason[7:-2])
             self.end_reason = '.'.join(end_reason.split('.')[1:]).strip()
         if self.cur_step == self.step_limit + 1:
-            self.end_reason = self.end_reason or 'timelimit'
+            self.end_reason = self.end_reason or 'steplimit'
             return obs, reward, True, info
         elif self.cur_step > self.step_limit + 1:
             assert 0
         return obs, reward, done, info
+
 
 
 def single_simulation(seed):
@@ -165,7 +182,15 @@ def single_simulation(seed):
     env = EnvLimitWrapper(gym.make('NetHackChallenge-v0'), 10000)
     env.env.seed(seed, seed)
     agent = Agent(env, verbose=False)
-    agent.main()
+
+    pool = multiprocessing.pool.ThreadPool(processes=1)
+    try:
+        pool.apply_async(agent.main).get(60)
+    except multiprocessing.context.TimeoutError:
+        env.end_reason = 'timeout'
+    except BaseException as e:
+        env.end_reason = f'exception: {"".join(traceback.format_exception(None, e, e.__traceback__))}'
+
     end_time = time.time()
     return {
         'score': env.score,
@@ -200,11 +225,14 @@ if __name__ == '__main__':
             fig = plt.figure()
             plt.show(block=False)
             while 1:
+                res = None
                 try:
-                    res = plot_queue.get(block=False)
+                    while 1:
+                        res = plot_queue.get(block=False)
                 except:
-                    plt.pause(0.01)
-                    continue
+                    plt.pause(0.1)
+                    if res is None:
+                        continue
 
                 fig.clear()
                 spec = fig.add_gridspec(len(res), 2)
@@ -213,7 +241,7 @@ if __name__ == '__main__':
                     ax.set_title(k)
                     if isinstance(res[k][0], str):
                         counter = Counter(res[k])
-                        sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
+                        #sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
                     else:
                         sns.histplot(res[k], kde=np.var(res[k]) > 1e-6, bins=len(res[k]) // 5 + 1, ax=ax)
 
@@ -242,7 +270,7 @@ if __name__ == '__main__':
             simulation_processes = [p for p in simulation_processes if p.is_alive() or (p.close() and False)]
             single_res = result_queue.get()
 
-            simulation_processes.append(Process(target=single_simulation, args=(last_seed,)))
+            simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
             simulation_processes[-1].start()
             last_seed += 1
 
@@ -252,7 +280,7 @@ if __name__ == '__main__':
 
             count += 1
             for k, v in single_res.items():
-                all_res[k].append(v)
+                all_res[k].append(v if not hasattr(v, 'item') else v.item())
 
 
             plot_queue.put(all_res)
@@ -260,7 +288,7 @@ if __name__ == '__main__':
 
             total_duration = time.time() - start_time
 
-            print(list(zip(all_res['seed'], all_res['score'], all_res['turns'], all_res['steps'], all_res['end_reason'])))
+            #print(list(zip(all_res['seed'], all_res['score'], all_res['turns'], all_res['steps'], all_res['end_reason'])))
             print(f'count                         : {count}')
             print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
             print(f'simulations_per_hour          : {3600 / np.mean(all_res["duration"])}')
@@ -273,31 +301,48 @@ if __name__ == '__main__':
                                                     f'{np.quantile(all_res["score"], 0.95)}')
             print(f'score_25-75                   : {np.quantile(all_res["score"], 0.25)} '
                                                     f'{np.quantile(all_res["score"], 0.75)}')
+            print(f'exceptions                    : {sum([r.startswith("exception:") for r in all_res["end_reason"]])}')
+            print(f'steplimit                     : {sum([r.startswith("steplimit") for r in all_res["end_reason"]])}')
+            print(f'timeout                       : {sum([r.startswith("timeout") for r in all_res["end_reason"]])}')
             print()
+
+            with Path('/tmp/nh_sim.json').open('w') as f:
+                json.dump(all_res, f)
 
     elif sys.argv[1] == 'profile':
         import cProfile, pstats
+
+        games = int(sys.argv[2])
 
 
         pr = cProfile.Profile()
         start_time = time.time()
         pr.enable()
 
-        res = single_simulation(np.random.randint(0, 2**30))
+        res = []
+        for i in range(games):
+            res.append(single_simulation(i))
 
-        pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE).print_stats()
+        stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
+        stats.print_stats(30)
+
+        stats = pstats.Stats(pr).sort_stats(pstats.SortKey.TIME)
+        stats.print_stats(20)
 
         pr.disable()
 
-        duration = time.time()
-        print('turn_per_second:', res['turns'] / duration)
+        duration = time.time() - start_time
+        print('turns_per_second:', sum([r['turns'] for r in res]) / duration)
+        print('steps_per_second:', sum([r['steps'] for r in res]) / duration)
+        print('games_per_hour  :', len(res) / duration * 3600)
     else:
         old_settings = termios.tcgetattr(sys.stdin)
         tty.setcbreak(sys.stdin.fileno())
 
         try:
             seed = int(sys.argv[1])
-            env = EnvWrapper(gym.make('NetHackChallenge-v0'))
+            skip_to = int(sys.argv[2])
+            env = EnvWrapper(gym.make('NetHackChallenge-v0'), skip_to=skip_to)
             env.env.seed(seed, seed)
 
             agent = Agent(env, verbose=True)
