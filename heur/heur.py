@@ -1,18 +1,22 @@
-import numpy as np
-from collections import Counter
 import gym
-import nle
-from nle.nethack import actions as A
-import nle.nethack as nh
-import time
-import multiprocessing.pool
-import sys
-import traceback
-from pathlib import Path
 import json
+import multiprocessing.pool
+import nle
+import nle.nethack as nh
+import numpy as np
+import os
+import sys
+import sys
+import termios
+import time
+import traceback
+import tty
+from collections import Counter
+from nle.nethack import actions as A
+from pathlib import Path
 
-from glyph import ALL
 from agent import Agent, BLStats, G
+from glyph import ALL
 
 
 class EnvWrapper:
@@ -82,7 +86,7 @@ class EnvWrapper:
                 char = bytes([self.env.last_observation[1].reshape(-1)[pos]])
                 texts.append((-count, f'{" " if i in G.INV_DICT else "U"} Glyph {i:4d} -> '
                                       f'Char: {char} Count: {count:4d} '
-                                      f'Type: {cls.replace("_OFF",""):11s} {desc:30s} '
+                                      f'Type: {cls.replace("_OFF", ""):11s} {desc:30s} '
                                       f'{ALL.find(i) if ALL.find(i) is not None else "":20} '
                                       f'{desc2}'))
         for _, t in sorted(texts):
@@ -97,10 +101,10 @@ class EnvWrapper:
             key = key[0]
             if key == 10:
                 key = 13
-            if key == 63: # '?"
+            if key == 63:  # '?"
                 self.print_help()
                 continue
-            elif key == 127: # Backspace
+            elif key == 127:  # Backspace
                 return None
             else:
                 actions = [a for a in self.env._actions if int(a) == key]
@@ -176,7 +180,6 @@ class EnvLimitWrapper:
         return obs, reward, done, info
 
 
-
 def single_simulation(seed):
     start_time = time.time()
     env = EnvLimitWrapper(gym.make('NetHackChallenge-v0'), 10000)
@@ -202,151 +205,149 @@ def single_simulation(seed):
         'seed': seed,
     }
 
-if __name__ == '__main__':
-    import sys, tty, os, termios
 
+def main():
     if len(sys.argv) <= 1:
-        from multiprocessing import Pool, Process, Queue
-        from matplotlib import pyplot as plt
-        import seaborn as sns
-        sns.set()
-
-
-        result_queue = Queue()
-        def single_simulation_add_result_to_queue(seed):
-            r = single_simulation(seed)
-            result_queue.put(r)
-
-
-        start_time = time.time()
-
-        plot_queue = Queue()
-        def plot_thread_func():
-            fig = plt.figure()
-            plt.show(block=False)
-            while 1:
-                res = None
-                try:
-                    while 1:
-                        res = plot_queue.get(block=False)
-                except:
-                    plt.pause(0.1)
-                    if res is None:
-                        continue
-
-                fig.clear()
-                spec = fig.add_gridspec(len(res), 2)
-                for i, k in enumerate(sorted(res)):
-                    ax = fig.add_subplot(spec[i, 0])
-                    ax.set_title(k)
-                    if isinstance(res[k][0], str):
-                        counter = Counter(res[k])
-                        #sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
-                    else:
-                        sns.histplot(res[k], kde=np.var(res[k]) > 1e-6, bins=len(res[k]) // 5 + 1, ax=ax)
-
-                ax = fig.add_subplot(spec[:len(res) // 2, 1])
-                sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
-
-                ax = fig.add_subplot(spec[len(res) // 2:, 1])
-                sns.scatterplot(x='turns', y='score', data=res, ax=ax)
-
-                plt.show(block=False)
-
-
-        plt_process = Process(target=plot_thread_func)
-        plt_process.start()
-
-        all_res = {}
-        last_seed = np.random.randint(0, 2**30)
-        simulation_processes = []
-        for _ in range(16):
-            simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
-            simulation_processes[-1].start()
-            last_seed += 1
-
-        count = 0
-        while True:
-            simulation_processes = [p for p in simulation_processes if p.is_alive() or (p.close() and False)]
-            single_res = result_queue.get()
-
-            simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
-            simulation_processes[-1].start()
-            last_seed += 1
-
-            if not all_res:
-                all_res = {key: [] for key in single_res}
-            assert all_res.keys() == single_res.keys()
-
-            count += 1
-            for k, v in single_res.items():
-                all_res[k].append(v if not hasattr(v, 'item') else v.item())
-
-
-            plot_queue.put(all_res)
-
-
-            total_duration = time.time() - start_time
-
-            #print(list(zip(all_res['seed'], all_res['score'], all_res['turns'], all_res['steps'], all_res['end_reason'])))
-            print(f'count                         : {count}')
-            print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
-            print(f'simulations_per_hour          : {3600 / np.mean(all_res["duration"])}')
-            print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
-            print(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
-            print(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
-            print(f'score_mean                    : {np.mean(all_res["score"])}')
-            print(f'score_median                  : {np.median(all_res["score"])}')
-            print(f'score_05-95                   : {np.quantile(all_res["score"], 0.05)} '
-                                                    f'{np.quantile(all_res["score"], 0.95)}')
-            print(f'score_25-75                   : {np.quantile(all_res["score"], 0.25)} '
-                                                    f'{np.quantile(all_res["score"], 0.75)}')
-            print(f'exceptions                    : {sum([r.startswith("exception:") for r in all_res["end_reason"]])}')
-            print(f'steplimit                     : {sum([r.startswith("steplimit") for r in all_res["end_reason"]])}')
-            print(f'timeout                       : {sum([r.startswith("timeout") for r in all_res["end_reason"]])}')
-            print()
-
-            with Path('/tmp/nh_sim.json').open('w') as f:
-                json.dump(all_res, f)
-
+        run_simulations()
     elif sys.argv[1] == 'profile':
-        import cProfile, pstats
-
-        games = int(sys.argv[2])
-
-
-        pr = cProfile.Profile()
-        start_time = time.time()
-        pr.enable()
-
-        res = []
-        for i in range(games):
-            res.append(single_simulation(i))
-
-        stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
-        stats.print_stats(30)
-
-        stats = pstats.Stats(pr).sort_stats(pstats.SortKey.TIME)
-        stats.print_stats(20)
-
-        pr.disable()
-
-        duration = time.time() - start_time
-        print('turns_per_second:', sum([r['turns'] for r in res]) / duration)
-        print('steps_per_second:', sum([r['steps'] for r in res]) / duration)
-        print('games_per_hour  :', len(res) / duration * 3600)
+        run_profiling()
     else:
-        old_settings = termios.tcgetattr(sys.stdin)
-        tty.setcbreak(sys.stdin.fileno())
+        seed = int(sys.argv[1])
+        skip_to = int(sys.argv[2])
+        run_single_interactive_game(seed, skip_to)
 
-        try:
-            seed = int(sys.argv[1])
-            skip_to = int(sys.argv[2])
-            env = EnvWrapper(gym.make('NetHackChallenge-v0'), skip_to=skip_to)
-            env.env.seed(seed, seed)
 
-            agent = Agent(env, verbose=True)
-            agent.main()
+def run_single_interactive_game(seed, skip_to):
+    termios.tcgetattr(sys.stdin)
+    tty.setcbreak(sys.stdin.fileno())
+    try:
+        env = EnvWrapper(gym.make('NetHackChallenge-v0'), skip_to=skip_to)
+        env.env.seed(seed, seed)
 
-        finally:
-            os.system('stty sane')
+        agent = Agent(env, verbose=True)
+        agent.main()
+
+    finally:
+        os.system('stty sane')
+
+
+def run_profiling():
+    import cProfile, pstats
+    games = int(sys.argv[2])
+    pr = cProfile.Profile()
+    start_time = time.time()
+    pr.enable()
+    res = []
+    for i in range(games):
+        res.append(single_simulation(i))
+    stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
+    stats.print_stats(30)
+    stats = pstats.Stats(pr).sort_stats(pstats.SortKey.TIME)
+    stats.print_stats(20)
+    pr.disable()
+    duration = time.time() - start_time
+    print('turns_per_second:', sum([r['turns'] for r in res]) / duration)
+    print('steps_per_second:', sum([r['steps'] for r in res]) / duration)
+    print('games_per_hour  :', len(res) / duration * 3600)
+
+
+def run_simulations():
+    from multiprocessing import Pool, Process, Queue
+    from matplotlib import pyplot as plt
+    import seaborn as sns
+    sns.set()
+    result_queue = Queue()
+
+    def single_simulation_add_result_to_queue(seed):
+        r = single_simulation(seed)
+        result_queue.put(r)
+
+    start_time = time.time()
+    plot_queue = Queue()
+
+    def plot_thread_func():
+        fig = plt.figure()
+        plt.show(block=False)
+        while 1:
+            res = None
+            try:
+                while 1:
+                    res = plot_queue.get(block=False)
+            except:
+                plt.pause(0.1)
+                if res is None:
+                    continue
+
+            fig.clear()
+            spec = fig.add_gridspec(len(res), 2)
+            for i, k in enumerate(sorted(res)):
+                ax = fig.add_subplot(spec[i, 0])
+                ax.set_title(k)
+                if isinstance(res[k][0], str):
+                    counter = Counter(res[k])
+                    # sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
+                else:
+                    sns.histplot(res[k], kde=np.var(res[k]) > 1e-6, bins=len(res[k]) // 5 + 1, ax=ax)
+
+            ax = fig.add_subplot(spec[:len(res) // 2, 1])
+            sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
+
+            ax = fig.add_subplot(spec[len(res) // 2:, 1])
+            sns.scatterplot(x='turns', y='score', data=res, ax=ax)
+
+            plt.show(block=False)
+
+    plt_process = Process(target=plot_thread_func)
+    plt_process.start()
+    all_res = {}
+    last_seed = np.random.randint(0, 2 ** 30)
+    simulation_processes = []
+    for _ in range(16):
+        simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
+        simulation_processes[-1].start()
+        last_seed += 1
+    count = 0
+    while True:
+        simulation_processes = [p for p in simulation_processes if p.is_alive() or (p.close() and False)]
+        single_res = result_queue.get()
+
+        simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
+        simulation_processes[-1].start()
+        last_seed += 1
+
+        if not all_res:
+            all_res = {key: [] for key in single_res}
+        assert all_res.keys() == single_res.keys()
+
+        count += 1
+        for k, v in single_res.items():
+            all_res[k].append(v if not hasattr(v, 'item') else v.item())
+
+        plot_queue.put(all_res)
+
+        total_duration = time.time() - start_time
+
+        # print(list(zip(all_res['seed'], all_res['score'], all_res['turns'], all_res['steps'], all_res['end_reason'])))
+        print(f'count                         : {count}')
+        print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
+        print(f'simulations_per_hour          : {3600 / np.mean(all_res["duration"])}')
+        print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
+        print(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
+        print(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
+        print(f'score_mean                    : {np.mean(all_res["score"])}')
+        print(f'score_median                  : {np.median(all_res["score"])}')
+        print(f'score_05-95                   : {np.quantile(all_res["score"], 0.05)} '
+              f'{np.quantile(all_res["score"], 0.95)}')
+        print(f'score_25-75                   : {np.quantile(all_res["score"], 0.25)} '
+              f'{np.quantile(all_res["score"], 0.75)}')
+        print(f'exceptions                    : {sum([r.startswith("exception:") for r in all_res["end_reason"]])}')
+        print(f'steplimit                     : {sum([r.startswith("steplimit") for r in all_res["end_reason"]])}')
+        print(f'timeout                       : {sum([r.startswith("timeout") for r in all_res["end_reason"]])}')
+        print()
+
+        with Path('/tmp/nh_sim.json').open('w') as f:
+            json.dump(all_res, f)
+
+
+if __name__ == '__main__':
+    main()

@@ -1,11 +1,11 @@
-import numpy as np
 import numba as nb
+import numpy as np
 
 
 @nb.njit
-def bfs(glyphs, walkable, walkable_diagonally, y, x):
-    SIZE_X = 79 # C.SIZE_X
-    SIZE_Y = 21 # C.SIZE_Y
+def bfs(walkable, walkable_diagonally, y, x):
+    SIZE_X = 79  # C.SIZE_X
+    SIZE_Y = 21  # C.SIZE_Y
 
     dis = np.zeros((SIZE_Y, SIZE_X), dtype=np.int16)
     dis[:] = -1
@@ -51,5 +51,5 @@ def translate(array, y_offset, x_offset):
         array = array[:, -x_offset:]
 
     sy, sx = max(y_offset, 0), max(x_offset, 0)
-    ret[sy : sy + array.shape[0], sx : sx + array.shape[1]] = array
+    ret[sy: sy + array.shape[0], sx: sx + array.shape[1]] = array
     return ret

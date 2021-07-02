@@ -1,33 +1,32 @@
-import numpy as np
-from collections import namedtuple
-from nle.nethack import actions as A
-import nle.nethack as nh
-import operator
 import contextlib
+import nle.nethack as nh
+import numba as nb
+import numpy as np
+import operator
+from collections import namedtuple
 from functools import partial
 from itertools import chain
-import numba as nb
+from nle.nethack import actions as A
 
-from glyph import SS, MON, C, ALL
 import utils
+from glyph import SS, MON, C, ALL
+
+BLStats = namedtuple('BLStats',
+                     'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
 
 
-BLStats = namedtuple('BLStats', 'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
+class G:  # Glyphs
+    FLOOR: ['.'] = {SS.S_room, SS.S_ndoor, SS.S_darkroom}
+    STONE: [' '] = {SS.S_stone}
+    WALL: ['|', '-'] = {SS.S_vwall, SS.S_hwall, SS.S_tlcorn, SS.S_trcorn, SS.S_blcorn, SS.S_brcorn,
+                        SS.S_crwall, SS.S_tuwall, SS.S_tdwall, SS.S_tlwall, SS.S_trwall}
+    CORRIDOR: ['#'] = {SS.S_corr}
+    STAIR_UP: ['<'] = {SS.S_upstair}
+    STAIR_DOWN: ['>'] = {SS.S_dnstair}
 
-
-class G: # Glyphs
-    FLOOR : ['.'] = {SS.S_room, SS.S_ndoor, SS.S_darkroom}
-    STONE : [' '] = {SS.S_stone}
-    WALL : ['|', '-'] = {SS.S_vwall, SS.S_hwall, SS.S_tlcorn, SS.S_trcorn, SS.S_blcorn, SS.S_brcorn,
-                         SS.S_crwall, SS.S_tuwall, SS.S_tdwall, SS.S_tlwall, SS.S_trwall}
-    CORRIDOR : ['#'] = {SS.S_corr}
-    STAIR_UP : ['<'] = {SS.S_upstair}
-    STAIR_DOWN : ['>'] = {SS.S_dnstair}
-
-    DOOR_CLOSED : ['+'] = {SS.S_vcdoor, SS.S_hcdoor}
-    DOOR_OPENED : ['-', '|'] = {SS.S_vodoor, SS.S_hodoor}
+    DOOR_CLOSED: ['+'] = {SS.S_vcdoor, SS.S_hcdoor}
+    DOOR_OPENED: ['-', '|'] = {SS.S_vodoor, SS.S_hodoor}
     DOORS = set.union(DOOR_CLOSED, DOOR_OPENED)
-
 
     MONS = set(MON.ALL_MONS)
     PETS = set(MON.ALL_PETS)
@@ -41,7 +40,6 @@ class G: # Glyphs
     NORMAL_OBJECTS = {i for i in range(nh.MAX_GLYPH) if nh.glyph_is_normal_object(i)}
     FOOD_OBJECTS = {i for i in NORMAL_OBJECTS if ord(nh.objclass(nh.glyph_to_obj(i)).oc_class) == nh.FOOD_CLASS}
 
-
     DICT = {k: v for k, v in locals().items() if not k.startswith('_')}
 
     @classmethod
@@ -50,6 +48,7 @@ class G: # Glyphs
             char = bytes([char]).decode()
             for k, v in cls.__annotations__.items():
                 assert glyph not in cls.DICT[k] or char in v, f'{k} {v} {glyph} {char}'
+
 
 G.INV_DICT = {i: [k for k, v in G.DICT.items() if i in v]
               for i in set.union(*map(set, G.DICT.values()))}
@@ -77,11 +76,14 @@ class Level:
 class AgentFinished(Exception):
     pass
 
+
 class AgentPanic(Exception):
     pass
 
+
 class AgentChangeStrategy(Exception):
     pass
+
 
 class Agent:
     def __init__(self, env, seed=0, verbose=False):
@@ -100,7 +102,6 @@ class Agent:
         self.last_bfs_step = None
 
         self.update_map()
-
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
@@ -122,6 +123,7 @@ class Agent:
         def f(self):
             if (y, x) != (self.blstats.y, self.blstats.x):
                 raise AgentPanic('position changed')
+
         fun = partial(f, self)
 
         self.on_update.append(fun)
@@ -156,6 +158,7 @@ class Agent:
             def f(self, f, cond):
                 if cond():
                     raise AgentChangeStrategy(f)
+
             fun = partial(f, self, f, cond)
             funcs.append(fun)
             self.on_update.append(fun)
@@ -256,13 +259,13 @@ class Agent:
                 char = ord(char)
                 self.step(A.ACTIONS[A.ACTIONS.index(char)])
 
-    def eat(self): # TODO: eat what
-        with self.panic_if_position_changes(): # TODO: anything, not only position
+    def eat(self):  # TODO: eat what
+        with self.panic_if_position_changes():  # TODO: anything, not only position
             self.step(A.Command.EAT)
             self.enter_text('y')
             self.step(A.Command.ESC)
             self.step(A.Command.ESC)
-        return True # TODO: return value
+        return True  # TODO: return value
 
     def open_door(self, y, x=None):
         assert self.glyphs[y, x] in G.DOOR_CLOSED
@@ -348,10 +351,8 @@ class Agent:
 
         level = self.current_level()
 
-        dis = utils.bfs(self.glyphs,
-                        level.walkable & ~self.glyphs_mask_in(G.SHOPKEEPER),
-                        level.walkable & self.glyphs_mask_in(G.DOORS),
-                        y, x)
+        dis = utils.bfs(level.walkable & ~self.glyphs_mask_in(G.SHOPKEEPER),
+                        level.walkable & self.glyphs_mask_in(G.DOORS), y, x)
 
         if y == self.blstats.y and x == self.blstats.x:
             self.last_bfs_dis = dis
@@ -401,7 +402,6 @@ class Agent:
             return False
         return (mask & (self.bfs() != -1)).any()
 
-
     ######## NON-TRIVIAL ACTIONS
 
     ######## LOW-LEVEL STRATEGIES
@@ -419,18 +419,18 @@ class Agent:
                             closest = (y, x)
 
         assert closest is not None
-        #if closest is None:
+        # if closest is None:
         #    return False
 
         y, x = closest
-        path = self.path(self.blstats.y, self.blstats.x, y, x)[1:] # TODO: allow diagonal fight from doors
+        path = self.path(self.blstats.y, self.blstats.x, y, x)[1:]  # TODO: allow diagonal fight from doors
 
         if len(path) == 1:
             y, x = path[0]
             mon = nh.glyph_to_mon(self.glyphs[y, x])
             try:
                 self.fight(y, x)
-            finally: # TODO: what if panic?
+            finally:  # TODO: what if panic?
                 if nh.glyph_is_body(self.glyphs[y, x]) and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == mon:
                     self.current_level().corpse_age[y, x] = self.blstats.time
 
@@ -454,7 +454,7 @@ class Agent:
                             closest = (y, x)
 
         assert closest is not None
-        #if closest is None:
+        # if closest is None:
         #    return False
 
         ty, tx = closest
@@ -465,7 +465,7 @@ class Agent:
                 return
             self.move(y, x)
         if not self.current_level().shop[self.blstats.y, self.blstats.x]:
-            self.eat() # TODO: what
+            self.eat()  # TODO: what
 
     def explore1(self):
         for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
@@ -496,7 +496,7 @@ class Agent:
         to_explore &= dis != -1
 
         nonzero_y, nonzero_x = \
-                (dis == (dis * (to_explore) - 1).astype(np.uint16).min() + 1).nonzero()
+            (dis == (dis * (to_explore) - 1).astype(np.uint16).min() + 1).nonzero()
         nonzero = [(y, x) for y, x in zip(nonzero_y, nonzero_x) if to_explore[y, x]]
         if len(nonzero) == 0:
             return False
@@ -574,15 +574,14 @@ class Agent:
 
         self.direction('>')
 
-
     ######## HIGH-LEVEL STRATEGIES
 
     def main_strategy(self):
         while 1:
             with self.preempt([
-                        self.is_any_mon_on_map,
-                        lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and self.is_any_food_on_map(),
-                    ]) as outcome:
+                self.is_any_mon_on_map,
+                lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and self.is_any_food_on_map(),
+            ]) as outcome:
                 if outcome() is None:
                     if self.explore1() is not False:
                         continue
@@ -602,7 +601,6 @@ class Agent:
                 continue
 
             assert 0
-
 
     ####### MAIN
 
