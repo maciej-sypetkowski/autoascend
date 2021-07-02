@@ -1,5 +1,5 @@
 import numpy as np
-from collections import namedtuple
+from collections import namedtuple, Counter
 import gym
 import nle
 from nle.nethack import actions as A
@@ -153,7 +153,6 @@ class Agent:
     def kick(self, y, x=None):
         self.step(A.Command.KICK)
         self.move(y, x)
-        return self.blstats.y == y and self.blstats.x == x
 
     def search(self):
         self.step(A.Command.SEARCH)
@@ -219,6 +218,8 @@ class Agent:
             self.objects = np.zeros((C.SIZE_Y, C.SIZE_X), np.int16)
             self.objects[:] = -1
             self.search_count = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
+            self.corpse_age = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32) - 10000
+            self.shop = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
 
     levels = {}
 
@@ -230,6 +231,9 @@ class Agent:
 
     def update_level(self):
         level = self.current_level()
+
+        if '(for sale,' in self.message:
+            level.shop[self.blstats.y, self.blstats.x] = 1
 
         for y in range(C.SIZE_Y):
             for x in range(C.SIZE_X):
@@ -278,7 +282,7 @@ class Agent:
             # -.
             # TODO: debug diagonal moving into and from doors
             for py, px in self.neighbors(y, x):
-                if (level.walkable[py, px] and
+                if (level.walkable[py, px] and self.glyphs[py, px] not in G.SHOPKEEPER and
                     (abs(py - y) + abs(px - x) <= 1 or
                      (level.objects[py, px] not in G.DOORS and
                       level.objects[y, x] not in G.DOORS))):
@@ -324,10 +328,11 @@ class Agent:
         return False
 
     def is_any_food_on_map(self):
+        level = self.current_level()
         for y in range(C.SIZE_Y):
             for x in range(C.SIZE_X):
-                #if self.glyphs[y, x] in G.BODIES:
-                #    return True
+                if self.glyphs[y, x] in G.BODIES and self.blstats.time - level.corpse_age[y, x] <= 20 and not level.shop[y, x]:
+                    return True
                 if nh.glyph_is_normal_object(self.glyphs[y, x]):
                     obj = nh.objclass(nh.glyph_to_obj(self.glyphs[y, x]))
                     if ord(obj.oc_class) == nh.FOOD_CLASS:
@@ -367,7 +372,14 @@ class Agent:
         path = self.path(self.blstats.y, self.blstats.x, y, x)[1:] # TODO: allow diagonal fight from doors
 
         if len(path) == 1:
-            self.fight(*path[0])
+            y, x = path[0]
+            mon = nh.glyph_to_mon(self.glyphs[y, x])
+            try:
+                self.fight(y, x)
+            finally: # TODO: what if panic?
+                if nh.glyph_is_body(self.glyphs[y, x]) and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == mon:
+                    self.current_level().corpse_age[y, x] = self.blstats.time
+
         else:
             self.move(*path[0])
 
@@ -375,12 +387,13 @@ class Agent:
         dis = self.bfs()
         closest = None
 
+        level = self.current_level()
         # TODO: iter by distance
         for y in range(C.SIZE_Y):
             for x in range(C.SIZE_X):
-                if dis[y, x] != -1 and (closest is None or dis[y, x] < dis[closest]):
-                    #if self.glyphs[y, x] in G.BODIES:
-                    #    closest = (y, x)
+                if dis[y, x] != -1 and (closest is None or dis[y, x] < dis[closest]) and not level.shop[y, x]:
+                    if self.glyphs[y, x] in G.BODIES and self.blstats.time - level.corpse_age[y, x] <= 20:
+                        closest = (y, x)
                     if nh.glyph_is_normal_object(self.glyphs[y, x]):
                         obj = nh.objclass(nh.glyph_to_obj(self.glyphs[y, x]))
                         if ord(obj.oc_class) == nh.FOOD_CLASS:
@@ -393,8 +406,11 @@ class Agent:
         path = self.path(self.blstats.y, self.blstats.x, ty, tx)
 
         for y, x in path[1:]:
+            if self.glyphs[y, x] in G.SHOPKEEPER:
+                return
             self.move(y, x)
-        self.eat() # TODO: what
+        if not self.current_level().shop[self.blstats.y, self.blstats.x]:
+            self.eat() # TODO: what
 
     def explore1(self):
         for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
@@ -437,6 +453,8 @@ class Agent:
         for y, x in path[1:]:
             if not self.current_level().walkable[y, x]:
                 return
+            if self.glyphs[y, x] in G.SHOPKEEPER:
+                return
             self.move(y, x)
 
     def search1(self):
@@ -463,6 +481,8 @@ class Agent:
         path = self.path(self.blstats.y, self.blstats.x, ty, tx, dis=dis)
         for y, x in path[1:]:
             if not self.current_level().walkable[y, x]:
+                return
+            if self.glyphs[y, x] in G.SHOPKEEPER:
                 return
             self.move(y, x)
         self.search()
@@ -685,10 +705,11 @@ class EnvLimitWrapper:
             end_reason = bytes(obs['tty_chars'].reshape(-1)).decode().replace('You made the top ten list!', '').split()
             if end_reason[7].startswith('Agent'):
                 self.score = int(end_reason[6])
-                self.end_reason = ' '.join(end_reason[8:-2])
+                end_reason = ' '.join(end_reason[8:-2])
             else:
                 assert self.score == 0
-                self.end_reason = ' '.join(end_reason[7:-2])
+                end_reason = ' '.join(end_reason[7:-2])
+            self.end_reason = '.'.join(end_reason.split('.')[1:]).strip()
         if self.cur_step == self.step_limit + 1:
             self.end_reason = self.end_reason or 'timelimit'
             return obs, reward, True, info
@@ -716,13 +737,13 @@ if __name__ == '__main__':
             agent = Agent(env, verbose=False)
             agent.main()
             end_time = time.time()
-            print(env.end_reason)
             result_queue.put({
                 'score': env.score,
                 'steps': env.env._steps,
                 'turns': env.last_turn,
                 'duration': end_time - start_time,
                 'level_num': len(env.levels),
+                'end_reason': env.end_reason,
                 'seed': seed,
             })
 
@@ -745,7 +766,11 @@ if __name__ == '__main__':
                 for i, k in enumerate(sorted(res)):
                     ax = fig.add_subplot(spec[i, 0])
                     ax.set_title(k)
-                    sns.histplot(res[k], kde=np.var(res[k]) > 1e-6, bins=len(res[k]) // 5 + 1, ax=ax)
+                    if isinstance(res[k][0], str):
+                        counter = Counter(res[k])
+                        sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
+                    else:
+                        sns.histplot(res[k], kde=np.var(res[k]) > 1e-6, bins=len(res[k]) // 5 + 1, ax=ax)
 
                 ax = fig.add_subplot(spec[:len(res) // 2, 1])
                 sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
@@ -760,20 +785,21 @@ if __name__ == '__main__':
         plt_process.start()
 
         all_res = {}
-        count = 0
+        last_seed = np.random.randint(0, 2**30)
         simulation_processes = []
         for _ in range(16):
-            simulation_processes.append(Process(target=single_simulation, args=(count,)))
+            simulation_processes.append(Process(target=single_simulation, args=(last_seed,)))
             simulation_processes[-1].start()
-            count += 1
+            last_seed += 1
 
+        count = 0
         while True:
             simulation_processes = [p for p in simulation_processes if p.is_alive() or (p.close() and False)]
             single_res = result_queue.get()
 
-            simulation_processes.append(Process(target=single_simulation, args=(count,)))
+            simulation_processes.append(Process(target=single_simulation, args=(last_seed,)))
             simulation_processes[-1].start()
-            count += 1
+            last_seed += 1
 
             if not all_res:
                 all_res = {key: [] for key in single_res}
@@ -789,7 +815,7 @@ if __name__ == '__main__':
 
             total_duration = time.time() - start_time
 
-            print(list(zip(all_res['seed'], all_res['score'], all_res['turns'], all_res['steps'])))
+            print(list(zip(all_res['seed'], all_res['score'], all_res['turns'], all_res['steps'], all_res['end_reason'])))
             print(f'count                         : {count}')
             print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
             print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
