@@ -201,6 +201,7 @@ def single_simulation(seed):
         'turns': env.last_turn,
         'duration': end_time - start_time,
         'level_num': len(env.levels),
+        'character': str(agent.character),
         'end_reason': env.end_reason,
         'seed': seed,
     }
@@ -274,27 +275,47 @@ def run_simulations():
                 while 1:
                     res = plot_queue.get(block=False)
             except:
-                plt.pause(0.1)
+                plt.pause(0.5)
                 if res is None:
                     continue
 
             fig.clear()
-            spec = fig.add_gridspec(len(res), 2)
-            for i, k in enumerate(sorted(res)):
+
+            histogram_keys = ['score', 'steps', 'turns', 'level_num']
+            spec = fig.add_gridspec(len(histogram_keys) + 2, 2)
+
+            for i, k in enumerate(histogram_keys):
                 ax = fig.add_subplot(spec[i, 0])
                 ax.set_title(k)
                 if isinstance(res[k][0], str):
                     counter = Counter(res[k])
-                    # sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
+                    sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
                 else:
                     sns.histplot(res[k], kde=np.var(res[k]) > 1e-6, bins=len(res[k]) // 5 + 1, ax=ax)
 
-            ax = fig.add_subplot(spec[:len(res) // 2, 1])
+            ax = fig.add_subplot(spec[:len(histogram_keys) // 2, 1])
             sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
 
-            ax = fig.add_subplot(spec[len(res) // 2:, 1])
+            ax = fig.add_subplot(spec[len(histogram_keys) // 2 : -2, 1])
             sns.scatterplot(x='turns', y='score', data=res, ax=ax)
 
+            ax = fig.add_subplot(spec[-2:, :])
+            res['role'] = [h.split('-')[0] for h in res['character']]
+            res['race'] = [h.split('-')[1] for h in res['character']]
+            res['gender'] = [h.split('-')[2] for h in res['character']]
+            res['alignment'] = [h.split('-')[3] for h in res['character']]
+            res['race-alignment'] = [f'{r}-{a}' for r, a in zip(res['race'], res['alignment'])]
+            sns.violinplot(x='role', y='score', color='white', hue='gender',
+                           hue_order=sorted(set(res['gender'])), split=len(set(res['gender'])) == 2,
+                           order=sorted(set(res['role'])), inner='quartile',
+                           data=res, ax=ax)
+
+            palette = ['#ff7043', '#cc3311', '#ee3377', '#0077bb', '#33bbee', '#009988', '#bbbbbb']
+            sns.stripplot(x='role', y='score', hue='race-alignment', hue_order=sorted(set(res['race-alignment'])),
+                          order=sorted(set(res['role'])),
+                          data=res, ax=ax, palette=palette)
+
+            fig.tight_layout()
             plt.show(block=False)
 
     plt_process = Process(target=plot_thread_func)
