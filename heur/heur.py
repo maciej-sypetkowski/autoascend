@@ -1,7 +1,8 @@
+import contextlib
 import json
-import visualize
 import multiprocessing.pool
 import os
+import subprocess
 import sys
 import termios
 import time
@@ -9,29 +10,36 @@ import traceback
 import tty
 from collections import Counter
 from pathlib import Path
+from pprint import pprint
 
 import gym
 import nle.nethack as nh
 import numpy as np
 
+import visualize
 from agent import Agent, BLStats, G
 from glyph import ALL
 
 
 class EnvWrapper:
-    def __init__(self, env, skip_to=0, visualizer=False):
+    def __init__(self, env, skip_to=0, visualizer=False, step_limit=None):
         self.env = env
         self.skip_to = skip_to
+        self.step_limit = step_limit
         self.visualizer = None
         if visualizer:
             self.visualizer = visualize.Visualizer(self)
         self.last_observation = None
+        self.agent = None
+
+    def set_agent(self, agent):
+        self.agent = agent
 
     def reset(self):
-        print('\n' * 100)
         obs = self.env.reset()
         self.score = 0
         self.step_count = 0
+        self.end_reason = ''
         self.render(obs)
 
         G.assert_map(obs['glyphs'], obs['chars'])
@@ -44,23 +52,25 @@ class EnvWrapper:
         return obs
 
     def render(self, obs):
-        print(bytes(obs['message']).decode())
-        print()
-        print(BLStats(*obs['blstats']))
-        print('Score:', self.score)
-        print('Steps:', self.env._steps)
-        print('Turns:', self.env._turns)
-        print('Seed :', self.env.get_seeds())
-        print()
-        for letter, text in zip(obs['inv_letters'], obs['inv_strs']):
-            if (text != 0).any():
-                print(chr(letter), '->', bytes(text).decode())
-        print('-' * 20)
-        self.env.render()
-        print('-' * 20)
-        print()
-
         if self.visualizer is not None:
+            print(bytes(obs['message']).decode())
+            print()
+            print(BLStats(*obs['blstats']))
+            print('Misc :', obs['misc'])
+            print('Score:', self.score)
+            print('Steps:', self.env._steps)
+            print('Turns:', self.env._turns)
+            print('Seed :', self.env.get_seeds())
+            print()
+            obj_classes = {getattr(nh, x): x[:-len('_CLASS')] for x in dir(nh) if x.endswith('_CLASS')}
+            for letter, text, cls in zip(obs['inv_letters'], obs['inv_strs'], obs['inv_oclasses']):
+                if (text != 0).any():
+                    print(obj_classes[cls].ljust(7), chr(letter), '->', bytes(text).decode())
+            print('-' * 20)
+            self.env.render()
+            print('-' * 20)
+            print()
+
             self.visualizer.update(obs)
 
 
@@ -126,58 +136,33 @@ class EnvWrapper:
                 return action
 
     def step(self, agent_action):
-        self.render(self.last_observation)
+        if self.visualizer is not None:
+            self.render(self.last_observation)
 
-        print()
-        print('agent_action:', agent_action)
-        print()
+            print()
+            print('agent_action:', agent_action)
+            print()
 
-        if self.step_count < self.skip_to:
-            action = None
+            if self.step_count < self.skip_to:
+                action = None
+            else:
+                action = self.get_action()
+
+            if action is None:
+                action = agent_action
+
+            print('\n' * 10)
+            print('action:', action)
+            print()
         else:
-            action = self.get_action()
-
-        if action is None:
             action = agent_action
 
-        print('\n' * 10)
-        print('action:', action)
-        print()
-
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
-        self.last_observation = obs
         self.score += reward
         self.step_count += 1
-        if not done:
-            G.assert_map(obs['glyphs'], obs['chars'])
-        return obs, reward, done, info
+        # if not done:
+        #     G.assert_map(obs['glyphs'], obs['chars'])
 
-    def debug_path(self, path, color):
-        if self.visualizer is not None:
-            return self.visualizer.debug_path(path, color)
-
-
-class EnvLimitWrapper:
-    def __init__(self, env, step_limit):
-        self.env = env
-        self.step_limit = step_limit
-
-    def reset(self):
-        self.cur_step = 0
-        self.last_turn = 0
-        self.score = 0
-        self.levels = set()
-        self.end_reason = ''
-        return self.env.reset()
-
-    def step(self, action):
-        obs, reward, done, info = self.env.step(self.env._actions.index(action))
-        self.score += reward
-        blstats = BLStats(*obs['blstats'])
-        if self.levels.add((blstats.dungeon_number, blstats.level_number)) != (0, 0):
-            self.levels.add((blstats.dungeon_number, blstats.level_number))
-        self.cur_step += 1
-        self.last_turn = max(self.last_turn, self.env._turns)
         if done:
             end_reason = bytes(obs['tty_chars'].reshape(-1)).decode().replace('You made the top ten list!', '').split()
             if end_reason[7].startswith('Agent'):
@@ -187,39 +172,63 @@ class EnvLimitWrapper:
                 assert self.score == 0
                 end_reason = ' '.join(end_reason[7:-2])
             self.end_reason = '.'.join(end_reason.split('.')[1:]).strip()
-        if self.cur_step == self.step_limit + 1:
+        if self.step_limit is not None and self.step_count == self.step_limit + 1:
             self.end_reason = self.end_reason or 'steplimit'
-            return obs, reward, True, info
-        elif self.cur_step > self.step_limit + 1:
+            done = True
+        elif self.step_limit is not None and self.step_count > self.step_limit + 1:
             assert 0
+
+        self.last_observation = obs
+
+        if done:
+            if self.visualizer is not None:
+                self.render(self.last_observation)
+                print('Summary:')
+                pprint(self.get_summary())
+
         return obs, reward, done, info
 
+    def debug_path(self, path, color):
+        if self.visualizer is not None:
+            return self.visualizer.debug_path(path, color)
+        return contextlib.suppress()
 
-def single_simulation(seed):
+    def get_summary(self):
+        return {
+            'score': self.score,
+            'steps': self.env._steps,
+            'turns': self.agent.blstats.time,
+            'level_num': len(self.agent.levels),
+            'character': str(self.agent.character),
+            'end_reason': self.end_reason,
+            'seed': self.env.get_seeds(),
+        }
+
+
+def single_simulation(seed, timeout=60):
     start_time = time.time()
-    env = EnvLimitWrapper(gym.make('NetHackChallenge-v0'), 10000)
+    env = EnvWrapper(gym.make('NetHackChallenge-v0'), step_limit=10000)
     env.env.seed(seed, seed)
     agent = Agent(env, verbose=False)
+    env.set_agent(agent)
 
-    pool = multiprocessing.pool.ThreadPool(processes=1)
+    if timeout is not None:
+        pool = multiprocessing.pool.ThreadPool(processes=1)
     try:
-        pool.apply_async(agent.main).get(60)
+        if timeout is not None:
+            pool.apply_async(agent.main).get(60)
+        else:
+            agent.main()
     except multiprocessing.context.TimeoutError:
         env.end_reason = 'timeout'
     except BaseException as e:
         env.end_reason = f'exception: {"".join(traceback.format_exception(None, e, e.__traceback__))}'
+        print('Seed {seed}', env.end_reason)
 
     end_time = time.time()
-    return {
-        'score': env.score,
-        'steps': env.env._steps,
-        'turns': env.last_turn,
-        'duration': end_time - start_time,
-        'level_num': len(env.levels),
-        'character': str(agent.character),
-        'end_reason': env.end_reason,
-        'seed': seed,
-    }
+    summary = env.get_summary()
+    summary['duration'] = end_time - start_time,
+    return summary
 
 
 def main():
@@ -241,6 +250,8 @@ def run_single_interactive_game(seed, skip_to):
         env.env.seed(seed, seed)
 
         agent = Agent(env, verbose=True)
+        env.set_agent(agent)
+
         agent.main()
 
     finally:
@@ -251,24 +262,28 @@ def run_profiling():
     import cProfile, pstats
     games = int(sys.argv[2])
     pr = cProfile.Profile()
+
     start_time = time.time()
     pr.enable()
     res = []
     for i in range(games):
-        res.append(single_simulation(i))
+        res.append(single_simulation(i, timeout=None))
+    pr.disable()
+
+    duration = time.time() - start_time
+
     stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
     stats.print_stats(30)
     stats = pstats.Stats(pr).sort_stats(pstats.SortKey.TIME)
     stats.print_stats(20)
-    pr.disable()
-    duration = time.time() - start_time
+    stats.dump_stats('/tmp/nethack_stats.profile')
+
     print('turns_per_second:', sum([r['turns'] for r in res]) / duration)
     print('steps_per_second:', sum([r['steps'] for r in res]) / duration)
     print('games_per_hour  :', len(res) / duration * 3600)
 
-    # TODO: use for visualization:
-    # gprof2dot -f pstats myLog.profile -o callingGraph.dot
-    # xdot callingGraph.dot
+    subprocess.run('gprof2dot -f pstats /tmp/nethack_stats.profile -o /tmp/calling_graph.dot'.split())
+    subprocess.run('xdot /tmp/calling_graph.dot'.split())
 
 
 def run_simulations():

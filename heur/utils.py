@@ -2,7 +2,7 @@ import numba as nb
 import numpy as np
 
 
-@nb.njit
+@nb.njit(cache=True)
 def bfs(walkable, walkable_diagonally, y, x):
     SIZE_X = 79  # C.SIZE_X
     SIZE_Y = 21  # C.SIZE_Y

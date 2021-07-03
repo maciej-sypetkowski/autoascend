@@ -217,8 +217,6 @@ class Agent:
 
         self.update_map()
 
-        self.parse_character()
-
     def parse_character(self):
         with self.stop_updating():
             self.step(A.Command.ATTRIBUTES)
@@ -736,6 +734,8 @@ class Agent:
     ####### MAIN
 
     def main(self):
+        self.parse_character()
+
         try:
             try:
                 self.step(A.Command.AUTOPICKUP)
