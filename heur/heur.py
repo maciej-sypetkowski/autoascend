@@ -1,19 +1,17 @@
-import gym
 import json
 import multiprocessing.pool
-import nle
-import nle.nethack as nh
-import numpy as np
 import os
-import sys
 import sys
 import termios
 import time
 import traceback
 import tty
 from collections import Counter
-from nle.nethack import actions as A
 from pathlib import Path
+
+import gym
+import nle.nethack as nh
+import numpy as np
 
 from agent import Agent, BLStats, G
 from glyph import ALL
@@ -51,7 +49,7 @@ class EnvWrapper:
             if (text != 0).any():
                 print(chr(letter), '->', bytes(text).decode())
         print('-' * 20)
-        self.env.render()
+        # self.env.render()
         print('-' * 20)
         print()
 
@@ -225,7 +223,7 @@ def run_single_interactive_game(seed, skip_to):
         env = EnvWrapper(gym.make('NetHackChallenge-v0'), skip_to=skip_to)
         env.env.seed(seed, seed)
 
-        agent = Agent(env, verbose=True)
+        agent = Agent(env, verbose=True, visualizer=True)
         agent.main()
 
     finally:
@@ -251,9 +249,13 @@ def run_profiling():
     print('steps_per_second:', sum([r['steps'] for r in res]) / duration)
     print('games_per_hour  :', len(res) / duration * 3600)
 
+    # TODO: use for visualization:
+    # gprof2dot -f pstats myLog.profile -o callingGraph.dot
+    # xdot callingGraph.dot
+
 
 def run_simulations():
-    from multiprocessing import Pool, Process, Queue
+    from multiprocessing import Process, Queue
     from matplotlib import pyplot as plt
     import seaborn as sns
     sns.set()

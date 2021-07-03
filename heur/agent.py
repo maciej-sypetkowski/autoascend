@@ -1,16 +1,16 @@
 import contextlib
-import nle.nethack as nh
-import numba as nb
-import numpy as np
-import operator
 import re
 from collections import namedtuple
 from functools import partial
 from itertools import chain
+
+import nle.nethack as nh
+import numpy as np
 from nle.nethack import actions as A
 
 import utils
-from glyph import SS, MON, C, ALL
+from glyph import SS, MON, C
+from visualize import Visualizer
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
@@ -167,7 +167,9 @@ class CH:
         if len(all) == 1:
             alignment, _, gender, race, role = all[0]
         else:
-            all = re.findall('You are an? ([a-zA-Z ]+), a level (\d+) (([a-z]+) )?([a-z]+) ([A-Z][a-z]+). *You are ([a-z]+)', message)
+            all = re.findall(
+                'You are an? ([a-zA-Z ]+), a level (\d+) (([a-z]+) )?([a-z]+) ([A-Z][a-z]+). *You are ([a-z]+)',
+                message)
             assert len(all) == 1, repr(message)
             _, _, _, gender, race, role, alignment = all[0]
 
@@ -198,7 +200,7 @@ class CH:
 
 
 class Agent:
-    def __init__(self, env, seed=0, verbose=False):
+    def __init__(self, env, seed=0, verbose=False, visualizer=False):
         self.env = env
         self.verbose = verbose
         self.rng = np.random.RandomState(seed)
@@ -214,6 +216,12 @@ class Agent:
         self.last_bfs_step = None
 
         self.update_map()
+
+        self.visualizer = None
+        if visualizer:
+            self.visualizer = Visualizer(self)
+            self.visualizer.update()
+
         self.parse_character()
 
     def parse_character(self):
@@ -223,7 +231,6 @@ class Agent:
             text = ' '.join([bytes(t).decode() for t in text])
             self.character = CH.parse(text)
             self.step(A.Command.ESC)
-
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
@@ -235,6 +242,8 @@ class Agent:
             raise AgentFinished()
 
         self.update_map()
+        if self.visualizer is not None:
+            self.visualizer.update()
 
         return obs, reward, done, info
 
