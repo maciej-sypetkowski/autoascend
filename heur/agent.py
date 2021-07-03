@@ -611,8 +611,8 @@ class Agent:
         # if closest is None:
         #    return False
 
-        ty, tx = closest
-        path = self.path(self.blstats.y, self.blstats.x, ty, tx)
+        target_y, target_x = closest
+        path = self.path(self.blstats.y, self.blstats.x, target_y, target_x)
 
         with self.env.debug_path(path, color=(255, 255, 0)):
             for y, x in path[1:]:
@@ -623,6 +623,8 @@ class Agent:
                 self.eat()  # TODO: what
 
     def explore1(self):
+
+        # doors
         for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
             if self.glyphs[py, px] in G.DOOR_CLOSED:
                 if not self.open_door(py, px):
@@ -648,20 +650,23 @@ class Agent:
                     if dx == 0 or dy == 0:
                         to_explore |= utils.translate(self.glyphs_mask_in(G.DOOR_CLOSED), dy, dx)
 
+        # consider exploring tile only when there is a path to it
         to_explore &= dis != -1
 
+        # find all closest to_explore tiles
         nonzero_y, nonzero_x = \
             (dis == (dis * (to_explore) - 1).astype(np.uint16).min() + 1).nonzero()
         nonzero = [(y, x) for y, x in zip(nonzero_y, nonzero_x) if to_explore[y, x]]
         if len(nonzero) == 0:
             return False
 
+        # select closest to_explore tile
         nonzero_y, nonzero_x = zip(*nonzero)
-        ty, tx = nonzero_y[0], nonzero_x[0]
+        target_y, target_x = nonzero_y[0], nonzero_x[0]
 
         del level
 
-        path = self.path(self.blstats.y, self.blstats.x, ty, tx, dis=dis)
+        path = self.path(self.blstats.y, self.blstats.x, target_y, target_x, dis=dis)
         with self.env.debug_path(path, color=(0, 255, 0)):
             for y, x in path[1:]:
                 if not self.current_level().walkable[y, x]:
@@ -690,8 +695,8 @@ class Agent:
         nonzero_y, nonzero_x = (prio == prio.max()).nonzero()
         assert len(nonzero_y) >= 0
 
-        ty, tx = nonzero_y[0], nonzero_x[0]
-        path = self.path(self.blstats.y, self.blstats.x, ty, tx, dis=dis)
+        target_y, target_x = nonzero_y[0], nonzero_x[0]
+        path = self.path(self.blstats.y, self.blstats.x, target_y, target_x, dis=dis)
         with self.env.debug_path(path, color=(0, 255, 255)):
             for y, x in path[1:]:
                 if not self.current_level().walkable[y, x]:
@@ -721,9 +726,9 @@ class Agent:
         if dis[pos] == -1:
             return False
 
-        ty, tx = pos
+        target_y, target_x = pos
 
-        path = self.path(self.blstats.y, self.blstats.x, ty, tx, dis=dis)
+        path = self.path(self.blstats.y, self.blstats.x, target_y, target_x, dis=dis)
         with self.env.debug_path(path, color=(0, 0, 255)):
             for y, x in path[1:]:
                 if not self.current_level().walkable[y, x]:
