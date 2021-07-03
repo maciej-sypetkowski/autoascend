@@ -1,4 +1,5 @@
 import json
+import visualize
 import multiprocessing.pool
 import os
 import sys
@@ -18,9 +19,13 @@ from glyph import ALL
 
 
 class EnvWrapper:
-    def __init__(self, env, skip_to=0):
+    def __init__(self, env, skip_to=0, visualizer=False):
         self.env = env
         self.skip_to = skip_to
+        self.visualizer = None
+        if visualizer:
+            self.visualizer = visualize.Visualizer(self)
+        self.last_observation = None
 
     def reset(self):
         print('\n' * 100)
@@ -33,6 +38,8 @@ class EnvWrapper:
 
         blstats = BLStats(*obs['blstats'])
         assert obs['chars'][blstats.y, blstats.x] == ord('@')
+
+        self.last_observation = obs
 
         return obs
 
@@ -49,9 +56,13 @@ class EnvWrapper:
             if (text != 0).any():
                 print(chr(letter), '->', bytes(text).decode())
         print('-' * 20)
-        # self.env.render()
+        self.env.render()
         print('-' * 20)
         print()
+
+        if self.visualizer is not None:
+            self.visualizer.update(obs)
+
 
     def print_help(self):
         scene_glyphs = set(self.env.last_observation[0].reshape(-1))
@@ -115,6 +126,8 @@ class EnvWrapper:
                 return action
 
     def step(self, agent_action):
+        self.render(self.last_observation)
+
         print()
         print('agent_action:', agent_action)
         print()
@@ -132,12 +145,16 @@ class EnvWrapper:
         print()
 
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
+        self.last_observation = obs
         self.score += reward
         self.step_count += 1
-        self.render(obs)
         if not done:
             G.assert_map(obs['glyphs'], obs['chars'])
         return obs, reward, done, info
+
+    def debug_path(self, path, color):
+        if self.visualizer is not None:
+            return self.visualizer.debug_path(path, color)
 
 
 class EnvLimitWrapper:
@@ -220,10 +237,10 @@ def run_single_interactive_game(seed, skip_to):
     termios.tcgetattr(sys.stdin)
     tty.setcbreak(sys.stdin.fileno())
     try:
-        env = EnvWrapper(gym.make('NetHackChallenge-v0'), skip_to=skip_to)
+        env = EnvWrapper(gym.make('NetHackChallenge-v0'), skip_to=skip_to, visualizer=True)
         env.env.seed(seed, seed)
 
-        agent = Agent(env, verbose=True, visualizer=True)
+        agent = Agent(env, verbose=True)
         agent.main()
 
     finally:

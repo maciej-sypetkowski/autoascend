@@ -11,12 +11,35 @@ def draw_grid(imgs, ncol):
     return img
 
 
+class DrawPathScope():
+
+    def __init__(self, visualizer, path, color):
+        self.visualizer = visualizer
+        self.path = path
+        self.color = color
+
+    def draw_fun(self, rendered):
+        for p1, p2 in zip(self.path, self.path[1:]):
+            p1 = [round((i + 0.5) * self.visualizer.tile_size) for i in p1][::-1]
+            p2 = [round((i + 0.5) * self.visualizer.tile_size) for i in p2][::-1]
+            cv2.line(rendered, p1, p2, self.color, 2)
+        return rendered
+
+    def __enter__(self):
+        self.fun_instance = lambda x: self.draw_fun(x)
+        self.visualizer.drawers.add(self.fun_instance)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.visualizer.drawers.remove(self.fun_instance)
+
+
 class Visualizer:
 
-    def __init__(self, agent, tileset_path='/workspace/heur/tilesets/3.6.1tiles32.png', tile_size=32):
-        self.agent = agent
+    def __init__(self, env, tileset_path='/workspace/heur/tilesets/3.6.1tiles32.png', tile_size=32):
+        self.env = env
+        self.tile_size = tile_size
 
-        self.tileset = cv2.imread(tileset_path)
+        self.tileset = cv2.imread(tileset_path)[..., ::-1]
         if self.tileset is None:
             raise FileNotFoundError(f'Tileset {tileset_path} not found')
         if self.tileset.shape[0] % tile_size != 0 or self.tileset.shape[1] % tile_size != 0:
@@ -24,7 +47,6 @@ class Visualizer:
 
         h = self.tileset.shape[0] // tile_size
         w = self.tileset.shape[1] // tile_size
-        print(h, w)
         tiles = []
         for y in range(h):
             y *= tile_size
@@ -40,11 +62,17 @@ class Visualizer:
 
         cv2.namedWindow('NetHackVis')
 
-    def update(self):
-        glyphs = self.agent.glyphs.copy()
+        self.drawers = set()
+
+    def debug_path(self, path, color):
+        return DrawPathScope(self, path, color)
+
+    def update(self, obs):
+        glyphs = obs['glyphs']
         tiles_idx = self.glyph2tile[glyphs]
         tiles = self.tileset[tiles_idx.reshape(-1)]
         rendered = draw_grid(tiles, glyphs.shape[1])
-        cv2.imshow('NetHackVis', rendered)
+        for drawer in self.drawers:
+            rendered = drawer(rendered)
+        cv2.imshow('NetHackVis', rendered[..., ::-1])
         cv2.waitKey(1)
-
