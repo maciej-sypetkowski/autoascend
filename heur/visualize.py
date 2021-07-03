@@ -1,6 +1,28 @@
 import cv2
 import numpy as np
 
+MSG_HISTORY_COUNT = 6
+FONT_SIZE = 32
+
+
+def put_text(img, text, pos, scale=FONT_SIZE / 55, thickness=1, color=(255, 255, 0), console=False):
+    # TODO: figure out how exactly opencv anchors the text
+    pos = (pos[0] + FONT_SIZE // 2 + 2, pos[1] + FONT_SIZE // 2 + 2)
+
+    if console:
+        # TODO: implement equal characters size font
+        # scale *= 2
+        # font = cv2.FONT_HERSHEY_PLAIN
+        font = cv2.FONT_HERSHEY_SIMPLEX
+    else:
+        font = cv2.FONT_HERSHEY_SIMPLEX
+    return cv2.putText(img, text, pos, font,
+                       scale, color, thickness, cv2.LINE_AA)
+
+
+def draw_frame(img, color=(90, 90, 90), thickness=3):
+    return cv2.rectangle(img, (0, 0), (img.shape[1] - 1, img.shape[0] - 1), color, thickness)
+
 
 def draw_grid(imgs, ncol):
     grid = imgs.reshape((-1, ncol, *imgs[0].shape))
@@ -60,19 +82,58 @@ class Visualizer:
 
         print('Read tileset of size:', self.tileset.shape)
 
-        cv2.namedWindow('NetHackVis')
+        cv2.namedWindow('NetHackVis', cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+
+        self.message_history = list()
 
         self.drawers = set()
 
     def debug_path(self, path, color):
         return DrawPathScope(self, path, color)
 
+    def draw_topbar(self, obs, width):
+        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
+        txt = ''
+        if self.env.agent is not None:
+            txt = self.env.agent.message
+        if txt:
+            self.message_history.append(txt)
+        for i in range(MSG_HISTORY_COUNT):
+            if i >= len(self.message_history):
+                break
+            txt = self.message_history[-i - 1]
+            if i == 0:
+                put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+            else:
+                put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        draw_frame(messages_vis)
+
+        blstats = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width - width // 2, 3)).astype(np.uint8)
+        txt = ''
+        put_text(blstats, txt, (0, 0), color=(255, 255, 255))
+        draw_frame(blstats)
+
+        return np.concatenate([messages_vis, blstats], axis=1)
+
+    def draw_tty(self, obs, width):
+        vis = np.zeros((FONT_SIZE * len(obs['tty_chars']), width, 3)).astype(np.uint8)
+        for i, line in enumerate(obs['tty_chars']):
+            txt = ''.join([chr(i) for i in line])
+            put_text(vis, txt, (0, i * FONT_SIZE), console=True)
+        draw_frame(vis)
+        return vis
+
     def update(self, obs):
         glyphs = obs['glyphs']
         tiles_idx = self.glyph2tile[glyphs]
         tiles = self.tileset[tiles_idx.reshape(-1)]
-        rendered = draw_grid(tiles, glyphs.shape[1])
+        scene_vis = draw_grid(tiles, glyphs.shape[1])
         for drawer in self.drawers:
-            rendered = drawer(rendered)
+            scene_vis = drawer(scene_vis)
+        draw_frame(scene_vis)
+        topbar = self.draw_topbar(obs, scene_vis.shape[1])
+        tty = self.draw_tty(obs, scene_vis.shape[1])
+        rendered = np.concatenate([topbar, scene_vis, tty], axis=0)
+
         cv2.imshow('NetHackVis', rendered[..., ::-1])
         cv2.waitKey(1)
