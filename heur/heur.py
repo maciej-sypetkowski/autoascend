@@ -147,8 +147,10 @@ class EnvWrapper:
                 self.visualizer.frame_skipping = visualize.FAST_FRAME_SKIPPING
                 action = None
             else:
+                old_frame_skipping = self.visualizer.frame_skipping
                 self.visualizer.frame_skipping = 1
-                self.render(self.last_observation)
+                if old_frame_skipping > 1:
+                    self.render(self.last_observation)
                 action = self.get_action()
 
             if action is None:
