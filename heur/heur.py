@@ -66,6 +66,9 @@ class EnvWrapper:
             for letter, text, cls in zip(obs['inv_letters'], obs['inv_strs'], obs['inv_oclasses']):
                 if (text != 0).any():
                     print(obj_classes[cls].ljust(7), chr(letter), '->', bytes(text).decode())
+            if self.agent is not None:
+                for letter, item in self.agent.inventory.items():
+                    print(letter, '->', item)
             print('-' * 20)
             self.env.render()
             print('-' * 20)
@@ -174,7 +177,7 @@ class EnvWrapper:
                 self.score = int(end_reason[6])
                 end_reason = ' '.join(end_reason[8:-2])
             else:
-                assert self.score == 0
+                assert self.score == 0, end_reason
                 end_reason = ' '.join(end_reason[7:-2])
             self.end_reason = '.'.join(end_reason.split('.')[1:]).strip()
         if self.step_limit is not None and self.step_count == self.step_limit + 1:
@@ -210,9 +213,9 @@ class EnvWrapper:
         }
 
 
-def single_simulation(seed, timeout=60):
+def single_simulation(seed, timeout=60, step_limit=10000):
     start_time = time.time()
-    env = EnvWrapper(gym.make('NetHackChallenge-v0'), step_limit=10000)
+    env = EnvWrapper(gym.make('NetHackChallenge-v0'), step_limit=step_limit)
     env.env.seed(seed, seed)
     agent = Agent(env, verbose=False)
     env.set_agent(agent)
@@ -228,7 +231,7 @@ def single_simulation(seed, timeout=60):
         env.end_reason = 'timeout'
     except BaseException as e:
         env.end_reason = f'exception: {"".join(traceback.format_exception(None, e, e.__traceback__))}'
-        print('Seed {seed}', env.end_reason)
+        print(f'Seed {seed}, step {env.step_count}:', env.end_reason)
 
     end_time = time.time()
     summary = env.get_summary()

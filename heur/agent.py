@@ -198,6 +198,83 @@ class CH:
                                       ]])
 
 
+class Item:
+    UNKNOWN = 0
+    CURSED = 1
+    UNCURSED = 2
+    BLESSED = 3
+
+    def __init__(self, glyphs, count, status, modifier):
+        # glyphs is a list of possible glyphs for this item
+        assert isinstance(glyphs, list)
+        assert all(map(nh.glyph_is_object, glyphs))
+        assert len(glyphs)
+
+        self.glyphs = glyphs
+        self.count = count
+        self.status = status
+        self.modifier = modifier
+
+    def __str__(self):
+        return (f'{self.count}_'
+                f'{self.status if self.status is not None else ""}_'
+                f'{self.modifier if self.modifier is not None else ""}_'
+                f'{",".join([nh.objdescr.from_idx(nh.glyph_to_obj(glyph)).oc_name for glyph in self.glyphs])}'
+                )
+
+
+class ItemManager:
+    def __init__(self, agent):
+        self.agent = agent
+
+    def get_item_from_text(self, text, category):
+        assert category not in [nh.BALL_CLASS, nh.ROCK_CLASS, nh.RANDOM_CLASS]
+
+        matches = re.findall('^(a|an|\d+)( (cursed|uncursed|blessed))?( rustproof| poisoned| corroded)*( ([+-]\d+))? ([a-zA-z- ]+)( \(([a-zA-Z0-9:; ]+)\))?$', text)
+        assert len(matches) <= 1, text
+        assert len(matches), text
+
+        count, _, status, effects, _, modifier, name, _, info = matches[0]
+        # TODO: effects
+
+        count = int({'a': 1, 'an': 1}.get(count, count))
+        status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
+        modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
+
+        #if category not in [nh.WEAPON_CLASS, nh.ARMOR_CLASS]:
+        #    return None # TODO
+
+        if category == nh.WEAPON_CLASS:
+            name_augmentation = lambda x: [x, f'{x}s']
+        elif category == nh.ARMOR_CLASS:
+            name_augmentation = lambda x: [x, f'pair of {x}']
+        elif category in [nh.AMULET_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.POTION_CLASS, nh.RING_CLASS,
+                          nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.TOOL_CLASS, nh.WAND_CLASS, nh.COIN_CLASS]:
+            return Item([i + nh.GLYPH_OBJ_OFF for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == category], count, status, modifier)
+        else:
+            print(category)
+            assert 0
+
+        ret = []
+
+        if name == 'wakizashi':
+            name = 'short sword'
+        elif name == 'ninja-to':
+            name = 'broadsword'
+
+        for i in range(nh.NUM_OBJECTS):
+            if ord(nh.objclass(i).oc_class) != category:
+                continue
+
+            obj_descr = nh.objdescr.from_idx(i).oc_descr
+            obj_name = nh.objdescr.from_idx(i).oc_name
+            if (obj_name and name in name_augmentation(obj_name)) or (obj_descr and name in name_augmentation(obj_descr)):
+                ret.append(i)
+
+        assert len(ret) == 1, (ret, name, text)
+        return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier)
+
+
 class Agent:
     def __init__(self, env, seed=0, verbose=False):
         self.env = env
@@ -213,6 +290,10 @@ class Agent:
 
         self.last_bfs_dis = None
         self.last_bfs_step = None
+
+        self.previous_inv_strs = None
+
+        self.item_manager = ItemManager(self)
 
         self.update_map()
 
@@ -254,9 +335,6 @@ class Agent:
         finally:
             assert fun in self.on_update
             self.on_update.pop(self.on_update.index(fun))
-
-        for f in self.on_update:
-            f()
 
     @contextlib.contextmanager
     def stop_updating(self, update_at_end=False):
@@ -347,14 +425,37 @@ class Agent:
 
         self.message, self.popup = self.get_message_and_popup(obs)
 
+        if obs['misc'][1]: # entering text
+            self.step(A.Command.ESC)
+            return
+
         if b'[yn]' in bytes(obs['tty_chars'].reshape(-1)):
             self.enter_text('y')
             return
 
         self.update_level()
+        self.update_inventory()
 
         for func in self.on_update:
             func()
+
+    def update_inventory(self):
+        if (self.last_observation['inv_strs'] == self.previous_inv_strs).all():
+            return
+
+        self.inventory = {}
+        for item_name, category, letter in zip(
+                self.last_observation['inv_strs'],
+                self.last_observation['inv_oclasses'],
+                self.last_observation['inv_letters']):
+            item_name = bytes(item_name).decode().strip('\0')
+            letter = chr(letter)
+            if not item_name:
+                continue
+            item = self.item_manager.get_item_from_text(item_name, category)
+            self.inventory[letter] = item
+
+        self.previous_inv_strs = self.last_observation['inv_strs']
 
     def current_level(self):
         key = (self.blstats.dungeon_number, self.blstats.level_number)
@@ -627,17 +728,18 @@ class Agent:
         # doors
         for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
             if self.glyphs[py, px] in G.DOOR_CLOSED:
-                if not self.open_door(py, px):
-                    if not 'locked' in self.message:
-                        for _ in range(6):
-                            if self.open_door(py, px):
-                                break
+                with self.panic_if_position_changes():
+                    if not self.open_door(py, px):
+                        if not 'locked' in self.message:
+                            for _ in range(6):
+                                if self.open_door(py, px):
+                                    break
+                            else:
+                                while self.glyphs[py, px] in G.DOOR_CLOSED:
+                                    self.kick(py, px)
                         else:
                             while self.glyphs[py, px] in G.DOOR_CLOSED:
                                 self.kick(py, px)
-                    else:
-                        while self.glyphs[py, px] in G.DOOR_CLOSED:
-                            self.kick(py, px)
                 break
 
         level = self.current_level()
