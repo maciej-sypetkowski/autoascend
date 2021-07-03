@@ -3,6 +3,7 @@ import numpy as np
 
 MSG_HISTORY_COUNT = 6
 FONT_SIZE = 32
+FAST_FRAME_SKIPPING = 8
 
 
 def put_text(img, text, pos, scale=FONT_SIZE / 55, thickness=1, color=(255, 255, 0), console=False):
@@ -88,6 +89,9 @@ class Visualizer:
 
         self.drawers = set()
 
+        self.frame_skipping = 1
+        self.frame_counter = -1
+
     def debug_path(self, path, color):
         return DrawPathScope(self, path, color)
 
@@ -124,6 +128,10 @@ class Visualizer:
         return vis
 
     def update(self, obs):
+        self.frame_counter += 1
+        if self.frame_counter % self.frame_skipping != 0:
+            return
+
         glyphs = obs['glyphs']
         tiles_idx = self.glyph2tile[glyphs]
         tiles = self.tileset[tiles_idx.reshape(-1)]
@@ -134,6 +142,7 @@ class Visualizer:
         topbar = self.draw_topbar(obs, scene_vis.shape[1])
         tty = self.draw_tty(obs, scene_vis.shape[1])
         rendered = np.concatenate([topbar, scene_vis, tty], axis=0)
+        self.frame_counter += 1
 
         cv2.imshow('NetHackVis', rendered[..., ::-1])
         cv2.waitKey(1)

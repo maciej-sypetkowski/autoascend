@@ -306,16 +306,46 @@ class Agent:
         finally:
             self.on_update = list(filter(lambda f: f not in funcs, self.on_update))
 
+    def get_message_and_popup(self, obs):
+        """ Uses MORE action to get full popup and/or message.
+        """
+        message = bytes(obs['message']).decode()
+        popup = []
+        is_extended_message = False
+        while b'--More--' in bytes(obs['tty_chars'].reshape(-1)):
+            assert not is_extended_message
+            for i, line in enumerate(obs['tty_chars']):
+                line = bytes(line)
+                if b'--More--' not in line:
+                    continue
+                if i == 0:
+                    message = line.decode()
+                    is_extended_message = True
+                else:
+                    popup_start_column = line.find(b'--More--')
+                    for line in obs['tty_chars'][:i]:
+                        line = bytes(line)
+                        # TODO: consider cutting line suffix (check if it is always of the same length)
+                        popup.append(line[popup_start_column:].decode().strip())
+                    break
+            self.step(A.MiscAction.MORE)
+            obs = self.last_observation
+
+        if message == bytes([0] * 256).decode():
+            message = ""
+
+        if popup and message:
+            raise ValueError(f'Either message ({str(message)}) or popup ({str(popup)}) should be empty')
+
+        return message, popup
+
     def update_map(self):
         obs = self.last_observation
 
         self.blstats = BLStats(*obs['blstats'])
         self.glyphs = obs['glyphs']
-        self.message = bytes(obs['message']).decode()
 
-        if b'--More--' in bytes(obs['tty_chars'].reshape(-1)):
-            self.step(A.Command.ESC)
-            return
+        self.message, self.popup = self.get_message_and_popup(obs)
 
         if b'[yn]' in bytes(obs['tty_chars'].reshape(-1)):
             self.enter_text('y')

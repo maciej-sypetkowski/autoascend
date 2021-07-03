@@ -144,8 +144,11 @@ class EnvWrapper:
             print()
 
             if self.step_count < self.skip_to:
+                self.visualizer.frame_skipping = visualize.FAST_FRAME_SKIPPING
                 action = None
             else:
+                self.visualizer.frame_skipping = 1
+                self.render(self.last_observation)
                 action = self.get_action()
 
             if action is None:
