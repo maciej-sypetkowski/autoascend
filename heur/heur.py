@@ -73,8 +73,8 @@ class EnvWrapper:
             self.env.render()
             print('-' * 20)
             print()
-
-            self.visualizer.update(obs)
+            self.visualizer.step(self.last_observation)
+            self.visualizer.render()
 
     def print_help(self):
         scene_glyphs = set(self.env.last_observation[0].reshape(-1))

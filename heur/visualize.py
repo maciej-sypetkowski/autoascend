@@ -116,20 +116,28 @@ class Visualizer:
     def debug_log(self, txt, color):
         return DebugLogScope(self, txt, color)
 
-    def update(self, obs):
+    def step(self, obs):
+        self.last_obs = obs
+        self._update_log_message_history()
+        self._update_message_history()
+
+    def render(self):
         self.frame_counter += 1
         if self.frame_counter % self.frame_skipping != 0:
             return
 
-        glyphs = obs['glyphs']
+        if self.last_obs is None:
+            return
+
+        glyphs = self.last_obs['glyphs']
         tiles_idx = self.glyph2tile[glyphs]
         tiles = self.tileset[tiles_idx.reshape(-1)]
         scene_vis = _draw_grid(tiles, glyphs.shape[1])
         for drawer in self.drawers:
             scene_vis = drawer(scene_vis)
         _draw_frame(scene_vis)
-        topbar = self._draw_topbar(obs, scene_vis.shape[1])
-        tty = self._draw_tty(obs, scene_vis.shape[1])
+        topbar = self._draw_topbar(self.last_obs, scene_vis.shape[1])
+        tty = self._draw_tty(self.last_obs, scene_vis.shape[1])
 
         rendered = np.concatenate([topbar, scene_vis, tty], axis=0)
         inventory = self._draw_inventory(rendered.shape[0])
@@ -147,11 +155,6 @@ class Visualizer:
 
     def _draw_debug_message_log(self, width):
         vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
-        txt = ''
-        if self.env.agent is not None:
-            txt = ' | '.join(self.log_messages)
-        # if txt:
-        self.log_messages_history.append(txt)
         for i in range(MSG_HISTORY_COUNT):
             if i >= len(self.log_messages_history):
                 break
@@ -163,13 +166,15 @@ class Visualizer:
         _draw_frame(vis)
         return vis
 
-    def _draw_message_log(self, width):
-        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
+    def _update_log_message_history(self):
         txt = ''
         if self.env.agent is not None:
-            txt = self.env.agent.message
+            txt = ' | '.join(self.log_messages)
         # if txt:
-        self.message_history.append(txt)
+        self.log_messages_history.append(txt)
+
+    def _draw_message_log(self, width):
+        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
         for i in range(MSG_HISTORY_COUNT):
             if i >= len(self.message_history):
                 break
@@ -180,6 +185,13 @@ class Visualizer:
                 _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
         _draw_frame(messages_vis)
         return messages_vis
+
+    def _update_message_history(self):
+        txt = ''
+        if self.env.agent is not None:
+            txt = self.env.agent.message
+        # if txt:
+        self.message_history.append(txt)
 
     def _draw_tty(self, obs, width):
         vis = np.zeros((FONT_SIZE * len(obs['tty_chars']), width, 3)).astype(np.uint8)
