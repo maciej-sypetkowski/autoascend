@@ -76,7 +76,6 @@ class EnvWrapper:
 
             self.visualizer.update(obs)
 
-
     def print_help(self):
         scene_glyphs = set(self.env.last_observation[0].reshape(-1))
         obj_classes = {getattr(nh, x): x for x in dir(nh) if x.endswith('_CLASS')}
@@ -202,6 +201,11 @@ class EnvWrapper:
     def debug_path(self, path, color):
         if self.visualizer is not None:
             return self.visualizer.debug_path(path, color)
+        return contextlib.suppress()
+
+    def debug_log(self, txt, color=(255, 255, 255)):
+        if self.visualizer is not None:
+            return self.visualizer.debug_log(txt, color)
         return contextlib.suppress()
 
     def get_summary(self):
@@ -341,7 +345,7 @@ def run_simulations():
             ax = fig.add_subplot(spec[:len(histogram_keys) // 2, 1])
             sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
 
-            ax = fig.add_subplot(spec[len(histogram_keys) // 2 : -2, 1])
+            ax = fig.add_subplot(spec[len(histogram_keys) // 2: -2, 1])
             sns.scatterplot(x='turns', y='score', data=res, ax=ax)
 
             ax = fig.add_subplot(spec[-2:, :])

@@ -1,14 +1,16 @@
+from functools import wraps
+
 import cv2
 import numpy as np
 
-MSG_HISTORY_COUNT = 6
+MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
 FAST_FRAME_SKIPPING = 8
 
 
-def put_text(img, text, pos, scale=FONT_SIZE / 55, thickness=1, color=(255, 255, 0), console=False):
+def _put_text(img, text, pos, scale=FONT_SIZE / 35, thickness=1, color=(255, 255, 0), console=False):
     # TODO: figure out how exactly opencv anchors the text
-    pos = (pos[0] + FONT_SIZE // 2 + 2, pos[1] + FONT_SIZE // 2 + 2)
+    pos = (pos[0] + FONT_SIZE // 2, pos[1] + FONT_SIZE // 2 + 8)
 
     if console:
         # TODO: implement equal characters size font
@@ -21,11 +23,11 @@ def put_text(img, text, pos, scale=FONT_SIZE / 55, thickness=1, color=(255, 255,
                        scale, color, thickness, cv2.LINE_AA)
 
 
-def draw_frame(img, color=(90, 90, 90), thickness=3):
+def _draw_frame(img, color=(90, 90, 90), thickness=3):
     return cv2.rectangle(img, (0, 0), (img.shape[1] - 1, img.shape[0] - 1), color, thickness)
 
 
-def draw_grid(imgs, ncol):
+def _draw_grid(imgs, ncol):
     grid = imgs.reshape((-1, ncol, *imgs[0].shape))
     rows = []
     for row in grid:
@@ -54,6 +56,20 @@ class DrawPathScope():
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.visualizer.drawers.remove(self.fun_instance)
+
+
+class DebugLogScope():
+
+    def __init__(self, visualizer, txt, color):
+        self.visualizer = visualizer
+        self.txt = txt
+        self.color = color
+
+    def __enter__(self):
+        self.visualizer.log_messages.append(self.txt)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.visualizer.log_messages.remove(self.txt)
 
 
 class Visualizer:
@@ -88,6 +104,8 @@ class Visualizer:
         self.message_history = list()
 
         self.drawers = set()
+        self.log_messages = list()
+        self.log_messages_history = list()
 
         self.frame_skipping = 1
         self.frame_counter = -1
@@ -95,37 +113,8 @@ class Visualizer:
     def debug_path(self, path, color):
         return DrawPathScope(self, path, color)
 
-    def draw_topbar(self, obs, width):
-        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
-        txt = ''
-        if self.env.agent is not None:
-            txt = self.env.agent.message
-        if txt:
-            self.message_history.append(txt)
-        for i in range(MSG_HISTORY_COUNT):
-            if i >= len(self.message_history):
-                break
-            txt = self.message_history[-i - 1]
-            if i == 0:
-                put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
-            else:
-                put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
-        draw_frame(messages_vis)
-
-        blstats = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width - width // 2, 3)).astype(np.uint8)
-        txt = ''
-        put_text(blstats, txt, (0, 0), color=(255, 255, 255))
-        draw_frame(blstats)
-
-        return np.concatenate([messages_vis, blstats], axis=1)
-
-    def draw_tty(self, obs, width):
-        vis = np.zeros((FONT_SIZE * len(obs['tty_chars']), width, 3)).astype(np.uint8)
-        for i, line in enumerate(obs['tty_chars']):
-            txt = ''.join([chr(i) for i in line])
-            put_text(vis, txt, (0, i * FONT_SIZE), console=True)
-        draw_frame(vis)
-        return vis
+    def debug_log(self, txt, color):
+        return DebugLogScope(self, txt, color)
 
     def update(self, obs):
         self.frame_counter += 1
@@ -135,14 +124,95 @@ class Visualizer:
         glyphs = obs['glyphs']
         tiles_idx = self.glyph2tile[glyphs]
         tiles = self.tileset[tiles_idx.reshape(-1)]
-        scene_vis = draw_grid(tiles, glyphs.shape[1])
+        scene_vis = _draw_grid(tiles, glyphs.shape[1])
         for drawer in self.drawers:
             scene_vis = drawer(scene_vis)
-        draw_frame(scene_vis)
-        topbar = self.draw_topbar(obs, scene_vis.shape[1])
-        tty = self.draw_tty(obs, scene_vis.shape[1])
+        _draw_frame(scene_vis)
+        topbar = self._draw_topbar(obs, scene_vis.shape[1])
+        tty = self._draw_tty(obs, scene_vis.shape[1])
+
         rendered = np.concatenate([topbar, scene_vis, tty], axis=0)
+        inventory = self._draw_inventory(rendered.shape[0])
+        rendered = np.concatenate([rendered, inventory], axis=1)
+
         self.frame_counter += 1
 
         cv2.imshow('NetHackVis', rendered[..., ::-1])
         cv2.waitKey(1)
+
+    def _draw_topbar(self, obs, width):
+        messages_vis = self._draw_message_log(width)
+        log_messages_vis = self._draw_debug_message_log(width)
+        return np.concatenate([messages_vis, log_messages_vis], axis=1)
+
+    def _draw_debug_message_log(self, width):
+        vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
+        txt = ''
+        if self.env.agent is not None:
+            txt = ' | '.join(self.log_messages)
+        # if txt:
+        self.log_messages_history.append(txt)
+        for i in range(MSG_HISTORY_COUNT):
+            if i >= len(self.log_messages_history):
+                break
+            txt = self.log_messages_history[-i - 1]
+            if i == 0:
+                _put_text(vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+            else:
+                _put_text(vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        _draw_frame(vis)
+        return vis
+
+    def _draw_message_log(self, width):
+        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
+        txt = ''
+        if self.env.agent is not None:
+            txt = self.env.agent.message
+        # if txt:
+        self.message_history.append(txt)
+        for i in range(MSG_HISTORY_COUNT):
+            if i >= len(self.message_history):
+                break
+            txt = self.message_history[-i - 1]
+            if i == 0:
+                _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+            else:
+                _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        _draw_frame(messages_vis)
+        return messages_vis
+
+    def _draw_tty(self, obs, width):
+        vis = np.zeros((FONT_SIZE * len(obs['tty_chars']), width, 3)).astype(np.uint8)
+        for i, line in enumerate(obs['tty_chars']):
+            txt = ''.join([chr(i) for i in line])
+            _put_text(vis, txt, (0, i * FONT_SIZE), console=True)
+        _draw_frame(vis)
+        return vis
+
+    def _draw_item(self, letter, item, width, height):
+        vis = np.zeros((height, width, 3)).astype(np.uint8)
+        _draw_frame(vis, color=(50, 50, 50), thickness=2)
+        _put_text(vis, str(letter), (0, 0))
+        import agent
+        status_str, status_col = {
+            agent.Item.UNKNOWN: (' ', (255, 255, 255)),
+            agent.Item.CURSED: ('C', (255, 0, 0)),
+            agent.Item.UNCURSED: ('U', (0, 255, 255)),
+            agent.Item.BLESSED: ('B', (0, 255, 0)),
+        }[item.status]
+        _put_text(vis, str(letter), (0, 0))
+        _put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)
+        if item.modifier is not None:
+            _put_text(vis, str(item.modifier), (FONT_SIZE * 2, 0))
+        _put_text(vis, str(item), (FONT_SIZE * 4, 0))
+        return vis
+
+    def _draw_inventory(self, height):
+        width = 800
+        vis = np.zeros((height, width, 3)).astype(np.uint8)
+        if self.env.agent:
+            item_h = FONT_SIZE
+            for i, (letter, item) in enumerate(self.env.agent.inventory.items()):
+                vis[i * item_h:(i + 1) * item_h] = self._draw_item(letter, item, width, item_h)
+        _draw_frame(vis)
+        return vis

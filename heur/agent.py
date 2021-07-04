@@ -6,6 +6,7 @@ from itertools import chain
 
 import nle.nethack as nh
 import numpy as np
+import toolz
 from nle.nethack import actions as A
 
 import utils
@@ -233,7 +234,9 @@ class ItemManager:
     def get_item_from_text(self, text, category):
         assert category not in [nh.BALL_CLASS, nh.ROCK_CLASS, nh.RANDOM_CLASS]
 
-        matches = re.findall('^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thourogly )?(rustproof|poisoned|corroded|rusty|burnt))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([a-zA-Z0-9:; ]+)\))?$', text)
+        matches = re.findall(
+            '^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thourogly )?(rustproof|poisoned|corroded|rusty|burnt))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([a-zA-Z0-9:; ]+)\))?$',
+            text)
         assert len(matches) <= 1, text
         assert len(matches), text
 
@@ -244,7 +247,7 @@ class ItemManager:
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
 
-        #if category not in [nh.WEAPON_CLASS, nh.ARMOR_CLASS]:
+        # if category not in [nh.WEAPON_CLASS, nh.ARMOR_CLASS]:
         #    return None # TODO
 
         if category == nh.WEAPON_CLASS:
@@ -253,9 +256,10 @@ class ItemManager:
             name_augmentation = lambda x: [x, f'pair of {x}']
         elif category in [nh.AMULET_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.POTION_CLASS, nh.RING_CLASS,
                           nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.TOOL_CLASS, nh.WAND_CLASS, nh.COIN_CLASS]:
-            return Item([i + nh.GLYPH_OBJ_OFF for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == category and
-                                                                                nh.objdescr.from_idx(i).oc_name is not None],
-                        count, status, modifier)
+            return Item(
+                [i + nh.GLYPH_OBJ_OFF for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == category and
+                 nh.objdescr.from_idx(i).oc_name is not None],
+                count, status, modifier)
         else:
             assert 0, category
 
@@ -272,11 +276,23 @@ class ItemManager:
 
             obj_descr = nh.objdescr.from_idx(i).oc_descr
             obj_name = nh.objdescr.from_idx(i).oc_name
-            if (obj_name and name in name_augmentation(obj_name)) or (obj_descr and name in name_augmentation(obj_descr)):
+            if (obj_name and name in name_augmentation(obj_name)) or (
+                    obj_descr and name in name_augmentation(obj_descr)):
                 ret.append(i)
 
         assert len(ret) == 1, (ret, name, text)
         return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier)
+
+
+@toolz.curry
+def debug_log(txt, fun, color=(255, 255, 255)):
+    from functools import wraps
+    @wraps(fun)
+    def wrapper(self, *args, **kwargs):
+        with self.env.debug_log(txt=txt, color=color):
+            return fun(self, *args, **kwargs)
+
+    return wrapper
 
 
 class Agent:
@@ -430,7 +446,7 @@ class Agent:
 
         self.message, self.popup = self.get_message_and_popup(obs)
 
-        if obs['misc'][1]: # entering text
+        if obs['misc'][1]:  # entering text
             self.step(A.Command.ESC)
             return
 
@@ -617,7 +633,6 @@ class Agent:
                         walkable=walkable,
                         walkable_diagonally=walkable & ~np.isin(level.objects, list(G.DOORS)) & (level.objects != -1))
 
-
         if y == self.blstats.y and x == self.blstats.x:
             self.last_bfs_dis = dis
             self.last_bfs_step = self.step_count
@@ -701,6 +716,7 @@ class Agent:
 
     ######## LOW-LEVEL STRATEGIES
 
+    @debug_log('fight1')
     def fight1(self):
         while 1:
             dis = self.bfs()
@@ -734,6 +750,7 @@ class Agent:
                 if nh.glyph_is_body(self.glyphs[y, x]) and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == mon:
                     self.current_level().corpse_age[y, x] = self.blstats.time
 
+    @debug_log('eat1')
     def eat1(self):
         dis = self.bfs()
         closest = None
@@ -761,6 +778,7 @@ class Agent:
         if not self.current_level().shop[self.blstats.y, self.blstats.x]:
             self.eat()  # TODO: what
 
+    @debug_log('explore1')
     def explore1(self):
 
         # doors
@@ -808,6 +826,7 @@ class Agent:
 
         self.go_to(target_y, target_x, debug_path_args=dict(color=(255, 255, 0)))
 
+    @debug_log('search1')
     def search1(self):
         level = self.current_level()
         dis = self.bfs()
@@ -833,6 +852,7 @@ class Agent:
         self.go_to(target_y, target_x, debug_path_args=dict(color=(0, 255, 255)))
         self.search()
 
+    @debug_log('move_down')
     def move_down(self):
         level = self.current_level()
 
@@ -860,13 +880,15 @@ class Agent:
 
     ######## HIGH-LEVEL STRATEGIES
 
+    @debug_log('main_strategy')
     def main_strategy(self):
         while 1:
             with self.preempt([
                 self.is_any_mon_on_map,
                 lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and self.is_any_food_on_map(),
-                lambda: self.blstats.hunger_state >= Hunger.WEAK and any(map(lambda item: item.category == nh.FOOD_CLASS,
-                                                                             self.inventory.values())),
+                lambda: self.blstats.hunger_state >= Hunger.WEAK and any(
+                    map(lambda item: item.category == nh.FOOD_CLASS,
+                        self.inventory.values())),
             ]) as outcome:
                 if outcome() is None:
                     if self.explore1() is not False:
