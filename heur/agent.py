@@ -496,11 +496,11 @@ class Agent:
                 level.seen[y, x] = True
                 level.objects[y, x] = self.glyphs[y, x]
 
-    ######## TRIVIAL ACTIONS AND HELPERS
+    ######## TRIVIAL HELPERS
 
     @staticmethod
     def calc_direction(from_y, from_x, to_y, to_x):
-        assert abs(from_y - to_y) <= 1 and abs(from_x - to_x) <= 1
+        assert abs(from_y - to_y) <= 1 and abs(from_x - to_x) <= 1, ((from_y, from_x), (to_y, to_x))
 
         ret = ''
         if to_y == from_y + 1: ret += 's'
@@ -510,6 +510,8 @@ class Agent:
         if ret == '': ret = '.'
 
         return ret
+
+    ######## TRIVIAL ACTIONS
 
     def enter_text(self, text):
         with self.panic_if_position_changes():
@@ -666,40 +668,71 @@ class Agent:
 
     ######## NON-TRIVIAL ACTIONS
 
+    def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_path_args=None):
+        assert not stop_one_before or (self.blstats.y != y or self.blstats.x != x)
+        assert self.bfs()[y, x] != -1
+
+        steps_taken = 0
+        cont = True
+        while cont:
+            dis = self.bfs()
+            if dis[y, x] == -1:
+                raise AgentPanic('end point is no longer accessible')
+            path = self.path(self.blstats.y, self.blstats.x, y, x)
+
+            with self.env.debug_path(path, **debug_path_args) if debug_path_args is not None else contextlib.suppress():
+                path = path[1:]
+                if stop_one_before:
+                    path = path[:-1]
+                for y, x in path:
+                    if self.glyphs[y, x] in G.SHOPKEEPER:
+                        cont = True
+                        break
+                    if not self.current_level().walkable[y, x]:
+                        cont = True
+                        break
+                    self.move(y, x)
+                    steps_taken += 1
+                    if max_steps is not None and steps_taken >= max_steps:
+                        cont = False
+                        break
+                else:
+                    cont = False
+
     ######## LOW-LEVEL STRATEGIES
 
     def fight1(self):
-        dis = self.bfs()
-        closest = None
+        while 1:
+            dis = self.bfs()
+            closest = None
 
-        # TODO: iter by distance
-        for y in range(C.SIZE_Y):
-            for x in range(C.SIZE_X):
-                if y != self.blstats.y or x != self.blstats.x:
-                    if self.glyphs[y, x] in G.MONS and self.glyphs[y, x] not in G.SHOPKEEPER:
-                        if dis[y, x] != -1 and (closest is None or dis[y, x] < dis[closest]):
-                            closest = (y, x)
+            mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
+            mask[self.blstats.y, self.blstats.x] = 0
+            mask &= dis != -1
 
-        assert closest is not None
-        # if closest is None:
-        #    return False
+            if not mask.any():
+                return False
 
-        y, x = closest
-        path = self.path(self.blstats.y, self.blstats.x, y, x)  # TODO: allow diagonal fight from doors
+            mask &= dis == dis[mask].min()
+            closests_y, closests_x = mask.nonzero()
 
-        with self.env.debug_path(path, color=(255, 0, 0)):
-            path = path[1:]
-            if len(path) == 1:
-                y, x = path[0]
-                mon = nh.glyph_to_mon(self.glyphs[y, x])
-                try:
-                    self.fight(y, x)
-                finally:  # TODO: what if panic?
-                    if nh.glyph_is_body(self.glyphs[y, x]) and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == mon:
-                        self.current_level().corpse_age[y, x] = self.blstats.time
+            assert len(closests_y) > 0
 
-            else:
-                self.move(*path[0])
+            y, x = closests_y[0], closests_x[0]
+
+            # TODO: allow diagonal fight from doors
+
+            if self.bfs()[y, x] != 1:
+                self.go_to(y, x, stop_one_before=True, max_steps=1, debug_path_args=dict(color=(255, 0, 0)))
+                continue
+
+            mon = nh.glyph_to_mon(self.glyphs[y, x])
+
+            try:
+                self.fight(y, x)
+            finally:  # TODO: what if panic?
+                if nh.glyph_is_body(self.glyphs[y, x]) and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == mon:
+                    self.current_level().corpse_age[y, x] = self.blstats.time
 
     def eat1(self):
         dis = self.bfs()
@@ -724,13 +757,9 @@ class Agent:
         target_y, target_x = closest
         path = self.path(self.blstats.y, self.blstats.x, target_y, target_x)
 
-        with self.env.debug_path(path, color=(255, 255, 0)):
-            for y, x in path[1:]:
-                if self.glyphs[y, x] in G.SHOPKEEPER:
-                    return
-                self.move(y, x)
-            if not self.current_level().shop[self.blstats.y, self.blstats.x]:
-                self.eat()  # TODO: what
+        self.go_to(target_y, target_x, debug_path_args=dict(color=(255, 255, 0)))
+        if not self.current_level().shop[self.blstats.y, self.blstats.x]:
+            self.eat()  # TODO: what
 
     def explore1(self):
 
@@ -777,14 +806,7 @@ class Agent:
 
         del level
 
-        path = self.path(self.blstats.y, self.blstats.x, target_y, target_x, dis=dis)
-        with self.env.debug_path(path, color=(0, 255, 0)):
-            for y, x in path[1:]:
-                if not self.current_level().walkable[y, x]:
-                    return
-                if self.glyphs[y, x] in G.SHOPKEEPER:
-                    return
-                self.move(y, x)
+        self.go_to(target_y, target_x, debug_path_args=dict(color=(255, 255, 0)))
 
     def search1(self):
         level = self.current_level()
@@ -807,15 +829,9 @@ class Agent:
         assert len(nonzero_y) >= 0
 
         target_y, target_x = nonzero_y[0], nonzero_x[0]
-        path = self.path(self.blstats.y, self.blstats.x, target_y, target_x, dis=dis)
-        with self.env.debug_path(path, color=(0, 255, 255)):
-            for y, x in path[1:]:
-                if not self.current_level().walkable[y, x]:
-                    return
-                if self.glyphs[y, x] in G.SHOPKEEPER:
-                    return
-                self.move(y, x)
-            self.search()
+
+        self.go_to(target_y, target_x, debug_path_args=dict(color=(0, 255, 255)))
+        self.search()
 
     def move_down(self):
         level = self.current_level()
@@ -839,14 +855,8 @@ class Agent:
 
         target_y, target_x = pos
 
-        path = self.path(self.blstats.y, self.blstats.x, target_y, target_x, dis=dis)
-        with self.env.debug_path(path, color=(0, 0, 255)):
-            for y, x in path[1:]:
-                if not self.current_level().walkable[y, x]:
-                    return
-                self.move(y, x)
-
-            self.direction('>')
+        self.go_to(target_y, target_x, debug_path_args=dict(color=(0, 0, 255)))
+        self.direction('>')
 
     ######## HIGH-LEVEL STRATEGIES
 
