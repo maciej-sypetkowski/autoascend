@@ -340,7 +340,11 @@ def run_simulations():
                     counter = Counter(res[k])
                     sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
                 else:
-                    sns.histplot(res[k], kde=np.var(res[k]) > 1e-6, bins=len(res[k]) // 5 + 1, ax=ax)
+                    if k == 'level_num':
+                        bins = [b + 0.5 for b in range(max(res[k]) + 1)]
+                    else:
+                        bins = np.quantile(res[k], np.linspace(0, 1, min(len(res[k]) // (20 + len(res[k]) // 50) + 2, 50)))
+                    sns.histplot(res[k], bins=bins, kde=np.var(res[k]) > 1e-6, stat='density', ax=ax)
 
             ax = fig.add_subplot(spec[:len(histogram_keys) // 2, 1])
             sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
@@ -356,11 +360,11 @@ def run_simulations():
             res['race-alignment'] = [f'{r}-{a}' for r, a in zip(res['race'], res['alignment'])]
             sns.violinplot(x='role', y='score', color='white', hue='gender',
                            hue_order=sorted(set(res['gender'])), split=len(set(res['gender'])) == 2,
-                           order=sorted(set(res['role'])), inner='quartile',
+                           order=sorted(set(res['role'])), inner='quartile', bw=10 / len(res['role']) ** 0.7,
                            data=res, ax=ax)
 
             palette = ['#ff7043', '#cc3311', '#ee3377', '#0077bb', '#33bbee', '#009988', '#bbbbbb']
-            sns.stripplot(x='role', y='score', hue='race-alignment', hue_order=sorted(set(res['race-alignment'])),
+            sns.swarmplot(x='role', y='score', hue='race-alignment', hue_order=sorted(set(res['race-alignment'])),
                           order=sorted(set(res['role'])),
                           data=res, ax=ax, palette=palette)
 
@@ -411,7 +415,7 @@ def run_simulations():
         print(f'score_25-75                   : {np.quantile(all_res["score"], 0.25)} '
               f'{np.quantile(all_res["score"], 0.75)}')
         print(f'exceptions                    : {sum([r.startswith("exception:") for r in all_res["end_reason"]])}')
-        print(f'steplimit                     : {sum([r.startswith("steplimit") for r in all_res["end_reason"]])}')
+        print(f'steplimit                     : {sum([r.startswith("steplimit") or r.startswith("ABORT") for r in all_res["end_reason"]])}')
         print(f'timeout                       : {sum([r.startswith("timeout") for r in all_res["end_reason"]])}')
         print()
 
