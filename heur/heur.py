@@ -213,7 +213,7 @@ class EnvWrapper:
         }
 
 
-def single_simulation(seed, timeout=60, step_limit=10000):
+def single_simulation(seed, timeout=360, step_limit=20000):
     start_time = time.time()
     env = EnvWrapper(gym.make('NetHackChallenge-v0'), step_limit=step_limit)
     env.env.seed(seed, seed)

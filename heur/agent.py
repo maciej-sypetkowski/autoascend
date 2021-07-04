@@ -35,7 +35,7 @@ class G:  # Glyphs
 
     BODIES = {nh.GLYPH_BODY_OFF + i for i in range(nh.NUMMONS)}
     OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) != nh.ROCK_CLASS}
-    BIG_OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == nh.ROCK_CLASS}
+    BOULDER = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == nh.ROCK_CLASS}
 
     NORMAL_OBJECTS = {i for i in range(nh.MAX_GLYPH) if nh.glyph_is_normal_object(i)}
     FOOD_OBJECTS = {i for i in NORMAL_OBJECTS if ord(nh.objclass(nh.glyph_to_obj(i)).oc_class) == nh.FOOD_CLASS}
@@ -214,6 +214,9 @@ class Item:
         self.count = count
         self.status = status
         self.modifier = modifier
+        self.category = ord(nh.objclass(nh.glyph_to_obj(self.glyphs[0])).oc_class)
+
+        assert all(map(lambda glyph: ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category, self.glyphs))
 
     def __str__(self):
         return (f'{self.count}_'
@@ -230,11 +233,11 @@ class ItemManager:
     def get_item_from_text(self, text, category):
         assert category not in [nh.BALL_CLASS, nh.ROCK_CLASS, nh.RANDOM_CLASS]
 
-        matches = re.findall('^(a|an|\d+)( (cursed|uncursed|blessed))?( rustproof| poisoned| corroded)*( ([+-]\d+))? ([a-zA-z- ]+)( \(([a-zA-Z0-9:; ]+)\))?$', text)
+        matches = re.findall('^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thourogly )?(rustproof|poisoned|corroded|rusty|burnt))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([a-zA-Z0-9:; ]+)\))?$', text)
         assert len(matches) <= 1, text
         assert len(matches), text
 
-        count, _, status, effects, _, modifier, name, _, info = matches[0]
+        count, _, status, effects, _, _, _, modifier, name, _, info = matches[0]
         # TODO: effects
 
         count = int({'a': 1, 'an': 1}.get(count, count))
@@ -250,10 +253,11 @@ class ItemManager:
             name_augmentation = lambda x: [x, f'pair of {x}']
         elif category in [nh.AMULET_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.POTION_CLASS, nh.RING_CLASS,
                           nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.TOOL_CLASS, nh.WAND_CLASS, nh.COIN_CLASS]:
-            return Item([i + nh.GLYPH_OBJ_OFF for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == category], count, status, modifier)
+            return Item([i + nh.GLYPH_OBJ_OFF for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == category and
+                                                                                nh.objdescr.from_idx(i).oc_name is not None],
+                        count, status, modifier)
         else:
-            print(category)
-            assert 0
+            assert 0, category
 
         ret = []
 
@@ -284,7 +288,7 @@ class Agent:
 
         self.on_update = []
         self.levels = {}
-        self.last_observation = env.reset()
+        self.last_observation = {k: v.copy() for k, v in env.reset().items()}
         self.score = 0
         self.step_count = 0
 
@@ -309,7 +313,7 @@ class Agent:
         obs, reward, done, info = self.env.step(action)
         self.step_count += 1
 
-        self.last_observation = obs
+        self.last_observation = {k: v.copy() for k, v in obs.items()}
         self.score += reward
         if done:
             raise AgentFinished()
@@ -387,6 +391,7 @@ class Agent:
     def get_message_and_popup(self, obs):
         """ Uses MORE action to get full popup and/or message.
         """
+        # TODO: rethink recursion from calling step
         message = bytes(obs['message']).decode()
         popup = []
         is_extended_message = False
@@ -440,7 +445,7 @@ class Agent:
             func()
 
     def update_inventory(self):
-        if (self.last_observation['inv_strs'] == self.previous_inv_strs).all():
+        if self.previous_inv_strs is not None and (self.last_observation['inv_strs'] == self.previous_inv_strs).all():
             return
 
         self.inventory = {}
@@ -604,8 +609,12 @@ class Agent:
 
         level = self.current_level()
 
-        dis = utils.bfs(level.walkable & ~self.glyphs_mask_in(G.SHOPKEEPER),
-                        level.walkable & self.glyphs_mask_in(G.DOORS), y, x)
+        walkable = level.walkable & ~self.glyphs_mask_in(G.SHOPKEEPER, G.BOULDER)
+
+        dis = utils.bfs(y, x,
+                        walkable=walkable,
+                        walkable_diagonally=walkable & ~np.isin(level.objects, list(G.DOORS)) & (level.objects != -1))
+
 
         if y == self.blstats.y and x == self.blstats.x:
             self.last_bfs_dis = dis
@@ -626,7 +635,7 @@ class Agent:
         path_rev = [(cur_y, cur_x)]
         while cur_y != from_y or cur_x != from_x:
             for y, x in self.neighbors(cur_y, cur_x):
-                if dis[y, x] < dis[cur_y, cur_x] and dis[y, x] >= 0:
+                if dis[y, x] == dis[cur_y, cur_x] - 1 and dis[y, x] >= 0:
                     path_rev.append((y, x))
                     cur_y, cur_x = y, x
                     break
@@ -648,7 +657,7 @@ class Agent:
     def is_any_food_on_map(self):
         level = self.current_level()
 
-        mask = self.glyphs_mask_in(G.BODIES) & (self.blstats.time - level.corpse_age <= 20)
+        mask = self.glyphs_mask_in(G.BODIES) & (self.blstats.time - level.corpse_age <= 100)
         mask |= self.glyphs_mask_in(G.FOOD_OBJECTS)
         mask &= ~level.shop
         if not mask.any():
@@ -701,7 +710,7 @@ class Agent:
         for y in range(C.SIZE_Y):
             for x in range(C.SIZE_X):
                 if dis[y, x] != -1 and (closest is None or dis[y, x] < dis[closest]) and not level.shop[y, x]:
-                    if self.glyphs[y, x] in G.BODIES and self.blstats.time - level.corpse_age[y, x] <= 20:
+                    if self.glyphs[y, x] in G.BODIES and self.blstats.time - level.corpse_age[y, x] <= 100:
                         closest = (y, x)
                     if nh.glyph_is_normal_object(self.glyphs[y, x]):
                         obj = nh.objclass(nh.glyph_to_obj(self.glyphs[y, x]))
@@ -846,12 +855,14 @@ class Agent:
             with self.preempt([
                 self.is_any_mon_on_map,
                 lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and self.is_any_food_on_map(),
+                lambda: self.blstats.hunger_state >= Hunger.WEAK and any(map(lambda item: item.category == nh.FOOD_CLASS,
+                                                                             self.inventory.values())),
             ]) as outcome:
                 if outcome() is None:
                     if self.explore1() is not False:
                         continue
 
-                    if self.move_down() is not False:
+                    if len(self.levels) <= 100 and self.move_down() is not False:
                         continue
 
                     if self.search1() is not False:
@@ -863,6 +874,16 @@ class Agent:
 
             if outcome() == 1:
                 self.eat1()
+                continue
+
+            if outcome() == 2:
+                # TODO: refactor
+                with self.panic_if_position_changes():
+                    self.step(A.Command.EAT)
+                for k, item in self.inventory.items():
+                    if item.category == nh.FOOD_CLASS:
+                        self.enter_text(k)
+                        break
                 continue
 
             assert 0

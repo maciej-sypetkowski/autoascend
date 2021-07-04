@@ -3,7 +3,7 @@ import numpy as np
 
 
 @nb.njit(cache=True)
-def bfs(walkable, walkable_diagonally, y, x):
+def bfs(y, x, *, walkable, walkable_diagonally):
     SIZE_X = 79  # C.SIZE_X
     SIZE_Y = 21  # C.SIZE_Y
 
@@ -29,7 +29,8 @@ def bfs(walkable, walkable_diagonally, y, x):
                 py, px = y + dy, x + dx
                 if 0 <= py < SIZE_Y and 0 <= px < SIZE_X and (dy != 0 or dx != 0):
                     if (walkable[py, px] and
-                            (abs(dy) + abs(dx) <= 1 or (walkable_diagonally[py, px] and walkable_diagonally[y, x]))):
+                            (abs(dy) + abs(dx) <= 1 or (walkable_diagonally[py, px] and walkable_diagonally[y, x] and
+                                                        (walkable[py, x] or walkable[y, px])))):
                         if dis[py, px] == -1:
                             dis[py, px] = dis[y, x] + 1
                             buf[size] = (py, px)
