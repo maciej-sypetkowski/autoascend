@@ -179,7 +179,10 @@ class EnvWrapper:
             else:
                 assert self.score == 0, end_reason
                 end_reason = ' '.join(end_reason[7:-2])
-            self.end_reason = '.'.join(end_reason.split('.')[1:]).strip()
+            first_sentence = end_reason.split('.')[0].split()
+            self.end_reason = info['end_status'].name + ': ' + \
+                              (' '.join(first_sentence[:first_sentence.index('in')]) + '. ' + \
+                               '.'.join(end_reason.split('.')[1:]).strip()).strip()
         if self.step_limit is not None and self.step_count == self.step_limit + 1:
             self.end_reason = self.end_reason or 'steplimit'
             done = True
