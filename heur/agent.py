@@ -623,7 +623,7 @@ class Agent:
             x = self.blstats.x
 
         if self.last_bfs_step == self.step_count and y == self.blstats.y and x == self.blstats.x:
-            return self.last_bfs_dis
+            return self.last_bfs_dis.copy()
 
         level = self.current_level()
 
@@ -637,7 +637,7 @@ class Agent:
             self.last_bfs_dis = dis
             self.last_bfs_step = self.step_count
 
-        return dis
+        return dis.copy()
 
     def path(self, from_y, from_x, to_y, to_x, dis=None):
         if from_y == to_y and from_x == to_x:
@@ -683,7 +683,7 @@ class Agent:
 
     ######## NON-TRIVIAL ACTIONS
 
-    def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_path_args=None):
+    def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_tiles_args=None):
         assert not stop_one_before or (self.blstats.y != y or self.blstats.x != x)
         assert self.bfs()[y, x] != -1
 
@@ -695,7 +695,8 @@ class Agent:
                 raise AgentPanic('end point is no longer accessible')
             path = self.path(self.blstats.y, self.blstats.x, y, x)
 
-            with self.env.debug_path(path, **debug_path_args) if debug_path_args is not None else contextlib.suppress():
+            with self.env.debug_tiles(path, **debug_tiles_args) \
+                    if debug_tiles_args is not None else contextlib.suppress():
                 path = path[1:]
                 if stop_one_before:
                     path = path[:-1]
@@ -739,7 +740,8 @@ class Agent:
             # TODO: allow diagonal fight from doors
 
             if self.bfs()[y, x] != 1:
-                self.go_to(y, x, stop_one_before=True, max_steps=1, debug_path_args=dict(color=(255, 0, 0)))
+                self.go_to(y, x, stop_one_before=True, max_steps=1,
+                           debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
                 continue
 
             mon = nh.glyph_to_mon(self.glyphs[y, x])
@@ -774,7 +776,7 @@ class Agent:
         target_y, target_x = closest
         path = self.path(self.blstats.y, self.blstats.x, target_y, target_x)
 
-        self.go_to(target_y, target_x, debug_path_args=dict(color=(255, 255, 0)))
+        self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 255, 0), is_path=True))
         if not self.current_level().shop[self.blstats.y, self.blstats.x]:
             self.eat()  # TODO: what
 
@@ -824,10 +826,10 @@ class Agent:
 
         del level
 
-        self.go_to(target_y, target_x, debug_path_args=dict(color=(255, 255, 0)))
+        self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 255, 0), is_path=True))
 
     @debug_log('search1')
-    def search1(self):
+    def search1(self, prio_limit=None):
         level = self.current_level()
         dis = self.bfs()
 
@@ -837,20 +839,47 @@ class Agent:
                 if not level.walkable[y, x] or dis[y, x] == -1:
                     prio[y, x] = -np.inf
                 else:
-                    prio[y, x] = -20
-                    prio[y, x] -= dis[y, x]
-                    prio[y, x] -= level.search_count[y, x] ** 2 * 10
-                    prio[y, x] += (level.objects[y, x] in G.CORRIDOR) * 15 + (level.objects[y, x] in G.DOORS) * 80
+                    prio[y, x] = 0
+                    prio[y, x] -= level.search_count[y, x] ** 2 * 2
+
+                    is_on_corridor = level.objects[y, x] in G.CORRIDOR
+                    is_on_door = level.objects[y, x] in G.DOORS
+                    stones, walls = 0, 0
                     for py, px in self.neighbors(y, x, shuffle=False):
-                        prio[y, x] += (level.objects[py, px] in G.STONE) * 40 + (level.objects[py, px] in G.WALL) * 20
+                        stones += level.objects[py, px] in G.STONE
+                        walls += level.objects[py, px] in G.WALL
 
-        nonzero_y, nonzero_x = (prio == prio.max()).nonzero()
-        assert len(nonzero_y) >= 0
+                    if is_on_door and stones >= 3:
+                        prio[y, x] += 50
 
-        target_y, target_x = nonzero_y[0], nonzero_x[0]
+                    if stones >= 0 and \
+                            (0 + level.walkable[y - 1, x] if y > 0 else 0) + \
+                            (0 + level.walkable[y + 1, x] if y < C.SIZE_Y - 1 else 0) + \
+                            (0 + level.walkable[y, x - 1] if x > 0 else 0) + \
+                            (0 + level.walkable[y, x + 1] if x < C.SIZE_X - 1 else 0) <= 1:
+                        prio[y, x] += 50
 
-        self.go_to(target_y, target_x, debug_path_args=dict(color=(0, 255, 255)))
-        self.search()
+                    if stones == 0 and walls == 0:
+                        prio[y, x] -= 1000
+
+        if prio_limit is not None and prio.max() < prio_limit:
+            return False
+
+        with self.env.debug_tiles(prio >= prio_limit, color=(0, 0, 255, 64)) \
+                if prio_limit is not None else contextlib.suppress():
+            if prio_limit is None:
+                prio -= dis * 2
+            else:
+                prio[prio < prio_limit] = -np.inf
+                prio -= dis * np.isfinite(prio) * 100
+
+            nonzero_y, nonzero_x = (prio == prio.max()).nonzero()
+            assert len(nonzero_y) > 0, prio.max()
+
+            target_y, target_x = nonzero_y[0], nonzero_x[0]
+
+            self.go_to(target_y, target_x, debug_tiles_args=dict(color=(0, 255, 255), is_path=True))
+            self.search()
 
     @debug_log('move_down')
     def move_down(self):
@@ -875,7 +904,7 @@ class Agent:
 
         target_y, target_x = pos
 
-        self.go_to(target_y, target_x, debug_path_args=dict(color=(0, 0, 255)))
+        self.go_to(target_y, target_x, debug_tiles_args=dict(color=(0, 0, 255), is_path=True))
         self.direction('>')
 
     ######## HIGH-LEVEL STRATEGIES
@@ -885,13 +914,18 @@ class Agent:
         while 1:
             with self.preempt([
                 self.is_any_mon_on_map,
-                lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and self.is_any_food_on_map(),
+                lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and \
+                        self.is_any_food_on_map(),
                 lambda: self.blstats.hunger_state >= Hunger.WEAK and any(
                     map(lambda item: item.category == nh.FOOD_CLASS,
                         self.inventory.values())),
             ]) as outcome:
                 if outcome() is None:
                     if self.explore1() is not False:
+                        continue
+
+                    limit = 1 if np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() else None
+                    if self.search1(limit) is not False:
                         continue
 
                     if len(self.levels) <= 100 and self.move_down() is not False:
@@ -918,7 +952,7 @@ class Agent:
                         break
                 continue
 
-            assert 0
+            assert 0, outcome()
 
     ####### MAIN
 

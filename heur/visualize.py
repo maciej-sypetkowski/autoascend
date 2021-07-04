@@ -3,6 +3,8 @@ from functools import wraps
 import cv2
 import numpy as np
 
+from glyph import C
+
 MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
 FAST_FRAME_SKIPPING = 8
@@ -36,23 +38,46 @@ def _draw_grid(imgs, ncol):
     return img
 
 
-class DrawPathScope():
+class DrawTilesScope():
 
-    def __init__(self, visualizer, path, color):
+    def __init__(self, visualizer, tiles, color, is_path=False):
         self.visualizer = visualizer
-        self.path = path
+        if isinstance(tiles, np.ndarray) and tiles.shape == (C.SIZE_Y, C.SIZE_X):
+            self.tiles = list(zip(*tiles.nonzero()))
+        else:
+            self.tiles = tiles
         self.color = color
+        self.is_path = is_path
 
     def draw_fun(self, rendered):
-        for p1, p2 in zip(self.path, self.path[1:]):
-            p1 = [round((i + 0.5) * self.visualizer.tile_size) for i in p1][::-1]
-            p2 = [round((i + 0.5) * self.visualizer.tile_size) for i in p2][::-1]
-            cv2.line(rendered, p1, p2, self.color, 2)
-        return rendered
+        color = self.color
+        alpha = 1
+        if len(color) == 4:
+            alpha = color[-1] / 255
+            color = color[:-1]
+
+        if alpha != 1:
+            orig_rendered, rendered = rendered, np.zeros_like(rendered)
+
+        if self.is_path:
+            for p1, p2 in zip(self.tiles, self.tiles[1:]):
+                p1 = [round((i + 0.5) * self.visualizer.tile_size) for i in p1][::-1]
+                p2 = [round((i + 0.5) * self.visualizer.tile_size) for i in p2][::-1]
+                cv2.line(rendered, p1, p2, color, 2)
+        else:
+            for p in self.tiles:
+                p1 = [round(i * self.visualizer.tile_size) for i in p][::-1]
+                p2 = [round((i + 1) * self.visualizer.tile_size) for i in p][::-1]
+                cv2.rectangle(rendered, p1, p2, color, -1)
+
+        if alpha != 1:
+            rendered = np.clip(orig_rendered.astype(np.int16) + (rendered * alpha).astype(np.int16), 0, 255).astype(np.uint8)
+
+        return rendered.copy()
 
     def __enter__(self):
         self.fun_instance = lambda x: self.draw_fun(x)
-        self.visualizer.drawers.add(self.fun_instance)
+        self.visualizer.drawers.append(self.fun_instance)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.visualizer.drawers.remove(self.fun_instance)
@@ -103,15 +128,15 @@ class Visualizer:
 
         self.message_history = list()
 
-        self.drawers = set()
+        self.drawers = []
         self.log_messages = list()
         self.log_messages_history = list()
 
         self.frame_skipping = 1
         self.frame_counter = -1
 
-    def debug_path(self, path, color):
-        return DrawPathScope(self, path, color)
+    def debug_tiles(self, *args, **kwargs):
+        return DrawTilesScope(self, *args, **kwargs)
 
     def debug_log(self, txt, color):
         return DebugLogScope(self, txt, color)

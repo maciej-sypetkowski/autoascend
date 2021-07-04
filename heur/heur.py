@@ -32,6 +32,9 @@ class EnvWrapper:
         self.last_observation = None
         self.agent = None
 
+        self.draw_walkable = False
+        self.draw_seen = False
+
     def set_agent(self, agent):
         self.agent = agent
 
@@ -40,30 +43,32 @@ class EnvWrapper:
         self.score = 0
         self.step_count = 0
         self.end_reason = ''
-        self.render(obs)
+        self.last_observation = obs
+        self.render()
 
         G.assert_map(obs['glyphs'], obs['chars'])
 
         blstats = BLStats(*obs['blstats'])
         assert obs['chars'][blstats.y, blstats.x] == ord('@')
 
-        self.last_observation = obs
 
         return obs
 
-    def render(self, obs):
+    def render(self):
         if self.visualizer is not None:
-            print(bytes(obs['message']).decode())
+            print(bytes(self.last_observation['message']).decode())
             print()
-            print(BLStats(*obs['blstats']))
-            print('Misc :', obs['misc'])
+            print(BLStats(*self.last_observation['blstats']))
+            print('Misc :', self.last_observation['misc'])
             print('Score:', self.score)
             print('Steps:', self.env._steps)
             print('Turns:', self.env._turns)
             print('Seed :', self.env.get_seeds())
             print()
             obj_classes = {getattr(nh, x): x[:-len('_CLASS')] for x in dir(nh) if x.endswith('_CLASS')}
-            for letter, text, cls in zip(obs['inv_letters'], obs['inv_strs'], obs['inv_oclasses']):
+            for letter, text, cls in zip(self.last_observation['inv_letters'],
+                                         self.last_observation['inv_strs'],
+                                         self.last_observation['inv_oclasses']):
                 if (text != 0).any():
                     print(obj_classes[cls].ljust(7), chr(letter), '->', bytes(text).decode())
             if self.agent is not None:
@@ -73,8 +78,12 @@ class EnvWrapper:
             self.env.render()
             print('-' * 20)
             print()
-            self.visualizer.step(self.last_observation)
-            self.visualizer.render()
+            with self.debug_tiles(self.agent.current_level().walkable, color=(0, 255, 0, 128)) \
+                    if self.draw_walkable else contextlib.suppress():
+                with self.debug_tiles(~self.agent.current_level().seen, color=(255, 0, 0, 128)) \
+                        if self.draw_seen else contextlib.suppress():
+                    self.visualizer.step(self.last_observation)
+                    self.visualizer.render()
 
     def print_help(self):
         scene_glyphs = set(self.env.last_observation[0].reshape(-1))
@@ -116,13 +125,24 @@ class EnvWrapper:
     def get_action(self):
         while 1:
             key = os.read(sys.stdin.fileno(), 3)
+
+            if key == b'\x1bOP':  # F1
+                self.draw_walkable = not self.draw_walkable
+                self.render()
+                continue
+            elif key == b'\x1bOQ':  # F2
+                self.draw_seen = not self.draw_seen
+                self.render()
+                continue
+
+
             if len(key) != 1:
                 print('wrong key', key)
                 continue
             key = key[0]
             if key == 10:
                 key = 13
-            if key == 63:  # '?"
+            elif key == 63:  # '?"
                 self.print_help()
                 continue
             elif key == 127:  # Backspace
@@ -139,7 +159,7 @@ class EnvWrapper:
 
     def step(self, agent_action):
         if self.visualizer is not None:
-            self.render(self.last_observation)
+            self.render()
 
             print()
             print('agent_action:', agent_action)
@@ -152,7 +172,7 @@ class EnvWrapper:
                 old_frame_skipping = self.visualizer.frame_skipping
                 self.visualizer.frame_skipping = 1
                 if old_frame_skipping > 1:
-                    self.render(self.last_observation)
+                    self.render()
                 action = self.get_action()
 
             if action is None:
@@ -192,15 +212,15 @@ class EnvWrapper:
 
         if done:
             if self.visualizer is not None:
-                self.render(self.last_observation)
+                self.render()
                 print('Summary:')
                 pprint(self.get_summary())
 
         return obs, reward, done, info
 
-    def debug_path(self, path, color):
+    def debug_tiles(self, *args, **kwargs):
         if self.visualizer is not None:
-            return self.visualizer.debug_path(path, color)
+            return self.visualizer.debug_tiles(*args, **kwargs)
         return contextlib.suppress()
 
     def debug_log(self, txt, color=(255, 255, 255)):
@@ -246,17 +266,6 @@ def single_simulation(seed, timeout=360, step_limit=20000):
     return summary
 
 
-def main():
-    if len(sys.argv) <= 1:
-        run_simulations()
-    elif sys.argv[1] == 'profile':
-        run_profiling()
-    else:
-        seed = int(sys.argv[1])
-        skip_to = int(sys.argv[2])
-        run_single_interactive_game(seed, skip_to)
-
-
 def run_single_interactive_game(seed, skip_to):
     termios.tcgetattr(sys.stdin)
     tty.setcbreak(sys.stdin.fileno())
@@ -273,9 +282,8 @@ def run_single_interactive_game(seed, skip_to):
         os.system('stty sane')
 
 
-def run_profiling():
+def run_profiling(games):
     import cProfile, pstats
-    games = int(sys.argv[2])
     pr = cProfile.Profile()
 
     start_time = time.time()
@@ -301,7 +309,7 @@ def run_profiling():
     subprocess.run('xdot /tmp/calling_graph.dot'.split())
 
 
-def run_simulations():
+def run_simulations(games):
     from multiprocessing import Process, Queue
     from matplotlib import pyplot as plt
     import seaborn as sns
@@ -376,18 +384,23 @@ def run_simulations():
     all_res = {}
     last_seed = np.random.randint(0, 2 ** 30)
     simulation_processes = []
-    for _ in range(16):
+    remaining_games = games
+    for _ in range(min(16, remaining_games)):
         simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
         simulation_processes[-1].start()
         last_seed += 1
+        remaining_games -= 1
+
     count = 0
-    while True:
+    while count < games:
         simulation_processes = [p for p in simulation_processes if p.is_alive() or (p.close() and False)]
         single_res = result_queue.get()
 
-        simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
-        simulation_processes[-1].start()
-        last_seed += 1
+        if remaining_games:
+            simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
+            simulation_processes[-1].start()
+            last_seed += 1
+            remaining_games -= 1
 
         if not all_res:
             all_res = {key: [] for key in single_res}
@@ -397,19 +410,23 @@ def run_simulations():
         for k, v in single_res.items():
             all_res[k].append(v if not hasattr(v, 'item') else v.item())
 
+        if not result_queue.empty():
+            continue
+
         plot_queue.put(all_res)
 
         total_duration = time.time() - start_time
 
-        # print(list(zip(all_res['seed'], all_res['score'], all_res['turns'], all_res['steps'], all_res['end_reason'])))
         print(f'count                         : {count}')
         print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
         print(f'simulations_per_hour          : {3600 / np.mean(all_res["duration"])}')
         print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
         print(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
         print(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
-        print(f'score_mean                    : {np.mean(all_res["score"])}')
-        print(f'score_median                  : {np.median(all_res["score"])}')
+        print(f'score_mean                    : {np.mean(all_res["score"]):.1f} +/- '
+              f'{np.std(all_res["score"]) / (len(all_res["score"]) ** 0.5):.1f}')
+        print(f'score_median                  : {np.median(all_res["score"]):.1f} +/- '
+              f'{np.std([np.median(np.random.choice(all_res["score"], size=max(1, len(all_res["score"]) // 2))) for _ in range(1024)]):.1f}')
         print(f'score_05-95                   : {np.quantile(all_res["score"], 0.05)} '
               f'{np.quantile(all_res["score"], 0.95)}')
         print(f'score_25-75                   : {np.quantile(all_res["score"], 0.25)} '
@@ -421,6 +438,25 @@ def run_simulations():
 
         with Path('/tmp/nh_sim.json').open('w') as f:
             json.dump(all_res, f)
+
+    for p in simulation_processes:
+        p.join()
+        p.close()
+
+    print('DONE!')
+
+
+def main():
+    if sys.argv[1] == 'simulate':
+        games = int(sys.argv[2])
+        run_simulations(games)
+    elif sys.argv[1] == 'profile':
+        games = int(sys.argv[2])
+        run_profiling(games)
+    elif sys.argv[1] == 'single':
+        seed = int(sys.argv[2])
+        skip_to = int(sys.argv[3])
+        run_single_interactive_game(seed, skip_to)
 
 
 if __name__ == '__main__':

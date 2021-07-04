@@ -7,11 +7,11 @@ def bfs(y, x, *, walkable, walkable_diagonally):
     SIZE_X = 79  # C.SIZE_X
     SIZE_Y = 21  # C.SIZE_Y
 
-    dis = np.zeros((SIZE_Y, SIZE_X), dtype=np.int16)
+    dis = np.zeros((SIZE_Y, SIZE_X), dtype=np.int32)
     dis[:] = -1
     dis[y, x] = 0
 
-    buf = np.zeros((SIZE_Y * SIZE_X, 2), dtype=np.uint16)
+    buf = np.zeros((SIZE_Y * SIZE_X, 2), dtype=np.uint32)
     index = 0
     buf[index] = (y, x)
     size = 1
