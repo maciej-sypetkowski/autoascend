@@ -56,7 +56,9 @@ class EnvWrapper:
 
     def render(self):
         if self.visualizer is not None:
-            print(bytes(self.last_observation['message']).decode())
+            if self.agent is not None:
+                print('Message:', self.agent.message)
+                print('Pop-up :', self.agent.popup)
             print()
             print(BLStats(*self.last_observation['blstats']))
             print('Misc :', self.last_observation['misc'])
@@ -71,9 +73,6 @@ class EnvWrapper:
                                          self.last_observation['inv_oclasses']):
                 if (text != 0).any():
                     print(obj_classes[cls].ljust(7), chr(letter), '->', bytes(text).decode())
-            if self.agent is not None:
-                for letter, item in self.agent.inventory.items():
-                    print(letter, '->', item)
             print('-' * 20)
             self.env.render()
             print('-' * 20)
@@ -142,7 +141,8 @@ class EnvWrapper:
             key = key[0]
             if key == 10:
                 key = 13
-            elif key == 63:  # '?"
+
+            if key == 63:  # '?"
                 self.print_help()
                 continue
             elif key == 127:  # Backspace
