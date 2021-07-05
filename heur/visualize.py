@@ -127,6 +127,7 @@ class Visualizer:
         cv2.namedWindow('NetHackVis', cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
 
         self.message_history = list()
+        self.popup_history = list()
 
         self.drawers = []
         self.log_messages = list()
@@ -145,6 +146,7 @@ class Visualizer:
         self.last_obs = obs
         self._update_log_message_history()
         self._update_message_history()
+        self._update_popup_history()
 
     def render(self):
         self.frame_counter += 1
@@ -174,12 +176,16 @@ class Visualizer:
         cv2.waitKey(1)
 
     def _draw_topbar(self, obs, width):
-        messages_vis = self._draw_message_log(width)
-        log_messages_vis = self._draw_debug_message_log(width)
-        return np.concatenate([messages_vis, log_messages_vis], axis=1)
+        messages_vis = self._draw_message_history(width // 3)
+        popup_vis = self._draw_popup_history(width // 3)
+        log_messages_vis = self._draw_debug_message_log(width - 2 * (width // 3))
+        ret = np.concatenate([messages_vis, popup_vis, log_messages_vis], axis=1)
+        print(width, ret.shape)
+        assert ret.shape[1] == width
+        return ret
 
     def _draw_debug_message_log(self, width):
-        vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
+        vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
         for i in range(MSG_HISTORY_COUNT):
             if i >= len(self.log_messages_history):
                 break
@@ -198,12 +204,25 @@ class Visualizer:
         # if txt:
         self.log_messages_history.append(txt)
 
-    def _draw_message_log(self, width):
-        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width // 2, 3)).astype(np.uint8)
+    def _draw_message_history(self, width):
+        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
         for i in range(MSG_HISTORY_COUNT):
             if i >= len(self.message_history):
                 break
             txt = self.message_history[-i - 1]
+            if i == 0:
+                _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+            else:
+                _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        _draw_frame(messages_vis)
+        return messages_vis
+
+    def _draw_popup_history(self, width):
+        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
+        for i in range(MSG_HISTORY_COUNT):
+            if i >= len(self.popup_history):
+                break
+            txt = '|'.join(self.popup_history[-i - 1])
             if i == 0:
                 _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
             else:
@@ -217,6 +236,13 @@ class Visualizer:
             txt = self.env.agent.message
         # if txt:
         self.message_history.append(txt)
+
+    def _update_popup_history(self):
+        txt = ''
+        if self.env.agent is not None:
+            txt = self.env.agent.popup
+        # if txt:
+        self.popup_history.append(txt)
 
     def _draw_tty(self, obs, width):
         vis = np.zeros((FONT_SIZE * len(obs['tty_chars']), width, 3)).astype(np.uint8)

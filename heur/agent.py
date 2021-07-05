@@ -315,7 +315,10 @@ class Agent:
 
         self.item_manager = ItemManager(self)
 
+        self._is_reading_message_or_popup = False
+
         self.update_map()
+
 
     def parse_character(self):
         with self.stop_updating():
@@ -407,36 +410,73 @@ class Agent:
     def get_message_and_popup(self, obs):
         """ Uses MORE action to get full popup and/or message.
         """
-        # TODO: rethink recursion from calling step
-        message = bytes(obs['message']).decode()
-        popup = []
-        is_extended_message = False
-        while b'--More--' in bytes(obs['tty_chars'].reshape(-1)):
-            assert not is_extended_message
-            for i, line in enumerate(obs['tty_chars']):
-                line = bytes(line)
-                if b'--More--' not in line:
-                    continue
-                if i == 0:
-                    message = line.decode()
-                    is_extended_message = True
-                else:
-                    popup_start_column = line.find(b'--More--')
-                    for line in obs['tty_chars'][:i]:
-                        line = bytes(line)
-                        # TODO: consider cutting line suffix (check if it is always of the same length)
-                        popup.append(line[popup_start_column:].decode().strip())
+
+        def find_marker(lines):
+            """ Return (line, column) of markers:
+            --More-- | (end) | (X of N)
+            """
+            # TODO: use this and fix parse_character
+            # regex = r"(--More--|\(end\)|\(\d+ of \d+\))"
+            regex = r"(--More--|\(end\))"
+            if len(re.findall(regex, ' '.join(lines))) > 1:
+                raise ValueError('Too many markers')
+
+            result, marker_type = None, None
+            for i, line in enumerate(lines):
+                res = re.findall(regex, line)
+                if res:
+                    assert len(res) == 1
+                    j = line.find(res[0])
+                    result, marker_type = (i, j), res[0]
                     break
-            self.step(A.MiscAction.MORE)
-            obs = self.last_observation
+            return result, marker_type
 
-        if message == bytes([0] * 256).decode():
-            message = ""
+        message = bytes(obs['message']).decode().replace('\0', ' ').replace('\n', '').strip()
+        # assert '\n' not in message and '\r' not in message
+        if self._is_reading_message_or_popup:
+            message_preffix = self.message + ' '
+            popup = self.popup
+        else:
+            message_preffix = ''
+            popup = []
 
-        if popup and message:
-            raise ValueError(f'Either message ({str(message)}) or popup ({str(popup)}) should be empty')
+        lines = [bytes(line).decode().replace('\0', ' ').replace('\n', '') for line in obs['tty_chars']]
+        marker_pos, marker_type = find_marker(lines)
 
-        return message, popup
+        if marker_pos is None:
+            self._is_reading_message_or_popup = False
+            return message_preffix + message, popup, True
+        self._is_reading_message_or_popup = True
+
+        pref = ''
+        message_lines_count = 0
+        if message:
+            for i, line in enumerate(lines[:marker_pos[0] + 1]):
+                if i == marker_pos[0]:
+                    line = line[:marker_pos[1]]
+                message_lines_count += 1
+                pref += line.strip()
+                if [s for s in pref.split() if s] == [s for s in message.split() if s]:
+                    break
+                # pref += ' '
+            else:
+                if marker_pos[0] == 0:
+                    elems1 = [s for s in message.split() if s]
+                    elems2 = [s for s in pref.split() if s]
+                    assert len(elems1) < len(elems2) and elems2[-len(elems1):] == elems1, (elems1, elems2)
+                    return message_preffix + pref, popup, False
+                if self.env.visualizer is not None:
+                    self.env.visualizer.frame_skipping = 1
+                    self.env.render()
+                raise ValueError(f"Message:\n{repr(message)}\ndoesn't match the screen:\n{repr(pref)}")
+
+        # cut out popup
+        for l in lines[message_lines_count:marker_pos[0]] + [lines[marker_pos[0]][:marker_pos[1]]]:
+            l = l[marker_pos[1]:].strip()
+            if l:
+                popup.append(l)
+
+        return message_preffix + message, popup, False
 
     def update_map(self):
         obs = self.last_observation
@@ -444,7 +484,10 @@ class Agent:
         self.blstats = BLStats(*obs['blstats'])
         self.glyphs = obs['glyphs']
 
-        self.message, self.popup = self.get_message_and_popup(obs)
+        self.message, self.popup, done = self.get_message_and_popup(obs)
+        if not done:
+            self.step(A.TextCharacters.SPACE)
+            return
 
         if obs['misc'][1]:  # entering text
             self.step(A.Command.ESC)
