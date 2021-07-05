@@ -1,7 +1,7 @@
 import contextlib
 import re
 from collections import namedtuple
-from functools import partial
+from functools import partial, wraps
 from itertools import chain
 
 import nle.nethack as nh
@@ -231,17 +231,29 @@ class ItemManager:
     def __init__(self, agent):
         self.agent = agent
 
-    def get_item_from_text(self, text, category):
+    def get_item_from_text(self, text, category=None, glyph=None):
+        # TODO: there are some problems with 'inv_glyphs' and the environment gives incorrect inventory glyphs.
+        #       I'm ignoring them for now
+        glyph = None
+
+        assert category is not None or glyph is not None
+        assert glyph is None or nh.glyph_is_normal_object(glyph)
+
+        if category is None:
+            category = ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class)
+        else:
+            assert glyph is None or category == ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class)
+
         assert category not in [nh.BALL_CLASS, nh.ROCK_CLASS, nh.RANDOM_CLASS]
 
         matches = re.findall(
-            '^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thourogly )?(rustproof|poisoned|corroded|rusty|burnt))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([a-zA-Z0-9:; ]+)\))?$',
+            '^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thourogly )?(rustproof|poisoned|corroded|rusty|burnt))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([0-9]+:[0-9]+)\))?( \(([a-zA-Z0-9; ]+)\))?$',
             text)
         assert len(matches) <= 1, text
         assert len(matches), text
 
-        count, _, status, effects, _, _, _, modifier, name, _, info = matches[0]
-        # TODO: effects
+        count, _, status, effects, _, _, _, modifier, name, _, uses, _, info = matches[0]
+        # TODO: effects, uses
 
         count = int({'a': 1, 'an': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
@@ -281,12 +293,13 @@ class ItemManager:
                 ret.append(i)
 
         assert len(ret) == 1, (ret, name, text)
+        assert glyph is None or ret[0] == nh.glyph_to_obj(glyph), \
+               ((ret[0], nh.objdescr.from_idx(ret[0])), (nh.glyph_to_obj(glyph), nh.objdescr.from_idx(nh.glyph_to_obj(glyph))))
         return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier)
 
 
 @toolz.curry
 def debug_log(txt, fun, color=(255, 255, 255)):
-    from functools import wraps
     @wraps(fun)
     def wrapper(self, *args, **kwargs):
         with self.env.debug_log(txt=txt, color=color):
@@ -304,24 +317,26 @@ class Agent:
 
         self.on_update = []
         self.levels = {}
-        self.last_observation = {k: v.copy() for k, v in env.reset().items()}
         self.score = 0
         self.step_count = 0
+        self.message = ''
+        self.popup = []
+
+        self.inventory = {}
+        self.character = 'x-x-x-x'
 
         self.last_bfs_dis = None
         self.last_bfs_step = None
 
         self.previous_inv_strs = None
+        self.turns_in_atom_operation = None
 
         self.item_manager = ItemManager(self)
 
         self._is_reading_message_or_popup = False
 
-        self.update_map()
-
-
     def parse_character(self):
-        with self.stop_updating():
+        with self.atom_operation():
             self.step(A.Command.ATTRIBUTES)
             text = self.last_observation['tty_chars']
             text = ' '.join([bytes(t).decode() for t in text])
@@ -329,17 +344,28 @@ class Agent:
             self.step(A.Command.ESC)
 
     def step(self, action):
-        obs, reward, done, info = self.env.step(action)
+        observation, reward, done, info = self.env.step(action)
         self.step_count += 1
-
-        self.last_observation = {k: v.copy() for k, v in obs.items()}
+        observation = {k: v.copy() for k, v in observation.items()}
         self.score += reward
+
         if done:
             raise AgentFinished()
 
-        self.update_map()
+        self.update(observation)
 
-        return obs, reward, done, info
+    @contextlib.contextmanager
+    def atom_operation(self, max_different_turns=1):
+        if self.turns_in_atom_operation is not None:
+            yield
+            return
+
+        self.turns_in_atom_operation = 0
+        try:
+            yield
+        finally:
+            self.turns_in_atom_operation = None
+            self.update_state()
 
     @contextlib.contextmanager
     def panic_if_position_changes(self):
@@ -359,20 +385,20 @@ class Agent:
             assert fun in self.on_update
             self.on_update.pop(self.on_update.index(fun))
 
-    @contextlib.contextmanager
-    def stop_updating(self, update_at_end=False):
-        on_update = self.on_update
-        self.on_update = []
+    #@contextlib.contextmanager
+    #def stop_updating(self, update_at_end=False):
+    #    on_update = self.on_update
+    #    self.on_update = []
 
-        try:
-            yield
-        finally:
-            assert self.on_update == []
-            self.on_update = on_update
+    #    try:
+    #        yield
+    #    finally:
+    #        assert self.on_update == []
+    #        self.on_update = on_update
 
-        if update_at_end:
-            for f in self.on_update:
-                f()
+    #    if update_at_end:
+    #        for f in self.on_update:
+    #            f()
 
     @contextlib.contextmanager
     def preempt(self, conditions):
@@ -478,25 +504,41 @@ class Agent:
 
         return message_preffix + message, popup, False
 
-    def update_map(self):
-        obs = self.last_observation
+    def update(self, observation):
+        should_update = True
 
-        self.blstats = BLStats(*obs['blstats'])
-        self.glyphs = obs['glyphs']
-
-        self.message, self.popup, done = self.get_message_and_popup(obs)
+        self.message, self.popup, done = self.get_message_and_popup(observation)
         if not done:
             self.step(A.TextCharacters.SPACE)
             return
 
-        if obs['misc'][1]:  # entering text
+        if observation['misc'][1]:  # entering text
             self.step(A.Command.ESC)
             return
 
-        if b'[yn]' in bytes(obs['tty_chars'].reshape(-1)):
+        if b'[yn]' in bytes(observation['tty_chars'].reshape(-1)):
             self.enter_text('y')
             return
 
+        # FIXME: self.update_state() won't be called on all states sometimes.
+        #        Otherwise there are problems with atomic operations.
+
+        if self.turns_in_atom_operation is not None:
+            should_update = False
+            if any([(self.last_observation[key] != observation[key]).any()
+                    for key in ['glyphs', 'blstats', 'inv_strs', 'inv_letters', 'inv_oclasses', 'inv_glyphs']]):
+                self.turns_in_atom_operation += 1
+            assert self.turns_in_atom_operation in [0, 1]
+
+        self.last_observation = observation
+
+        self.blstats = BLStats(*self.last_observation['blstats'])
+        self.glyphs = self.last_observation['glyphs']
+
+        if should_update:
+            self.update_state()
+
+    def update_state(self):
         self.update_level()
         self.update_inventory()
 
@@ -508,15 +550,16 @@ class Agent:
             return
 
         self.inventory = {}
-        for item_name, category, letter in zip(
+        for item_name, category, glyph, letter in zip(
                 self.last_observation['inv_strs'],
                 self.last_observation['inv_oclasses'],
+                self.last_observation['inv_glyphs'],
                 self.last_observation['inv_letters']):
             item_name = bytes(item_name).decode().strip('\0')
             letter = chr(letter)
             if not item_name:
                 continue
-            item = self.item_manager.get_item_from_text(item_name, category)
+            item = self.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
             self.inventory[letter] = item
 
         self.previous_inv_strs = self.last_observation['inv_strs']
@@ -550,7 +593,7 @@ class Agent:
         level.seen[mask] = True
         level.walkable[mask] = True
 
-        for y, x in self.neighbors(self.blstats.y, self.blstats.x):
+        for y, x in self.neighbors(self.blstats.y, self.blstats.x, shuffle=False):
             if self.glyphs[y, x] in G.STONE:
                 level.seen[y, x] = True
                 level.objects[y, x] = self.glyphs[y, x]
@@ -558,7 +601,12 @@ class Agent:
     ######## TRIVIAL HELPERS
 
     @staticmethod
-    def calc_direction(from_y, from_x, to_y, to_x):
+    def calc_direction(from_y, from_x, to_y, to_x, allow_nonunit_distance=False):
+        if allow_nonunit_distance:
+            assert from_y == to_y or from_x == to_x or abs(from_y - to_y) == abs(from_x - to_x), ((from_y, from_x), (to_y, to_x))
+            to_y = from_y + np.sign(to_y - from_y)
+            to_x = from_x + np.sign(to_x - from_x)
+
         assert abs(from_y - to_y) <= 1 and abs(from_x - to_x) <= 1, ((from_y, from_x), (to_y, to_x))
 
         ret = ''
@@ -573,38 +621,45 @@ class Agent:
     ######## TRIVIAL ACTIONS
 
     def enter_text(self, text):
-        with self.panic_if_position_changes():
+        with self.atom_operation():
             for char in text:
                 char = ord(char)
                 self.step(A.ACTIONS[A.ACTIONS.index(char)])
 
     def eat(self):  # TODO: eat what
-        with self.panic_if_position_changes():  # TODO: anything, not only position
+        with self.atom_operation():
             self.step(A.Command.EAT)
+            if "You don't have anything to eat." in self.message:
+                return False
             self.enter_text('y')
-            self.step(A.Command.ESC)
-            self.step(A.Command.ESC)
-        return True  # TODO: return value
+            if "You don't have that object." in self.message:
+                self.step(A.Command.ESC)
+                return False
+        return True
 
     def open_door(self, y, x=None):
-        assert self.glyphs[y, x] in G.DOOR_CLOSED
-        self.direction(y, x)
-        return self.glyphs[y, x] not in G.DOOR_CLOSED
+        with self.panic_if_position_changes():
+            assert self.glyphs[y, x] in G.DOOR_CLOSED
+            self.direction(y, x)
+            return self.glyphs[y, x] not in G.DOOR_CLOSED
 
     def fight(self, y, x=None):
-        assert self.glyphs[y, x] in G.MONS
-        self.direction(y, x)
-        return True
+        with self.panic_if_position_changes():
+            assert self.glyphs[y, x] in G.MONS
+            self.direction(y, x)
+            return True
 
     def kick(self, y, x=None):
         with self.panic_if_position_changes():
-            self.step(A.Command.KICK)
-            self.direction(self.calc_direction(self.blstats.y, self.blstats.x, y, x))
+            with self.atom_operation():
+                self.step(A.Command.KICK)
+                self.direction(self.calc_direction(self.blstats.y, self.blstats.x, y, x))
 
     def search(self):
-        self.step(A.Command.SEARCH)
-        self.current_level().search_count[self.blstats.y, self.blstats.x] += 1
-        return True
+        with self.panic_if_position_changes():
+            self.step(A.Command.SEARCH)
+            self.current_level().search_count[self.blstats.y, self.blstats.x] += 1
+            return True
 
     def direction(self, y, x=None):
         if x is not None:
@@ -617,7 +672,8 @@ class Agent:
             'e': A.CompassDirection.E, 'w': A.CompassDirection.W,
             'ne': A.CompassDirection.NE, 'se': A.CompassDirection.SE,
             'nw': A.CompassDirection.NW, 'sw': A.CompassDirection.SW,
-            '>': A.MiscDirection.DOWN, '<': A.MiscDirection.UP
+            '>': A.MiscDirection.DOWN, '<': A.MiscDirection.UP,
+            '.': A.MiscDirection.WAIT,
         }[dir]
 
         self.step(action)
@@ -780,9 +836,17 @@ class Agent:
 
             y, x = closests_y[0], closests_x[0]
 
-            # TODO: allow diagonal fight from doors
+            if abs(self.blstats.y - y) > 1 or abs(self.blstats.x - x) > 1:
+                #if (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
+                #    dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
+                #    with self.atom_operation():
+                #        self.step(A.Command.FIRE)
+                #        if "You don't have that object." in self.message or 'What do you want to throw?' in bytes(self.last_observation['message']).decode():
+                #            self.step(A.Command.ESC)
+                #        else:
+                #            self.direction(dir)
+                #            continue
 
-            if self.bfs()[y, x] != 1:
                 self.go_to(y, x, stop_one_before=True, max_steps=1,
                            debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
                 continue
@@ -1000,6 +1064,7 @@ class Agent:
     ####### MAIN
 
     def main(self):
+        self.update({k: v.copy() for k, v in self.env.reset().items()})
         self.parse_character()
 
         try:

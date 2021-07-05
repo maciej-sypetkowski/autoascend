@@ -81,8 +81,9 @@ class EnvWrapper:
                     if self.draw_walkable else contextlib.suppress():
                 with self.debug_tiles(~self.agent.current_level().seen, color=(255, 0, 0, 128)) \
                         if self.draw_seen else contextlib.suppress():
-                    self.visualizer.step(self.last_observation)
-                    self.visualizer.render()
+                    with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0, color=(0, 255, 255, 128)):
+                        self.visualizer.step(self.last_observation)
+                        self.visualizer.render()
 
     def print_help(self):
         scene_glyphs = set(self.env.last_observation[0].reshape(-1))
@@ -309,7 +310,7 @@ def run_profiling(games):
     subprocess.run('xdot /tmp/calling_graph.dot'.split())
 
 
-def run_simulations(games):
+def run_simulations(games, first_seed):
     from multiprocessing import Process, Queue
     from matplotlib import pyplot as plt
     import seaborn as sns
@@ -382,7 +383,7 @@ def run_simulations(games):
     plt_process = Process(target=plot_thread_func)
     plt_process.start()
     all_res = {}
-    last_seed = np.random.randint(0, 2 ** 30)
+    last_seed = first_seed
     simulation_processes = []
     remaining_games = games
     for _ in range(min(16, remaining_games)):
@@ -449,7 +450,8 @@ def run_simulations(games):
 def main():
     if sys.argv[1] == 'simulate':
         games = int(sys.argv[2])
-        run_simulations(games)
+        seed = int(sys.argv[3])
+        run_simulations(games, seed)
     elif sys.argv[1] == 'profile':
         games = int(sys.argv[2])
         run_profiling(games)
