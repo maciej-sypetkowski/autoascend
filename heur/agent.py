@@ -332,22 +332,7 @@ class Agent:
 
         self._is_reading_message_or_popup = False
 
-    def parse_character(self):
-        with self.atom_operation():
-            self.step(A.Command.ATTRIBUTES)
-            text = ' '.join(self.popup)
-            self.character = CH.parse(text)
-
-    def step(self, action):
-        observation, reward, done, info = self.env.step(action)
-        self.step_count += 1
-        observation = {k: v.copy() for k, v in observation.items()}
-        self.score += reward
-
-        if done:
-            raise AgentFinished()
-
-        self.update(observation)
+    ######## CONVENIENCE FUNCTIONS
 
     @contextlib.contextmanager
     def atom_operation(self, max_different_turns=1):
@@ -428,6 +413,8 @@ class Agent:
         finally:
             self.on_update = list(filter(lambda f: f not in funcs, self.on_update))
 
+    ######## UPDATE FUNCTIONS
+
     def get_message_and_popup(self, obs):
         """ Uses MORE action to get full popup and/or message.
         """
@@ -505,6 +492,17 @@ class Agent:
 
         return message_preffix + message, popup, False
 
+    def step(self, action):
+        observation, reward, done, info = self.env.step(action)
+        self.step_count += 1
+        observation = {k: v.copy() for k, v in observation.items()}
+        self.score += reward
+
+        if done:
+            raise AgentFinished()
+
+        self.update(observation)
+
     def update(self, observation):
         should_update = True
 
@@ -565,16 +563,6 @@ class Agent:
 
         self.previous_inv_strs = self.last_observation['inv_strs']
 
-    def current_level(self):
-        key = (self.blstats.dungeon_number, self.blstats.level_number)
-        if key not in self.levels:
-            self.levels[key] = Level()
-        return self.levels[key]
-
-    def glyphs_mask_in(self, *gset):
-        gset = list(chain(*gset))
-        return np.isin(self.glyphs, gset)
-
     def update_level(self):
         level = self.current_level()
 
@@ -601,6 +589,16 @@ class Agent:
 
     ######## TRIVIAL HELPERS
 
+    def current_level(self):
+        key = (self.blstats.dungeon_number, self.blstats.level_number)
+        if key not in self.levels:
+            self.levels[key] = Level()
+        return self.levels[key]
+
+    def glyphs_mask_in(self, *gset):
+        gset = list(chain(*gset))
+        return np.isin(self.glyphs, gset)
+
     @staticmethod
     def calc_direction(from_y, from_x, to_y, to_x, allow_nonunit_distance=False):
         if allow_nonunit_distance:
@@ -620,6 +618,12 @@ class Agent:
         return ret
 
     ######## TRIVIAL ACTIONS
+
+    def parse_character(self):
+        with self.atom_operation():
+            self.step(A.Command.ATTRIBUTES)
+            text = ' '.join(self.popup)
+            self.character = CH.parse(text)
 
     def enter_text(self, text):
         with self.atom_operation():
@@ -889,105 +893,109 @@ class Agent:
             self.eat()  # TODO: what
 
     @debug_log('explore1')
-    def explore1(self):
-
-        # doors
-        for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
-            if self.glyphs[py, px] in G.DOOR_CLOSED:
-                with self.panic_if_position_changes():
-                    if not self.open_door(py, px):
-                        if not 'locked' in self.message:
-                            for _ in range(6):
-                                if self.open_door(py, px):
-                                    break
+    def explore1(self, search_prio_limit=0):
+        def open_neighbor_doors():
+            for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
+                if self.glyphs[py, px] in G.DOOR_CLOSED:
+                    with self.panic_if_position_changes():
+                        if not self.open_door(py, px):
+                            if not 'locked' in self.message:
+                                for _ in range(6):
+                                    if self.open_door(py, px):
+                                        break
+                                else:
+                                    while self.glyphs[py, px] in G.DOOR_CLOSED:
+                                        self.kick(py, px)
                             else:
                                 while self.glyphs[py, px] in G.DOOR_CLOSED:
                                     self.kick(py, px)
-                        else:
-                            while self.glyphs[py, px] in G.DOOR_CLOSED:
-                                self.kick(py, px)
-                break
+                    break
 
-        level = self.current_level()
-        to_explore = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
-        dis = self.bfs()
-        for dy in [-1, 0, 1]:
-            for dx in [-1, 0, 1]:
-                if dy != 0 or dx != 0:
-                    to_explore |= utils.translate(~level.seen & self.glyphs_mask_in(G.STONE), dy, dx)
-                    if dx == 0 or dy == 0:
-                        to_explore |= utils.translate(self.glyphs_mask_in(G.DOOR_CLOSED), dy, dx)
+        def to_visit_func():
+            level = self.current_level()
+            to_visit = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
+            dis = self.bfs()
+            for dy in [-1, 0, 1]:
+                for dx in [-1, 0, 1]:
+                    if dy != 0 or dx != 0:
+                        to_visit |= utils.translate(~level.seen & self.glyphs_mask_in(G.STONE), dy, dx)
+                        if dx == 0 or dy == 0:
+                            to_visit |= utils.translate(self.glyphs_mask_in(G.DOOR_CLOSED), dy, dx)
+            return to_visit
+
+        def to_search_func(prio_limit=0, return_prio=False):
+            level = self.current_level()
+            dis = self.bfs()
+
+            prio = np.zeros((C.SIZE_Y, C.SIZE_X), np.float32)
+            prio[:] = -1
+            prio -= level.search_count ** 2 * 2
+            is_on_corridor = np.isin(level.objects, list(G.CORRIDOR))
+            is_on_door = np.isin(level.objects, list(G.DOORS))
+
+            stones = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
+            walls = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
+
+            for dy in [-1, 0, 1]:
+                for dx in [-1, 0, 1]:
+                    if dy != 0 or dx != 0:
+                        stones += np.isin(utils.translate(level.objects, dy, dx), list(G.STONE))
+                        walls += np.isin(utils.translate(level.objects, dy, dx), list(G.WALL))
+
+            prio += (is_on_door & (stones > 3)) * 250
+            prio += (np.stack([utils.translate(level.walkable, y, x).astype(np.int32)
+                               for y, x in [(1, 0), (-1, 0), (0, 1), (0, -1)]]).sum(0) <= 1) * 250
+            prio[(stones == 0) & (walls == 0)] = -np.inf
+
+            prio[~level.walkable | (dis == -1)] = -np.inf
+
+            if return_prio:
+                return prio
+            return prio >= prio_limit
+
+        open_neighbor_doors()
+        to_visit  = to_visit_func()
+        to_search = to_search_func(max(0, search_prio_limit) if search_prio_limit is not None else 0)
 
         # consider exploring tile only when there is a path to it
-        to_explore &= dis != -1
-
-        # find all closest to_explore tiles
-        nonzero_y, nonzero_x = \
-            (dis == (dis * (to_explore) - 1).astype(np.uint16).min() + 1).nonzero()
-        nonzero = [(y, x) for y, x in zip(nonzero_y, nonzero_x) if to_explore[y, x]]
-        if len(nonzero) == 0:
-            return False
-
-        # select closest to_explore tile
-        nonzero_y, nonzero_x = zip(*nonzero)
-        target_y, target_x = nonzero_y[0], nonzero_x[0]
-
-        del level
-
-        self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 255, 0), is_path=True))
-
-    @debug_log('search1')
-    def search1(self, prio_limit=None):
-        level = self.current_level()
         dis = self.bfs()
+        to_explore = (to_visit | to_search) & (dis != -1)
 
-        prio = np.zeros((C.SIZE_Y, C.SIZE_X), np.float32)
-        for y in range(C.SIZE_Y):
-            for x in range(C.SIZE_X):
-                if not level.walkable[y, x] or dis[y, x] == -1:
-                    prio[y, x] = -np.inf
-                else:
-                    prio[y, x] = 0
-                    prio[y, x] -= level.search_count[y, x] ** 2 * 2
+        dynamic_search_fallback = False
+        if not to_explore.any():
+            dynamic_search_fallback = True
+        else:
+            # find all closest to_explore tiles
+            nonzero_y, nonzero_x = ((dis == dis[to_explore].min()) & to_explore).nonzero()
+            if len(nonzero_y) == 0:
+                dynamic_search_fallback = True
 
-                    is_on_corridor = level.objects[y, x] in G.CORRIDOR
-                    is_on_door = level.objects[y, x] in G.DOORS
-                    stones, walls = 0, 0
-                    for py, px in self.neighbors(y, x, shuffle=False):
-                        stones += level.objects[py, px] in G.STONE
-                        walls += level.objects[py, px] in G.WALL
+        if dynamic_search_fallback:
+            if search_prio_limit is not None and search_prio_limit >= 0:
+                return False
 
-                    if is_on_door and stones >= 3:
-                        prio[y, x] += 50
-
-                    if stones >= 0 and \
-                            (0 + level.walkable[y - 1, x] if y > 0 else 0) + \
-                            (0 + level.walkable[y + 1, x] if y < C.SIZE_Y - 1 else 0) + \
-                            (0 + level.walkable[y, x - 1] if x > 0 else 0) + \
-                            (0 + level.walkable[y, x + 1] if x < C.SIZE_X - 1 else 0) <= 1:
-                        prio[y, x] += 50
-
-                    if stones == 0 and walls == 0:
-                        prio[y, x] -= 1000
-
-        if prio_limit is not None and prio.max() < prio_limit:
-            return False
-
-        with self.env.debug_tiles(prio >= prio_limit, color=(0, 0, 255, 64)) \
-                if prio_limit is not None else contextlib.suppress():
-            if prio_limit is None:
-                prio -= dis * 2
+            search_prio = to_search_func(return_prio=True)
+            if search_prio_limit is not None:
+                search_prio[search_prio < search_prio_limit] = -np.inf
+                search_prio[search_prio < search_prio_limit] = -np.inf
+                search_prio -= dis * np.isfinite(search_prio) * 100
             else:
-                prio[prio < prio_limit] = -np.inf
-                prio -= dis * np.isfinite(prio) * 100
+                search_prio -= dis * 6
 
-            nonzero_y, nonzero_x = (prio == prio.max()).nonzero()
-            assert len(nonzero_y) > 0, prio.max()
+            to_search = np.isfinite(search_prio)
+            to_explore = (to_visit | to_search) & (dis != -1)
+            nonzero_y, nonzero_x = ((search_prio == search_prio[to_explore].max()) & to_explore).nonzero()
 
-            target_y, target_x = nonzero_y[0], nonzero_x[0]
+        # select random closest to_explore tile
+        i = self.rng.randint(len(nonzero_y))
+        target_y, target_x = nonzero_y[i], nonzero_x[i]
 
-            self.go_to(target_y, target_x, debug_tiles_args=dict(color=(0, 255, 255), is_path=True))
-            self.search()
+        with self.env.debug_tiles(to_explore, color=(0, 0, 255, 64)):
+            self.go_to(target_y, target_x, debug_tiles_args=dict(
+                color=(255 * bool(to_visit[target_y, target_x]), 255, 255 * bool(to_search[target_y, target_x])),
+                is_path=True))
+            if to_search[target_y, target_x]:
+                self.search()
 
     @debug_log('move_down')
     def move_down(self):
@@ -1029,17 +1037,14 @@ class Agent:
                         self.inventory.values())),
             ]) as outcome:
                 if outcome() is None:
-                    if self.explore1() is not False:
-                        continue
-
-                    limit = 1 if np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() else None
-                    if self.search1(limit) is not False:
+                    limit = 0 if np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() else None
+                    if self.explore1(limit) is not False:
                         continue
 
                     if len(self.levels) <= 100 and self.move_down() is not False:
                         continue
 
-                    if self.search1() is not False:
+                    if self.explore1(None) is not False:
                         continue
 
             if outcome() == 0:

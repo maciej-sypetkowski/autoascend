@@ -61,6 +61,8 @@ class EnvWrapper:
                 print('Pop-up :', self.agent.popup)
             print()
             print(BLStats(*self.last_observation['blstats']))
+            if self.agent is not None:
+                print('Character:', self.agent.character)
             print('Misc :', self.last_observation['misc'])
             print('Score:', self.score)
             print('Steps:', self.env._steps)
@@ -418,24 +420,25 @@ def run_simulations(games, first_seed):
 
         total_duration = time.time() - start_time
 
-        print(f'count                         : {count}')
-        print(f'time_per_simulation           : {np.mean(all_res["duration"])}')
-        print(f'simulations_per_hour          : {3600 / np.mean(all_res["duration"])}')
-        print(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
-        print(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
-        print(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
-        print(f'score_mean                    : {np.mean(all_res["score"]):.1f} +/- '
-              f'{np.std(all_res["score"]) / (len(all_res["score"]) ** 0.5):.1f}')
-        print(f'score_median                  : {np.median(all_res["score"]):.1f} +/- '
-              f'{np.std([np.median(np.random.choice(all_res["score"], size=max(1, len(all_res["score"]) // 2))) for _ in range(1024)]):.1f}')
-        print(f'score_05-95                   : {np.quantile(all_res["score"], 0.05)} '
-              f'{np.quantile(all_res["score"], 0.95)}')
-        print(f'score_25-75                   : {np.quantile(all_res["score"], 0.25)} '
-              f'{np.quantile(all_res["score"], 0.75)}')
-        print(f'exceptions                    : {sum([r.startswith("exception:") for r in all_res["end_reason"]])}')
-        print(f'steplimit                     : {sum([r.startswith("steplimit") or r.startswith("ABORT") for r in all_res["end_reason"]])}')
-        print(f'timeout                       : {sum([r.startswith("timeout") for r in all_res["end_reason"]])}')
-        print()
+        text = []
+        text.append(f'count                         : {count}')
+        text.append(f'time_per_simulation           : {np.mean(all_res["duration"])}')
+        text.append(f'simulations_per_hour          : {3600 / np.mean(all_res["duration"])}')
+        text.append(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
+        text.append(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
+        text.append(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
+        text.append(f'score_median                  : {np.median(all_res["score"]):.1f} +/- '
+                    f'{np.std([np.median(np.random.choice(all_res["score"], size=max(1, len(all_res["score"]) // 2))) for _ in range(1024)]):.1f}')
+        text.append(f'score_mean                    : {np.mean(all_res["score"]):.1f} +/- '
+                    f'{np.std(all_res["score"]) / (len(all_res["score"]) ** 0.5):.1f}')
+        text.append(f'score_05-95                   : {np.quantile(all_res["score"], 0.05)} '
+                    f'{np.quantile(all_res["score"], 0.95)}')
+        text.append(f'score_25-75                   : {np.quantile(all_res["score"], 0.25)} '
+                    f'{np.quantile(all_res["score"], 0.75)}')
+        text.append(f'exceptions                    : {sum([r.startswith("exception:") for r in all_res["end_reason"]])}')
+        text.append(f'steplimit                     : {sum([r.startswith("steplimit") or r.startswith("ABORT") for r in all_res["end_reason"]])}')
+        text.append(f'timeout                       : {sum([r.startswith("timeout") for r in all_res["end_reason"]])}')
+        print('\n'.join(text) + '\n')
 
         with Path('/tmp/nh_sim.json').open('w') as f:
             json.dump(all_res, f)
