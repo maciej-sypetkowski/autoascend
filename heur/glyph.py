@@ -156,6 +156,128 @@ class MON: # monsters, pets
     ALL_PETS = [nh.GLYPH_PET_OFF + i for i in range(nh.NUMMONS)]
 
 
+class WEA:
+    # Taken from: https://nethackwiki.com/wiki/Weapon#Table_of_weapons_and_their_properties
+    data = [
+        ('orcish dagger', 'dagger', 'd3', 'd3'),
+        ('dagger', 'dagger', 'd4', 'd3'),
+        ('silver dagger', 'dagger', 'd4', 'd3'),
+        ('athame', 'dagger', 'd4', 'd3'),
+        ('elven dagger', 'dagger', 'd5', 'd3'),
+        ('worm tooth', 'knife', 'd2', 'd2'),
+        ('knife', 'knife', 'd3', 'd2'),
+        ('stiletto', 'knife', 'd3', 'd2'),
+        ('scalpel', 'knife', 'd3', 'd3'),
+        ('crysknife', 'knife', 'd10', 'd10'),
+        ('axe', 'axe', 'd6', 'd4'),
+        ('battle-axe', 'axe', 'd8+d4', 'd6+2d4'),
+        ('pick-axe', 'pick-axe', 'd6', 'd3'),
+        ('dwarvish mattock', 'pick-axe', 'd12', 'd8+2d6'),
+        ('orcish short sword', 'short sword', 'd5', 'd8'),
+        ('short sword', 'short sword', 'd6', 'd8'),
+        ('dwarvish short sword', 'short sword', 'd7', 'd8'),
+        ('elven short sword', 'short sword', 'd8', 'd8'),
+        ('broadsword', 'broadsword', '2d4', 'd6+1'),
+        ('runesword', 'broadsword', '2d4', 'd6+1'),
+        ('elven broadsword', 'broadsword', 'd6+d4', 'd6+1'),
+        ('long sword', 'long sword', 'd8', 'd12'),
+        ('katana', 'long sword', 'd10', 'd12'),
+        ('two-handed sword', 'two-handed sword', 'd12', '3d6'),
+        ('tsurugi', 'two-handed sword', 'd16', 'd8+2d6'),
+        ('scimitar', 'scimitar', 'd8', 'd8'),
+        ('silver saber', 'saber', 'd8', 'd8'),
+        ('club', 'club', 'd6', 'd3'),
+        ('aklys', 'club', 'd6', 'd3'),
+        ('mace', 'mace', 'd6+1', 'd6'),
+        ('morning star', 'morning star', '2d4', 'd6+1'),
+        ('flail', 'flail', 'd6+1', '2d4'),
+        ('grappling hook', 'flail', 'd2', 'd6'),
+        ('war hammer', 'hammer', 'd4+1', 'd4'),
+        ('quarterstaff', 'quarterstaff', 'd6', 'd6'),
+        ('partisan', 'polearms', 'd6', 'd6+1'),
+        ('fauchard', 'polearms', 'd6', 'd8'),
+        ('glaive', 'polearms', 'd6', 'd10'),
+        ('bec-de-corbin', 'polearms', 'd8', 'd6'),
+        ('spetum', 'polearms', 'd6+1', '2d6'),
+        ('lucern hammer', 'polearms', '2d4', 'd6'),
+        ('guisarme', 'polearms', '2d4', 'd8'),
+        ('ranseur', 'polearms', '2d4', '2d4'),
+        ('voulge', 'polearms', '2d4', '2d4'),
+        ('bill-guisarme', 'polearms', '2d4', 'd10'),
+        ('bardiche', 'polearms', '2d4', '3d4'),
+        ('halberd', 'polearms', 'd10', '2d6'),
+        ('orcish spear', 'spear', 'd5', 'd8'),
+        ('spear', 'spear', 'd6', 'd8'),
+        ('silver spear', 'spear', 'd6', 'd8'),
+        ('elven spear', 'spear', 'd7', 'd8'),
+        ('dwarvish spear', 'spear', 'd8', 'd8'),
+        ('javelin', 'spear', 'd6', 'd6'),
+        ('trident', 'trident', 'd6+1', '3d4'),
+        ('lance', 'lance', 'd6', 'd8'),
+        ('orcish bow', 'bow', 'd2', 'd2'),
+        ('orcish arrow', 'bow', 'd5', 'd6'),
+        ('bow', 'bow', 'd2', 'd2'),
+        ('arrow', 'bow', 'd6', 'd6'),
+        ('elven bow', 'bow', 'd2', 'd2'),
+        ('elven arrow', 'bow', 'd7', 'd6'),
+        ('yumi', 'bow', 'd2', 'd2'),
+        ('ya', 'bow', 'd7', 'd7'),
+        ('silver arrow', 'bow', 'd6', 'd6'),
+        ('sling', 'sling', 'd2', 'd2'),
+        ('flint stone', 'sling', 'd6', 'd6'),
+        ('crossbow', 'crossbow', 'd2', 'd2'),
+        ('crossbow bolt', 'crossbow', 'd4+1', 'd6+1'),
+        ('dart', 'dart', 'd3', 'd2'),
+        ('shuriken', 'shuriken', 'd8', 'd6'),
+        ('boomerang', 'boomerang', 'd9', 'd9'),
+        ('bullwhip', 'whip', 'd2', '1'),
+        ('rubber hose', 'whip', 'd4', 'd3'),
+        ('unicorn horn', 'unicorn horn', 'd12', 'd12'),
+
+
+        # synonyms
+        ('shito', 'knife', 'd3', 'd2'),
+        ('wakizashi', 'short sword', 'd6', 'd8'),
+        ('ninja-to', 'broadsword', '2d4', 'd6+1'),
+        ('nunchaku', 'flail', 'd6+1', '2d4'),
+        ('naginata', 'polearms', 'd6', 'd10'),
+        ('bec de corbin', 'polearms', 'd8', 'd6'),
+    ]
+
+    @staticmethod
+    def expected_damage(damage_str):
+        if '-' in damage_str:
+            raise NotImplementedError()
+        ret = 0
+        for word in damage_str.split('+'):
+            if 'd' in word:
+                sides = int(word[word.find('d') + 1:])
+                mult = word[:word.find('d')]
+                if not mult:
+                    mult = 1
+                else:
+                    mult = int(mult)
+            else:
+                sides = 1
+                mult = int(word)
+            ret += mult * (1 + sides) / 2
+        return ret
+
+
+    @classmethod
+    def get_dps(cls, glyph, large_monster):
+        assert nh.glyph_is_object(glyph), glyph
+        obj = nh.objclass(nh.glyph_to_obj(glyph))
+        objname = nh.objdescr.from_idx(nh.glyph_to_obj(glyph)).oc_name
+        assert ord(obj.oc_class) == nh.WEAPON_CLASS
+        for name, _, small_dps, large_dps in cls.data:
+            if name == objname:
+                if large_monster:
+                    return cls.expected_damage(large_dps)
+                else:
+                    return cls.expected_damage(small_dps)
+        assert 0, objname
+
 class ALL:
     @staticmethod
     def find(glyph):

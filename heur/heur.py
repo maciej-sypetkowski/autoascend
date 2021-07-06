@@ -165,7 +165,7 @@ class EnvWrapper:
             self.render()
 
             print()
-            print('agent_action:', agent_action)
+            print('agent_action:', agent_action, repr(chr(int(agent_action))))
             print()
 
             if self.step_count < self.skip_to:
@@ -265,7 +265,7 @@ def single_simulation(seed, timeout=360, step_limit=20000):
 
     end_time = time.time()
     summary = env.get_summary()
-    summary['duration'] = end_time - start_time,
+    summary['duration'] = end_time - start_time
     return summary
 
 

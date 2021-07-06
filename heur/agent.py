@@ -10,7 +10,7 @@ import toolz
 from nle.nethack import actions as A
 
 import utils
-from glyph import SS, MON, C
+from glyph import SS, MON, C, WEA
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
@@ -31,6 +31,8 @@ class G:  # Glyphs
 
     MONS = set(MON.ALL_MONS)
     PETS = set(MON.ALL_PETS)
+
+    WEAPONS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == nh.WEAPON_CLASS}
 
     SHOPKEEPER = {MON.fn('shopkeeper')}
 
@@ -206,7 +208,7 @@ class Item:
     UNCURSED = 2
     BLESSED = 3
 
-    def __init__(self, glyphs, count, status, modifier, worn, at_ready):
+    def __init__(self, glyphs, count=1, status=UNKNOWN, modifier=None, worn=False, at_ready=False):
         # glyphs is a list of possible glyphs for this item
         assert isinstance(glyphs, list)
         assert all(map(nh.glyph_is_object, glyphs))
@@ -222,14 +224,24 @@ class Item:
 
         assert all(map(lambda glyph: ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category, self.glyphs))
 
+    def base_cost(self):
+        assert len(self.glyphs) == 1, 'TODO: what in this case?'
+        return nh.objclass(nh.glyph_to_obj(self.glyphs[0])).oc_cost
+
+    ######## WEAPON
+
     def is_weapon(self):
+        assert self.category != nh.WEAPON_CLASS or len(self.glyphs) == 1, self.glyphs
         return self.category == nh.WEAPON_CLASS
+
+    def get_dps(self, big_monster):
+        assert self.is_weapon()
+        return WEA.get_dps(self.glyphs[0], big_monster) + (self.modifier if self.modifier is not None else 0)
 
     def is_launcher(self):
         if not self.is_weapon():
             return False
 
-        assert len(self.glyphs) == 1
         return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
                 ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
 
@@ -237,7 +249,6 @@ class Item:
         if not self.is_weapon():
             return False
 
-        assert len(self.glyphs) == 1
         # TODO: boomerang
         return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
                 ['orcish dagger', 'dagger silver', 'athame dagger', 'elven dagger',
@@ -280,7 +291,7 @@ class ItemManager:
         count, _, status, effects, _, _, _, modifier, name, _, uses, _, info = matches[0]
         # TODO: effects, uses
 
-        if info in {'weapon in paw', 'weapon in hand', 'weapon in paws', 'weapon in hands', 'being worn', 'being worn; slippery'}:
+        if info in {'weapon in paw', 'weapon in hand', 'weapon in paws', 'weapon in hands', 'being worn', 'being worn; slippery', 'wielded'}:
             worn = True
             at_ready = False
         elif info in {'at the ready', 'in quiver', 'in quiver pouch'}:
@@ -315,6 +326,12 @@ class ItemManager:
             name = 'short sword'
         elif name == 'ninja-to':
             name = 'broadsword'
+        elif name == 'nunchaku':
+            name == 'flail'
+        elif name == 'shito':
+            name == 'knife'
+        elif name == 'naginata':
+            name == 'glaive'
 
         for i in range(nh.NUM_OBJECTS):
             if ord(nh.objclass(i).oc_class) != category:
@@ -686,6 +703,18 @@ class Agent:
                 return False
         return True
 
+    def take_item(self):  # TODO: take what
+        with self.atom_operation():
+            self.step(A.Command.PICKUP)
+            self.step(A.Command.ESC)
+        return True
+
+    def wield(self, letter):
+        with self.atom_operation():
+            self.step(A.Command.WIELD)
+            self.enter_text(letter)
+        return True
+
     def open_door(self, y, x=None):
         with self.panic_if_position_changes():
             assert self.glyphs[y, x] in G.DOOR_CLOSED
@@ -1001,73 +1030,143 @@ class Agent:
                 return prio
             return prio >= prio_limit
 
+        def open_visit_search(search_prio_limit):
+            while 1:
+                open_neighbor_doors()
+                to_visit  = to_visit_func()
+                to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)
+
+                # consider exploring tile only when there is a path to it
+                dis = self.bfs()
+                to_explore = (to_visit | to_search) & (dis != -1)
+
+                dynamic_search_fallback = False
+                if not to_explore.any():
+                    dynamic_search_fallback = True
+                else:
+                    # find all closest to_explore tiles
+                    nonzero_y, nonzero_x = ((dis == dis[to_explore].min()) & to_explore).nonzero()
+                    if len(nonzero_y) == 0:
+                        dynamic_search_fallback = True
+
+                if dynamic_search_fallback:
+                    if search_prio_limit is not None and search_prio_limit >= 0:
+                        return
+
+                    search_prio = to_search_func(return_prio=True)
+                    if search_prio_limit is not None:
+                        search_prio[search_prio < search_prio_limit] = -np.inf
+                        search_prio[search_prio < search_prio_limit] = -np.inf
+                        search_prio -= dis * np.isfinite(search_prio) * 100
+                    else:
+                        search_prio -= dis * 4
+
+                    to_search = np.isfinite(search_prio)
+                    to_explore = (to_visit | to_search) & (dis != -1)
+                    if not to_explore.any():
+                        return
+                    nonzero_y, nonzero_x = ((search_prio == search_prio[to_explore].max()) & to_explore).nonzero()
+
+                # select random closest to_explore tile
+                i = self.rng.randint(len(nonzero_y))
+                target_y, target_x = nonzero_y[i], nonzero_x[i]
+
+                with self.env.debug_tiles(to_explore, color=(0, 0, 255, 64)):
+                    self.go_to(target_y, target_x, debug_tiles_args=dict(
+                        color=(255 * bool(to_visit[target_y, target_x]), 255, 255 * bool(to_search[target_y, target_x])),
+                        is_path=True))
+                    if to_search[target_y, target_x] and not to_visit[target_y, target_x]:
+                        self.search()
+
+        def check_item_pile():
+            mask = (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) & 
+                    ~self.current_level().checked_item_pile)
+
+            dis = self.bfs()
+            nonzero_y, nonzero_x = (mask & (dis == dis[mask].min())).nonzero()
+            i = self.rng.randint(len(nonzero_y))
+            target_y, target_x = nonzero_y[i], nonzero_x[i]
+
+            #with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
+            #    # TODO: search for traps before stepping in
+            #    self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
+
+            self.current_level().checked_item_pile[target_y, target_x] = True
+
+        def take_item(only_check=False):
+            return False # TODO: ignore for now
+
+            if self.character.role == CH.MONK:
+                return False
+            for item in self.inventory.values():
+                if item.is_weapon() and item.worn:
+                    if item.status == Item.CURSED:
+                        return
+                    current_weapon_dps = item.get_dps(big_monster=False) # TODO: what about monster size
+                    current_weapon = item
+                    break
+            else:
+                current_weapon_dps = 0
+                current_weapon = 'fists'
+
+            current_weapon_dps += 2  # take only relatively better items than yours
+
+            mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (self.bfs() != -1) & self.glyphs_mask_in(G.WEAPONS)
+            nonzero_y, nonzero_x = mask.nonzero()
+
+            best_item = None
+            best_item_dps = None
+            for y, x in zip(nonzero_y, nonzero_x):
+                glyph = self.glyphs[y, x]
+                dps = Item([self.glyphs[y, x]]).get_dps(big_monster=False)
+                if dps > current_weapon_dps:
+                    best_item_dps = dps
+                    best_item = (y, x)
+
+            if best_item is None:
+                return False
+
+            if only_check:
+                return True
+
+            with self.env.debug_log(f'going for {Item([self.glyphs[best_item]])}'):
+                target_y, target_x = best_item
+                self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
+                if self.current_level().shop[target_y, target_x]:
+                    return
+                self.take_item()
+
+                # select the best
+                best_item = None
+                best_dps = None
+                for letter, item in self.inventory.items():
+                    if item.is_weapon():
+                        dps = item.get_dps(big_monster=False) # TODO: what about monster size
+                        if best_dps is None or best_dps < dps:
+                            best_dps = dps
+                            best_item = letter
+
+                self.wield(letter)
+                if self.blstats.carrying_capacity != 0:
+                    print(self.blstats.carrying_capacity)
+
+
         while 1:
             with self.preempt([
                 lambda: (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) & 
                          ~self.current_level().checked_item_pile).any(),
+                lambda: take_item(only_check=True)
             ]) as outcome:
                 if outcome() is None:
-                    while 1:
-                        open_neighbor_doors()
-                        to_visit  = to_visit_func()
-                        to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)
-
-                        # consider exploring tile only when there is a path to it
-                        dis = self.bfs()
-                        to_explore = (to_visit | to_search) & (dis != -1)
-
-                        dynamic_search_fallback = False
-                        if not to_explore.any():
-                            dynamic_search_fallback = True
-                        else:
-                            # find all closest to_explore tiles
-                            nonzero_y, nonzero_x = ((dis == dis[to_explore].min()) & to_explore).nonzero()
-                            if len(nonzero_y) == 0:
-                                dynamic_search_fallback = True
-
-                        if dynamic_search_fallback:
-                            if search_prio_limit is not None and search_prio_limit >= 0:
-                                return
-
-                            search_prio = to_search_func(return_prio=True)
-                            if search_prio_limit is not None:
-                                search_prio[search_prio < search_prio_limit] = -np.inf
-                                search_prio[search_prio < search_prio_limit] = -np.inf
-                                search_prio -= dis * np.isfinite(search_prio) * 100
-                            else:
-                                search_prio -= dis * 4
-
-                            to_search = np.isfinite(search_prio)
-                            to_explore = (to_visit | to_search) & (dis != -1)
-                            if not to_explore.any():
-                                return
-                            nonzero_y, nonzero_x = ((search_prio == search_prio[to_explore].max()) & to_explore).nonzero()
-
-                        # select random closest to_explore tile
-                        i = self.rng.randint(len(nonzero_y))
-                        target_y, target_x = nonzero_y[i], nonzero_x[i]
-
-                        with self.env.debug_tiles(to_explore, color=(0, 0, 255, 64)):
-                            self.go_to(target_y, target_x, debug_tiles_args=dict(
-                                color=(255 * bool(to_visit[target_y, target_x]), 255, 255 * bool(to_search[target_y, target_x])),
-                                is_path=True))
-                            if to_search[target_y, target_x] and not to_visit[target_y, target_x]:
-                                self.search()
+                    open_visit_search(search_prio_limit)
+                    break
 
             if outcome() == 0:
-                mask = (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) & 
-                        ~self.current_level().checked_item_pile)
+                check_item_pile()
+                continue
 
-                dis = self.bfs()
-                nonzero_y, nonzero_x = (mask & (dis == dis[mask].min())).nonzero()
-                i = self.rng.randint(len(nonzero_y))
-                target_y, target_x = nonzero_y[i], nonzero_x[i]
-
-                #with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
-                #    # TODO: search for traps before stepping in
-                #    self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
-
-                self.current_level().checked_item_pile[target_y, target_x] = True
+            if outcome() == 1:
+                take_item()
                 continue
 
             assert 0, outcome()
@@ -1096,7 +1195,16 @@ class Agent:
         target_y, target_x = pos
 
         self.go_to(target_y, target_x, debug_tiles_args=dict(color=(0, 0, 255), is_path=True))
-        self.direction('>')
+        with self.env.debug_log('waiting for a pet'):
+            for _ in range(8):
+                for y, x in self.neighbors(self.blstats.y, self.blstats.x):
+                    if self.glyphs[y, x] in G.PETS:
+                        break
+                else:
+                    self.direction('.')
+                    continue
+                break
+            self.direction('>')
 
     ######## HIGH-LEVEL STRATEGIES
 
@@ -1105,49 +1213,54 @@ class Agent:
         while 1:
             with self.preempt([
                 self.is_any_mon_on_map,
-                lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and \
-                        self.is_any_food_on_map(),
-                lambda: self.blstats.hunger_state >= Hunger.WEAK and any(
-                    map(lambda item: item.category == nh.FOOD_CLASS,
-                        self.inventory.values())),
-            ]) as outcome:
-                if outcome() is None:
-
-                    self.explore1(0)
-
+            ]) as outcome1:
+                if outcome1() is None:
                     with self.preempt([
-                        # TODO: implement it better
-                        lambda: np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() and
-                                (np.isin(self.current_level().objects, list(G.STAIR_DOWN)) & (self.bfs() != -1)).any(),
+                        lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and \
+                                self.is_any_food_on_map(),
+                        lambda: self.blstats.hunger_state >= Hunger.WEAK and any(
+                            map(lambda item: item.category == nh.FOOD_CLASS,
+                                self.inventory.values())),
                     ]) as outcome2:
                         if outcome2() is None:
 
-                            self.explore1(None)
+                            self.explore1(0)
+
+                            with self.preempt([
+                                # TODO: implement it better
+                                lambda: np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() and
+                                        (np.isin(self.current_level().objects, list(G.STAIR_DOWN)) & (self.bfs() != -1)).any() and self.blstats.hitpoints >= 0.8 * self.blstats.max_hitpoints,
+                            ]) as outcome3:
+                                if outcome3() is None:
+
+                                    self.explore1(None)
+
+                            if outcome3() == 0:
+                                self.move_down()
+                                continue
+
+                            assert 0, outcome3()
 
                     if outcome2() == 0:
-                        self.move_down()
+                        self.eat1()
                         continue
 
-                    assert 0
+                    if outcome2() == 1:
+                        # TODO: refactor
+                        with self.atom_operation():
+                            self.step(A.Command.EAT)
+                            for k, item in self.inventory.items():
+                                if item.category == nh.FOOD_CLASS:
+                                    self.enter_text(k)
+                                    break
+                            else:
+                                assert 0
+                        continue
 
-            if outcome() == 0:
+                    assert 0, outcome2()
+
+            if outcome1() == 0:
                 self.fight1()
-                continue
-
-            if outcome() == 1:
-                self.eat1()
-                continue
-
-            if outcome() == 2:
-                # TODO: refactor
-                with self.atom_operation():
-                    self.step(A.Command.EAT)
-                    for k, item in self.inventory.items():
-                        if item.category == nh.FOOD_CLASS:
-                            self.enter_text(k)
-                            break
-                    else:
-                        assert 0
                 continue
 
             assert 0, outcome()
