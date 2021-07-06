@@ -206,7 +206,7 @@ class Item:
     UNCURSED = 2
     BLESSED = 3
 
-    def __init__(self, glyphs, count, status, modifier):
+    def __init__(self, glyphs, count, status, modifier, worn, at_ready):
         # glyphs is a list of possible glyphs for this item
         assert isinstance(glyphs, list)
         assert all(map(nh.glyph_is_object, glyphs))
@@ -216,9 +216,33 @@ class Item:
         self.count = count
         self.status = status
         self.modifier = modifier
+        self.worn = worn
+        self.at_ready = at_ready
         self.category = ord(nh.objclass(nh.glyph_to_obj(self.glyphs[0])).oc_class)
 
         assert all(map(lambda glyph: ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category, self.glyphs))
+
+    def is_weapon(self):
+        return self.category == nh.WEAPON_CLASS
+
+    def is_launcher(self):
+        if not self.is_weapon():
+            return False
+
+        assert len(self.glyphs) == 1
+        return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
+                ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
+
+    def is_thrown_projectile(self):
+        if not self.is_weapon():
+            return False
+
+        assert len(self.glyphs) == 1
+        # TODO: boomerang
+        return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
+                ['orcish dagger', 'dagger silver', 'athame dagger', 'elven dagger',
+                 'worm tooth', 'knife', 'stiletto', 'scalpel', 'crysknife',
+                 'dart', 'shuriken', ]
 
     def __str__(self):
         return (f'{self.count}_'
@@ -248,13 +272,25 @@ class ItemManager:
         assert category not in [nh.BALL_CLASS, nh.ROCK_CLASS, nh.RANDOM_CLASS]
 
         matches = re.findall(
-            '^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([0-9]+:[0-9]+)\))?( \(([a-zA-Z0-9; ]+)\))?$',
+            '^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([0-9]+:[0-9]+)\))?( \(([a-zA-Z0-9; ]+)\))?$',
             text)
         assert len(matches) <= 1, text
         assert len(matches), text
 
         count, _, status, effects, _, _, _, modifier, name, _, uses, _, info = matches[0]
         # TODO: effects, uses
+
+        if info in {'weapon in paw', 'weapon in hand', 'weapon in paws', 'weapon in hands', 'being worn', 'being worn; slippery'}:
+            worn = True
+            at_ready = False
+        elif info in {'at the ready', 'in quiver', 'in quiver pouch'}:
+            worn = False
+            at_ready = True
+        elif info in {'', 'alternate weapon; not wielded'}:
+            worn = False
+            at_ready = False
+        else:
+            assert 0, info
 
         count = int({'a': 1, 'an': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
@@ -269,7 +305,7 @@ class ItemManager:
             return Item(
                 [i + nh.GLYPH_OBJ_OFF for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == category and
                  nh.objdescr.from_idx(i).oc_name is not None],
-                count, status, modifier)
+                count, status, modifier, worn, at_ready)
         else:
             assert 0, category
 
@@ -293,7 +329,7 @@ class ItemManager:
         assert len(ret) == 1, (ret, name, text)
         assert glyph is None or ret[0] == nh.glyph_to_obj(glyph), \
                ((ret[0], nh.objdescr.from_idx(ret[0])), (nh.glyph_to_obj(glyph), nh.objdescr.from_idx(nh.glyph_to_obj(glyph))))
-        return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier)
+        return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, worn, at_ready)
 
 
 @toolz.curry
@@ -660,7 +696,15 @@ class Agent:
         with self.panic_if_position_changes():
             assert self.glyphs[y, x] in G.MONS
             self.direction(y, x)
-            return True
+        return True
+
+    def fire(self, letter, direction):
+        assert letter in self.inventory
+        with self.atom_operation():
+            self.step(A.Command.THROW)
+            self.enter_text(letter)
+            self.direction(direction)
+        return True
 
     def kick(self, y, x=None):
         with self.panic_if_position_changes():
@@ -850,15 +894,11 @@ class Agent:
             y, x = closests_y[0], closests_x[0]
 
             if abs(self.blstats.y - y) > 1 or abs(self.blstats.x - x) > 1:
-                #if (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
-                #    dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
-                #    with self.atom_operation():
-                #        self.step(A.Command.FIRE)
-                #        if "You don't have that object." in self.message or 'What do you want to throw?' in bytes(self.last_observation['message']).decode():
-                #            self.step(A.Command.ESC)
-                #        else:
-                #            self.direction(dir)
-                #            continue
+                throwable = {k: v for k, v in self.inventory.items() if v.is_thrown_projectile()}
+                if throwable and (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
+                    dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
+                    self.fire(list(throwable.keys())[0], dir)
+                    continue
 
                 self.go_to(y, x, stop_one_before=True, max_steps=1,
                            debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
