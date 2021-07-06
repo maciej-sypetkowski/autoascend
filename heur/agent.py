@@ -923,7 +923,7 @@ class Agent:
             y, x = closests_y[0], closests_x[0]
 
             if abs(self.blstats.y - y) > 1 or abs(self.blstats.x - x) > 1:
-                throwable = {k: v for k, v in self.inventory.items() if v.is_thrown_projectile()}
+                throwable = {k: v for k, v in self.inventory.items() if v.is_thrown_projectile() and not v.worn}
                 if throwable and (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
                     dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
                     self.fire(list(throwable.keys())[0], dir)
