@@ -72,6 +72,7 @@ class Level:
         self.search_count = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
         self.corpse_age = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32) - 10000
         self.shop = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
+        self.checked_item_pile = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
 
 
 class AgentFinished(Exception):
@@ -382,14 +383,17 @@ class Agent:
 
     @contextlib.contextmanager
     def preempt(self, conditions):
-        funcs = []
+        ids = []
+        id2fun = {}
         for cond in conditions:
-            def f(self, f, cond):
+            def f(iden, cond=cond):
                 if cond():
-                    raise AgentChangeStrategy(f)
+                    raise AgentChangeStrategy(iden, cond)
 
-            fun = partial(f, self, f, cond)
-            funcs.append(fun)
+            fun = partial(f, id(f))
+            assert id(f) not in id2fun
+            id2fun[id(f)] = fun
+            ids.append(id(f))
             self.on_update.append(fun)
 
         outcome = None
@@ -406,12 +410,16 @@ class Agent:
             yield outcome_f
 
         except AgentChangeStrategy as e:
-            f = e.args[0]
-            if f not in funcs:
+            i = e.args[0]
+            if i not in id2fun:
                 raise
-            outcome = funcs.index(f)
+            outcome = ids.index(i)
         finally:
-            self.on_update = list(filter(lambda f: f not in funcs, self.on_update))
+            self.on_update = list(filter(lambda f: f not in id2fun.values(), self.on_update))
+
+        # check if less nested ChangeStategy is present
+        for fun in self.on_update:
+            fun()
 
     ######## UPDATE FUNCTIONS
 
@@ -953,49 +961,75 @@ class Agent:
                 return prio
             return prio >= prio_limit
 
-        open_neighbor_doors()
-        to_visit  = to_visit_func()
-        to_search = to_search_func(max(0, search_prio_limit) if search_prio_limit is not None else 0)
+        while 1:
+            with self.preempt([
+                lambda: (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) & 
+                         ~self.current_level().checked_item_pile).any(),
+            ]) as outcome:
+                if outcome() is None:
+                    while 1:
+                        open_neighbor_doors()
+                        to_visit  = to_visit_func()
+                        to_search = to_search_func(max(0, search_prio_limit) if search_prio_limit is not None else 0)
 
-        # consider exploring tile only when there is a path to it
-        dis = self.bfs()
-        to_explore = (to_visit | to_search) & (dis != -1)
+                        # consider exploring tile only when there is a path to it
+                        dis = self.bfs()
+                        to_explore = (to_visit | to_search) & (dis != -1)
 
-        dynamic_search_fallback = False
-        if not to_explore.any():
-            dynamic_search_fallback = True
-        else:
-            # find all closest to_explore tiles
-            nonzero_y, nonzero_x = ((dis == dis[to_explore].min()) & to_explore).nonzero()
-            if len(nonzero_y) == 0:
-                dynamic_search_fallback = True
+                        dynamic_search_fallback = False
+                        if not to_explore.any():
+                            dynamic_search_fallback = True
+                        else:
+                            # find all closest to_explore tiles
+                            nonzero_y, nonzero_x = ((dis == dis[to_explore].min()) & to_explore).nonzero()
+                            if len(nonzero_y) == 0:
+                                dynamic_search_fallback = True
 
-        if dynamic_search_fallback:
-            if search_prio_limit is not None and search_prio_limit >= 0:
-                return False
+                        if dynamic_search_fallback:
+                            if search_prio_limit is not None and search_prio_limit >= 0:
+                                return
 
-            search_prio = to_search_func(return_prio=True)
-            if search_prio_limit is not None:
-                search_prio[search_prio < search_prio_limit] = -np.inf
-                search_prio[search_prio < search_prio_limit] = -np.inf
-                search_prio -= dis * np.isfinite(search_prio) * 100
-            else:
-                search_prio -= dis * 6
+                            search_prio = to_search_func(return_prio=True)
+                            if search_prio_limit is not None:
+                                search_prio[search_prio < search_prio_limit] = -np.inf
+                                search_prio[search_prio < search_prio_limit] = -np.inf
+                                search_prio -= dis * np.isfinite(search_prio) * 100
+                            else:
+                                search_prio -= dis * 6
 
-            to_search = np.isfinite(search_prio)
-            to_explore = (to_visit | to_search) & (dis != -1)
-            nonzero_y, nonzero_x = ((search_prio == search_prio[to_explore].max()) & to_explore).nonzero()
+                            to_search = np.isfinite(search_prio)
+                            to_explore = (to_visit | to_search) & (dis != -1)
+                            nonzero_y, nonzero_x = ((search_prio == search_prio[to_explore].max()) & to_explore).nonzero()
 
-        # select random closest to_explore tile
-        i = self.rng.randint(len(nonzero_y))
-        target_y, target_x = nonzero_y[i], nonzero_x[i]
+                        # select random closest to_explore tile
+                        i = self.rng.randint(len(nonzero_y))
+                        target_y, target_x = nonzero_y[i], nonzero_x[i]
 
-        with self.env.debug_tiles(to_explore, color=(0, 0, 255, 64)):
-            self.go_to(target_y, target_x, debug_tiles_args=dict(
-                color=(255 * bool(to_visit[target_y, target_x]), 255, 255 * bool(to_search[target_y, target_x])),
-                is_path=True))
-            if to_search[target_y, target_x]:
-                self.search()
+                        with self.env.debug_tiles(to_explore, color=(0, 0, 255, 64)):
+                            self.go_to(target_y, target_x, debug_tiles_args=dict(
+                                color=(255 * bool(to_visit[target_y, target_x]), 255, 255 * bool(to_search[target_y, target_x])),
+                                is_path=True))
+                            if to_search[target_y, target_x]:
+                                self.search()
+
+            if outcome() == 0:
+                mask = (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) & 
+                        ~self.current_level().checked_item_pile)
+
+                dis = self.bfs()
+                nonzero_y, nonzero_x = (mask & (dis == dis[mask].min())).nonzero()
+                i = self.rng.randint(len(nonzero_y))
+                target_y, target_x = nonzero_y[i], nonzero_x[i]
+
+                #with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
+                #    # TODO: search for traps before stepping in
+                #    self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
+
+                self.current_level().checked_item_pile[target_y, target_x] = True
+                continue
+
+            assert 0, outcome()
+
 
     @debug_log('move_down')
     def move_down(self):
@@ -1011,8 +1045,7 @@ class Agent:
                 continue
             break
 
-        if pos is None:
-            return False
+        assert pos is not None
 
         dis = self.bfs()
         if dis[pos] == -1:
@@ -1037,15 +1070,23 @@ class Agent:
                         self.inventory.values())),
             ]) as outcome:
                 if outcome() is None:
-                    limit = 0 if np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() else None
-                    if self.explore1(limit) is not False:
+
+                    self.explore1()
+
+                    with self.preempt([
+                        # TODO: implement it better
+                        lambda: np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() and
+                                (np.isin(self.current_level().objects, list(G.STAIR_DOWN)) & (self.bfs() != -1)).any(),
+                    ]) as outcome2:
+                        if outcome2() is None:
+
+                            self.explore1(None)
+
+                    if outcome2() == 0:
+                        self.move_down()
                         continue
 
-                    if len(self.levels) <= 100 and self.move_down() is not False:
-                        continue
-
-                    if self.explore1(None) is not False:
-                        continue
+                    assert 0
 
             if outcome() == 0:
                 self.fight1()
@@ -1057,12 +1098,14 @@ class Agent:
 
             if outcome() == 2:
                 # TODO: refactor
-                with self.panic_if_position_changes():
+                with self.atom_operation():
                     self.step(A.Command.EAT)
-                for k, item in self.inventory.items():
-                    if item.category == nh.FOOD_CLASS:
-                        self.enter_text(k)
-                        break
+                    for k, item in self.inventory.items():
+                        if item.category == nh.FOOD_CLASS:
+                            self.enter_text(k)
+                            break
+                    else:
+                        assert 0
                 continue
 
             assert 0, outcome()
@@ -1074,10 +1117,7 @@ class Agent:
         self.parse_character()
 
         try:
-            try:
-                self.step(A.Command.AUTOPICKUP)
-            except AgentChangeStrategy:
-                pass
+            self.step(A.Command.AUTOPICKUP)
 
             while 1:
                 try:
@@ -1086,7 +1126,5 @@ class Agent:
                     self.all_panics.append(e)
                     if self.verbose:
                         print(f'PANIC!!!! : {e}')
-                except AgentChangeStrategy:
-                    pass
         except AgentFinished:
             pass
