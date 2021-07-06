@@ -243,7 +243,27 @@ class Item:
             return False
 
         return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
-                ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
+               ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
+
+    def is_fired_projectile(self, launcher=None):
+        if not self.is_weapon():
+            return False
+
+        arrows = ['arrow', 'elven arrow', 'orcish arrow', 'silver arrow', 'ya']
+
+        if launcher is None:
+            return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
+                   arrows + ['crossbow bolt']
+        else:
+            launcher_name = nh.objdescr.from_idx(nh.glyph_to_obj(launcher.glyphs[0])).oc_name
+            if launcher_name == 'crossbow':
+                return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name == 'crossbow bolt'
+            elif launcher_name == 'sling':
+                # TODO: sling ammo
+                return False
+            else:  # any bow
+                assert launcher_name in ['bow', 'elven bow', 'orcish bow', 'yumi']
+                return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in arrows
 
     def is_thrown_projectile(self):
         if not self.is_weapon():
@@ -251,9 +271,9 @@ class Item:
 
         # TODO: boomerang
         return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
-                ['orcish dagger', 'dagger silver', 'athame dagger', 'elven dagger',
-                 'worm tooth', 'knife', 'stiletto', 'scalpel', 'crysknife',
-                 'dart', 'shuriken', ]
+               ['orcish dagger', 'dagger silver', 'athame dagger', 'elven dagger',
+                'worm tooth', 'knife', 'stiletto', 'scalpel', 'crysknife',
+                'dart', 'shuriken', ]
 
     def __str__(self):
         return (f'{self.count}_'
@@ -291,7 +311,8 @@ class ItemManager:
         count, _, status, effects, _, _, _, modifier, name, _, uses, _, info = matches[0]
         # TODO: effects, uses
 
-        if info in {'weapon in paw', 'weapon in hand', 'weapon in paws', 'weapon in hands', 'being worn', 'being worn; slippery', 'wielded'}:
+        if info in {'weapon in paw', 'weapon in hand', 'weapon in paws', 'weapon in hands', 'being worn',
+                    'being worn; slippery', 'wielded'}:
             worn = True
             at_ready = False
         elif info in {'at the ready', 'in quiver', 'in quiver pouch'}:
@@ -345,7 +366,8 @@ class ItemManager:
 
         assert len(ret) == 1, (ret, name, text)
         assert glyph is None or ret[0] == nh.glyph_to_obj(glyph), \
-               ((ret[0], nh.objdescr.from_idx(ret[0])), (nh.glyph_to_obj(glyph), nh.objdescr.from_idx(nh.glyph_to_obj(glyph))))
+            ((ret[0], nh.objdescr.from_idx(ret[0])),
+             (nh.glyph_to_obj(glyph), nh.objdescr.from_idx(nh.glyph_to_obj(glyph))))
         return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, worn, at_ready)
 
 
@@ -419,8 +441,8 @@ class Agent:
             assert fun in self.on_update
             self.on_update.pop(self.on_update.index(fun))
 
-    #@contextlib.contextmanager
-    #def stop_updating(self, update_at_end=False):
+    # @contextlib.contextmanager
+    # def stop_updating(self, update_at_end=False):
     #    on_update = self.on_update
     #    self.on_update = []
 
@@ -630,6 +652,7 @@ class Agent:
         if '(for sale,' in self.message:
             level.shop[self.blstats.y, self.blstats.x] = 1
 
+        # TODO: all statues
         mask = self.glyphs_mask_in(G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED)
         level.walkable[mask] = True
         level.seen[mask] = True
@@ -663,7 +686,8 @@ class Agent:
     @staticmethod
     def calc_direction(from_y, from_x, to_y, to_x, allow_nonunit_distance=False):
         if allow_nonunit_distance:
-            assert from_y == to_y or from_x == to_x or abs(from_y - to_y) == abs(from_x - to_x), ((from_y, from_x), (to_y, to_x))
+            assert from_y == to_y or from_x == to_x or \
+                   abs(from_y - to_y) == abs(from_x - to_x), ((from_y, from_x), (to_y, to_x))
             to_y = from_y + np.sign(to_y - from_y)
             to_x = from_x + np.sign(to_x - from_x)
 
@@ -678,7 +702,28 @@ class Agent:
 
         return ret
 
+    def get_best_weapon(self):
+        # select the best
+        best_item = None, None
+        best_dps = None
+        for letter, item in self.inventory.items():
+            if item.is_weapon():
+                dps = item.get_dps(big_monster=False)  # TODO: what about monster size
+                if best_dps is None or best_dps < dps:
+                    best_dps = dps
+                    best_item = letter, item
+        return best_item
+
     ######## TRIVIAL ACTIONS
+
+    def wield_best_weapon(self):
+        letter, item = self.get_best_weapon()
+        if item is None:
+            return False
+        if not item.worn:
+            self.wield(letter)
+            return True
+        return False
 
     def parse_character(self):
         with self.atom_operation():
@@ -902,11 +947,46 @@ class Agent:
 
     ######## LOW-LEVEL STRATEGIES
 
+    @debug_log('ranged_stance1')
+    def ranged_stance1(self):
+        while True:
+            launchers = {k: v for k, v in self.inventory.items() if v.is_launcher()}
+            ammo = {k: v for k, v in self.inventory.items() if v.is_fired_projectile()}
+
+            valid_combinations = []
+            for launcher in launchers.items():
+                for ammo in ammo.items():
+                    if ammo[1].is_fired_projectile(launcher[1]):
+                        valid_combinations.append((launcher, ammo))
+
+            # TODO: select best combination
+            if not valid_combinations:
+                self.wield_best_weapon()
+                return False
+
+            # TODO: consider using monster information to select the best combination
+            launcher, ammo = valid_combinations[0]
+            if not launcher[1].worn:
+                self.wield(launcher[0])
+                continue
+
+            mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
+            mask[self.blstats.y, self.blstats.x] = 0
+            for y, x in zip(*mask.nonzero()):
+                if (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
+                    # TODO: don't shoot pet !
+                    # TODO: limited range
+                    with self.env.debug_tiles([[y, x]], (0, 0, 255, 100)):
+                        dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
+                        self.fire(ammo[0], dir)
+                        break
+            else:
+                return False
+
     @debug_log('fight1')
     def fight1(self):
         while 1:
             dis = self.bfs()
-            closest = None
 
             mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
             mask[self.blstats.y, self.blstats.x] = 0
@@ -922,9 +1002,31 @@ class Agent:
 
             y, x = closests_y[0], closests_x[0]
 
+            def is_monster_next_to_me():
+                dis = self.bfs()
+                mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
+                mask[self.blstats.y, self.blstats.x] = 0
+                mask &= dis != -1
+                if not mask.any():
+                    return False
+                mask &= dis == dis[mask].min()
+                closests_y, closests_x = mask.nonzero()
+                y, x = closests_y[0], closests_x[0]
+                return abs(self.blstats.y - y) <= 1 and abs(self.blstats.x - x) <= 1
+
+            with self.preempt([
+                is_monster_next_to_me,
+            ]) as outcome:
+                if outcome() is None:
+                    if self.ranged_stance1():
+                        continue
+
             if abs(self.blstats.y - y) > 1 or abs(self.blstats.x - x) > 1:
-                throwable = {k: v for k, v in self.inventory.items() if v.is_thrown_projectile()}
-                if throwable and (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
+                throwable = {k: v for k, v in self.inventory.items() if v.is_thrown_projectile() and not v.worn}
+                # TODO: don't shoot pet !
+                # TODO: limited range
+                if throwable and (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(
+                        self.blstats.x - x)):
                     dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
                     self.fire(list(throwable.keys())[0], dir)
                     continue
@@ -935,6 +1037,8 @@ class Agent:
 
             mon = nh.glyph_to_mon(self.glyphs[y, x])
 
+            if self.wield_best_weapon():
+                continue
             try:
                 self.fight(y, x)
             finally:  # TODO: what if panic?
@@ -1033,7 +1137,7 @@ class Agent:
         def open_visit_search(search_prio_limit):
             while 1:
                 open_neighbor_doors()
-                to_visit  = to_visit_func()
+                to_visit = to_visit_func()
                 to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)
 
                 # consider exploring tile only when there is a path to it
@@ -1073,13 +1177,14 @@ class Agent:
 
                 with self.env.debug_tiles(to_explore, color=(0, 0, 255, 64)):
                     self.go_to(target_y, target_x, debug_tiles_args=dict(
-                        color=(255 * bool(to_visit[target_y, target_x]), 255, 255 * bool(to_search[target_y, target_x])),
+                        color=(255 * bool(to_visit[target_y, target_x]),
+                               255, 255 * bool(to_search[target_y, target_x])),
                         is_path=True))
                     if to_search[target_y, target_x] and not to_visit[target_y, target_x]:
                         self.search()
 
         def check_item_pile():
-            mask = (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) & 
+            mask = (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) &
                     ~self.current_level().checked_item_pile)
 
             dis = self.bfs()
@@ -1087,14 +1192,14 @@ class Agent:
             i = self.rng.randint(len(nonzero_y))
             target_y, target_x = nonzero_y[i], nonzero_x[i]
 
-            #with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
+            # with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
             #    # TODO: search for traps before stepping in
             #    self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
 
             self.current_level().checked_item_pile[target_y, target_x] = True
 
         def take_item(only_check=False):
-            return False # TODO: ignore for now
+            return False  # TODO: ignore for now
 
             if self.character.role == CH.MONK:
                 return False
@@ -1102,7 +1207,7 @@ class Agent:
                 if item.is_weapon() and item.worn:
                     if item.status == Item.CURSED:
                         return
-                    current_weapon_dps = item.get_dps(big_monster=False) # TODO: what about monster size
+                    current_weapon_dps = item.get_dps(big_monster=False)  # TODO: what about monster size
                     current_weapon = item
                     break
             else:
@@ -1111,7 +1216,8 @@ class Agent:
 
             current_weapon_dps += 2  # take only relatively better items than yours
 
-            mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (self.bfs() != -1) & self.glyphs_mask_in(G.WEAPONS)
+            mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (
+                    self.bfs() != -1) & self.glyphs_mask_in(G.WEAPONS)
             nonzero_y, nonzero_x = mask.nonzero()
 
             best_item = None
@@ -1136,24 +1242,13 @@ class Agent:
                     return
                 self.take_item()
 
-                # select the best
-                best_item = None
-                best_dps = None
-                for letter, item in self.inventory.items():
-                    if item.is_weapon():
-                        dps = item.get_dps(big_monster=False) # TODO: what about monster size
-                        if best_dps is None or best_dps < dps:
-                            best_dps = dps
-                            best_item = letter
-
-                self.wield(letter)
+                self.wield_best_weapon()
                 if self.blstats.carrying_capacity != 0:
                     print(self.blstats.carrying_capacity)
 
-
         while 1:
             with self.preempt([
-                lambda: (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) & 
+                lambda: (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) &
                          ~self.current_level().checked_item_pile).any(),
                 lambda: take_item(only_check=True)
             ]) as outcome:
@@ -1170,7 +1265,6 @@ class Agent:
                 continue
 
             assert 0, outcome()
-
 
     @debug_log('move_down')
     def move_down(self):
@@ -1232,7 +1326,6 @@ class Agent:
                                         (np.isin(self.current_level().objects, list(G.STAIR_DOWN)) & (self.bfs() != -1)).any() and self.blstats.hitpoints >= 0.8 * self.blstats.max_hitpoints,
                             ]) as outcome3:
                                 if outcome3() is None:
-
                                     self.explore1(None)
 
                             if outcome3() == 0:

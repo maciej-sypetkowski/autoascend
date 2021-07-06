@@ -15,6 +15,7 @@ from pprint import pprint
 import gym
 import nle.nethack as nh
 import numpy as np
+import pandas as pd
 
 import visualize
 from agent import Agent, BLStats, G

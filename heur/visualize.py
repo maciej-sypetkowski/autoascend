@@ -7,7 +7,7 @@ from glyph import C
 
 MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
-FAST_FRAME_SKIPPING = 8
+FAST_FRAME_SKIPPING = 16
 
 
 def _put_text(img, text, pos, scale=FONT_SIZE / 35, thickness=1, color=(255, 255, 0), console=False):
