@@ -1010,7 +1010,7 @@ class Agent:
                     while 1:
                         open_neighbor_doors()
                         to_visit  = to_visit_func()
-                        to_search = to_search_func(max(0, search_prio_limit) if search_prio_limit is not None else 0)
+                        to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)
 
                         # consider exploring tile only when there is a path to it
                         dis = self.bfs()
@@ -1035,10 +1035,12 @@ class Agent:
                                 search_prio[search_prio < search_prio_limit] = -np.inf
                                 search_prio -= dis * np.isfinite(search_prio) * 100
                             else:
-                                search_prio -= dis * 6
+                                search_prio -= dis * 4
 
                             to_search = np.isfinite(search_prio)
                             to_explore = (to_visit | to_search) & (dis != -1)
+                            if not to_explore.any():
+                                return
                             nonzero_y, nonzero_x = ((search_prio == search_prio[to_explore].max()) & to_explore).nonzero()
 
                         # select random closest to_explore tile
@@ -1049,7 +1051,7 @@ class Agent:
                             self.go_to(target_y, target_x, debug_tiles_args=dict(
                                 color=(255 * bool(to_visit[target_y, target_x]), 255, 255 * bool(to_search[target_y, target_x])),
                                 is_path=True))
-                            if to_search[target_y, target_x]:
+                            if to_search[target_y, target_x] and not to_visit[target_y, target_x]:
                                 self.search()
 
             if outcome() == 0:
@@ -1111,7 +1113,7 @@ class Agent:
             ]) as outcome:
                 if outcome() is None:
 
-                    self.explore1()
+                    self.explore1(0)
 
                     with self.preempt([
                         # TODO: implement it better
