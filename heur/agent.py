@@ -247,7 +247,7 @@ class ItemManager:
         assert category not in [nh.BALL_CLASS, nh.ROCK_CLASS, nh.RANDOM_CLASS]
 
         matches = re.findall(
-            '^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thourogly )?(rustproof|poisoned|corroded|rusty|burnt))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([0-9]+:[0-9]+)\))?( \(([a-zA-Z0-9; ]+)\))?$',
+            '^(a|an|\d+)( (cursed|uncursed|blessed))?( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt))*( ([+-]\d+))? ([a-zA-z0-9- ]+)( \(([0-9]+:[0-9]+)\))?( \(([a-zA-Z0-9; ]+)\))?$',
             text)
         assert len(matches) <= 1, text
         assert len(matches), text
@@ -258,9 +258,6 @@ class ItemManager:
         count = int({'a': 1, 'an': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
-
-        # if category not in [nh.WEAPON_CLASS, nh.ARMOR_CLASS]:
-        #    return None # TODO
 
         if category == nh.WEAPON_CLASS:
             name_augmentation = lambda x: [x, f'{x}s']
@@ -338,10 +335,8 @@ class Agent:
     def parse_character(self):
         with self.atom_operation():
             self.step(A.Command.ATTRIBUTES)
-            text = self.last_observation['tty_chars']
-            text = ' '.join([bytes(t).decode() for t in text])
+            text = ' '.join(self.popup)
             self.character = CH.parse(text)
-            self.step(A.Command.ESC)
 
     def step(self, action):
         observation, reward, done, info = self.env.step(action)
@@ -441,9 +436,7 @@ class Agent:
             """ Return (line, column) of markers:
             --More-- | (end) | (X of N)
             """
-            # TODO: use this and fix parse_character
-            # regex = r"(--More--|\(end\)|\(\d+ of \d+\))"
-            regex = r"(--More--|\(end\))"
+            regex = r"(--More--|\(end\)|\(\d+ of \d+\))"
             if len(re.findall(regex, ' '.join(lines))) > 1:
                 raise ValueError('Too many markers')
 
@@ -458,6 +451,12 @@ class Agent:
             return result, marker_type
 
         message = bytes(obs['message']).decode().replace('\0', ' ').replace('\n', '').strip()
+        if message.endswith('--More--'):
+            # FIXME: It seems like in this case the environment doesn't expect additional input,
+            #        but I'm not 100% sure, so it's too risky to change it, because it could stall everything.
+            #        With the current implementation, in the worst case, we'll get "Unknown command ' '".
+            message = message[:-len('--More--')]
+
         # assert '\n' not in message and '\r' not in message
         if self._is_reading_message_or_popup:
             message_preffix = self.message + ' '
@@ -482,9 +481,11 @@ class Agent:
                     line = line[:marker_pos[1]]
                 message_lines_count += 1
                 pref += line.strip()
-                if [s for s in pref.split() if s] == [s for s in message.split() if s]:
+
+                # I'm not sure when the new line character in broken messages should be a space and when be ignored.
+                # '#' character occasionally occurs at the beginning of the broken line and isn't in the message.
+                if pref.replace(' ', '').replace('#', '') == message.replace(' ', '').replace('#', ''):
                     break
-                # pref += ' '
             else:
                 if marker_pos[0] == 0:
                     elems1 = [s for s in message.split() if s]
