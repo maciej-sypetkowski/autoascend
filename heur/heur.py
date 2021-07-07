@@ -69,6 +69,7 @@ class EnvWrapper:
             print('Steps:', self.env._steps)
             print('Turns:', self.env._turns)
             print('Seed :', self.env.get_seeds())
+            print('Items below me :', self.agent.inventory.items_below_me)
             print()
             obj_classes = {getattr(nh, x): x[:-len('_CLASS')] for x in dir(nh) if x.endswith('_CLASS')}
             for letter, text, cls in zip(self.last_observation['inv_letters'],
@@ -238,13 +239,14 @@ class EnvWrapper:
             'steps': self.env._steps,
             'turns': self.agent.blstats.time,
             'level_num': len(self.agent.levels),
+            'panic_num': len(self.agent.all_panics),
             'character': str(self.agent.character),
             'end_reason': self.end_reason,
             'seed': self.env.get_seeds(),
         }
 
 
-def single_simulation(seed, timeout=360, step_limit=20000):
+def single_simulation(seed, timeout=720, step_limit=None):
     start_time = time.time()
     env = EnvWrapper(gym.make('NetHackChallenge-v0'), step_limit=step_limit)
     env.env.seed(seed, seed)
@@ -428,6 +430,8 @@ def run_simulations(games, first_seed):
         text.append(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
         text.append(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
         text.append(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
+        text.append(f'panic_num_per_game(median)    : {np.median(all_res["panic_num"])}')
+        text.append(f'panic_num_per_game(mean)      : {np.sum(all_res["panic_num"]) / count}')
         text.append(f'score_median                  : {np.median(all_res["score"]):.1f} +/- '
                     f'{np.std([np.median(np.random.choice(all_res["score"], size=max(1, len(all_res["score"]) // 2))) for _ in range(1024)]):.1f}')
         text.append(f'score_mean                    : {np.mean(all_res["score"]):.1f} +/- '

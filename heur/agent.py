@@ -121,6 +121,7 @@ class Agent:
         self.last_bfs_dis = None
         self.last_bfs_step = None
         self.last_prayer_turn = None
+        self._previous_glyphs = None
 
         self.turns_in_atom_operation = None
 
@@ -131,6 +132,7 @@ class Agent:
     @contextlib.contextmanager
     def atom_operation(self):
         if self.turns_in_atom_operation is not None:
+            # already in an atom operation
             yield
             return
 
@@ -139,7 +141,8 @@ class Agent:
             yield
         finally:
             self.turns_in_atom_operation = None
-            self.update_state()
+
+        self.update_state()
 
     @contextlib.contextmanager
     def panic_if_position_changes(self):
@@ -298,8 +301,8 @@ class Agent:
 
     def step(self, action):
         observation, reward, done, info = self.env.step(action)
-        self.step_count += 1
         observation = {k: v.copy() for k, v in observation.items()}
+        self.step_count += 1
         self.score += reward
 
         if done:
@@ -311,9 +314,13 @@ class Agent:
         should_update = True
 
         self.message, self.popup, done = self.get_message_and_popup(observation)
+
         if not done:
             self.step(A.TextCharacters.SPACE)
             return
+
+        self.message = self.message.strip()
+        self.popup = [p.strip() for p in self.popup]
 
         if observation['misc'][1]:  # entering text
             self.step(A.Command.ESC)
@@ -331,7 +338,7 @@ class Agent:
             if any([(self.last_observation[key] != observation[key]).any()
                     for key in ['glyphs', 'blstats', 'inv_strs', 'inv_letters', 'inv_oclasses', 'inv_glyphs']]):
                 self.turns_in_atom_operation += 1
-            assert self.turns_in_atom_operation in [0, 1]
+            # assert self.turns_in_atom_operation in [0, 1]
 
         self.last_observation = observation
 
@@ -342,8 +349,8 @@ class Agent:
             self.update_state()
 
     def update_state(self):
-        self.update_level()
         self.inventory.update()
+        self.update_level()
 
         for func in self.on_update:
             func()
@@ -354,19 +361,22 @@ class Agent:
         if '(for sale,' in self.message:
             level.shop[self.blstats.y, self.blstats.x] = 1
 
-        # TODO: all statues
-        mask = self.glyphs_mask_in(G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED)
-        level.walkable[mask] = True
-        level.seen[mask] = True
-        level.objects[mask] = self.glyphs[mask]
+        if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
+            self._previous_glyphs = self.last_observation['glyphs']
 
-        mask = self.glyphs_mask_in(G.WALL, G.DOOR_CLOSED)
-        level.seen[mask] = True
-        level.objects[mask] = self.glyphs[mask]
+            # TODO: all statues
+            mask = self.glyphs_mask_in(G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED)
+            level.walkable[mask] = True
+            level.seen[mask] = True
+            level.objects[mask] = self.glyphs[mask]
 
-        mask = self.glyphs_mask_in(G.MONS, G.PETS, G.BODIES, G.OBJECTS)
-        level.seen[mask] = True
-        level.walkable[mask] = True
+            mask = self.glyphs_mask_in(G.WALL, G.DOOR_CLOSED)
+            level.seen[mask] = True
+            level.objects[mask] = self.glyphs[mask]
+
+            mask = self.glyphs_mask_in(G.MONS, G.PETS, G.BODIES, G.OBJECTS)
+            level.seen[mask] = True
+            level.walkable[mask] = True
 
         for y, x in self.neighbors(self.blstats.y, self.blstats.x, shuffle=False):
             if self.glyphs[y, x] in G.STONE:
@@ -722,6 +732,9 @@ class Agent:
                 if outcome() is None:
                     if self.ranged_stance1():
                         continue
+
+            if self.bfs()[y, x] == -1:
+                continue
 
             if abs(self.blstats.y - y) > 1 or abs(self.blstats.x - x) > 1:
                 throwable = [i for i in self.inventory.items if i.is_thrown_projectile() and not i.equipped]
@@ -1098,6 +1111,8 @@ class Agent:
 
             while 1:
                 try:
+                    self.step(A.Command.ESC)
+                    self.step(A.Command.ESC)
                     self.main_strategy()
                 except AgentPanic as e:
                     self.all_panics.append(e)
