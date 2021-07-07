@@ -11,7 +11,7 @@ from nle.nethack import actions as A
 
 import utils
 from glyph import SS, MON, C
-from item import Item, ItemManager
+from item import Item, Inventory
 from character import Character
 
 BLStats = namedtuple('BLStats',
@@ -115,7 +115,7 @@ class Agent:
         self.message = ''
         self.popup = []
 
-        self.inventory = {}
+        self.inventory = Inventory(self)
         self.character = 'x-x-x-x'
 
         self.last_bfs_dis = None
@@ -124,8 +124,6 @@ class Agent:
 
         self.previous_inv_strs = None
         self.turns_in_atom_operation = None
-
-        self.item_manager = ItemManager(self)
 
         self._is_reading_message_or_popup = False
 
@@ -343,29 +341,10 @@ class Agent:
 
     def update_state(self):
         self.update_level()
-        self.update_inventory()
+        self.inventory.update()
 
         for func in self.on_update:
             func()
-
-    def update_inventory(self):
-        if self.previous_inv_strs is not None and (self.last_observation['inv_strs'] == self.previous_inv_strs).all():
-            return
-
-        self.inventory = {}
-        for item_name, category, glyph, letter in zip(
-                self.last_observation['inv_strs'],
-                self.last_observation['inv_oclasses'],
-                self.last_observation['inv_glyphs'],
-                self.last_observation['inv_letters']):
-            item_name = bytes(item_name).decode().strip('\0')
-            letter = chr(letter)
-            if not item_name:
-                continue
-            item = self.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
-            self.inventory[letter] = item
-
-        self.previous_inv_strs = self.last_observation['inv_strs']
 
     def update_level(self):
         level = self.current_level()
@@ -425,24 +404,24 @@ class Agent:
 
     def get_best_weapon(self):
         # select the best
-        best_item = None, None
+        best_item = None
         best_dps = None
-        for letter, item in self.inventory.items():
+        for item in self.inventory.items:
             if item.is_weapon():
                 dps = item.get_dps(big_monster=False)  # TODO: what about monster size
                 if best_dps is None or best_dps < dps:
                     best_dps = dps
-                    best_item = letter, item
+                    best_item = item
         return best_item
 
     ######## TRIVIAL ACTIONS
 
     def wield_best_weapon(self):
-        letter, item = self.get_best_weapon()
+        item = self.get_best_weapon()
         if item is None:
             return False
-        if not item.worn:
-            self.wield(letter)
+        if not item.equipped:
+            self.wield(item)
             return True
         return False
 
@@ -475,12 +454,6 @@ class Agent:
             self.step(A.Command.ESC)
         return True
 
-    def wield(self, letter):
-        with self.atom_operation():
-            self.step(A.Command.WIELD)
-            self.enter_text(letter)
-        return True
-
     def pray(self):
         self.step(A.Command.PRAY)
         return True
@@ -497,13 +470,15 @@ class Agent:
             self.direction(y, x)
         return True
 
-    def fire(self, letter, direction):
-        assert letter in self.inventory
+    def fire(self, item, direction):
         with self.atom_operation():
             self.step(A.Command.THROW)
-            self.enter_text(letter)
+            self.enter_text(self.inventory.get_letter(item))
             self.direction(direction)
         return True
+
+    def wield(self, item):
+        return self.inventory.wield(item)
 
     def kick(self, y, x=None):
         with self.panic_if_position_changes():
@@ -675,13 +650,13 @@ class Agent:
     @debug_log('ranged_stance1')
     def ranged_stance1(self):
         while True:
-            launchers = {k: v for k, v in self.inventory.items() if v.is_launcher()}
-            ammo = {k: v for k, v in self.inventory.items() if v.is_fired_projectile()}
+            launchers = [i for i in self.inventory.items if i.is_launcher()]
+            ammo_list = [i for i in self.inventory.items if i.is_fired_projectile()]
 
             valid_combinations = []
-            for launcher in launchers.items():
-                for ammo in ammo.items():
-                    if ammo[1].is_fired_projectile(launcher[1]):
+            for launcher in launchers:
+                for ammo in ammo_list:
+                    if ammo.is_fired_projectile(launcher):
                         valid_combinations.append((launcher, ammo))
 
             # TODO: select best combination
@@ -691,8 +666,8 @@ class Agent:
 
             # TODO: consider using monster information to select the best combination
             launcher, ammo = valid_combinations[0]
-            if not launcher[1].worn:
-                self.wield(launcher[0])
+            if not launcher.equipped:
+                self.wield(launcher)
                 continue
 
             mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
@@ -703,7 +678,7 @@ class Agent:
                     # TODO: limited range
                     with self.env.debug_tiles([[y, x]], (0, 0, 255, 100)):
                         dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
-                        self.fire(ammo[0], dir)
+                        self.fire(ammo, dir)
                         break
             else:
                 return False
@@ -747,13 +722,13 @@ class Agent:
                         continue
 
             if abs(self.blstats.y - y) > 1 or abs(self.blstats.x - x) > 1:
-                throwable = {k: v for k, v in self.inventory.items() if v.is_thrown_projectile() and not v.worn}
+                throwable = [i for i in self.inventory.items if i.is_thrown_projectile() and not i.equipped]
                 # TODO: don't shoot pet !
                 # TODO: limited range
                 if throwable and (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(
                         self.blstats.x - x)):
                     dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
-                    self.fire(list(throwable.keys())[0], dir)
+                    self.fire(throwable[0], dir)
                     continue
 
                 self.go_to(y, x, stop_one_before=True, max_steps=1,
@@ -926,8 +901,8 @@ class Agent:
         def take_item(only_check=False):
             if self.character.role == Character.MONK:
                 return False
-            for item in self.inventory.values():
-                if item.is_weapon() and item.worn:
+            for item in self.inventory.items:
+                if item.is_weapon() and item.equipped:
                     if item.status == Item.CURSED:
                         return
                     current_weapon_dps = item.get_dps(big_monster=False)  # TODO: what about monster size
@@ -1046,7 +1021,7 @@ class Agent:
                                     self.is_any_food_on_map(),
                             lambda: self.blstats.hunger_state >= Hunger.WEAK and any(
                                 map(lambda item: item.category == nh.FOOD_CLASS,
-                                    self.inventory.values())),
+                                    self.inventory.items)),
                         ]) as outcome2:
                             if outcome2() is None:
 
@@ -1075,9 +1050,9 @@ class Agent:
                             # TODO: refactor
                             with self.atom_operation():
                                 self.step(A.Command.EAT)
-                                for k, item in self.inventory.items():
+                                for item in self.inventory.items:
                                     if item.category == nh.FOOD_CLASS:
-                                        self.enter_text(k)
+                                        self.enter_text(self.inventory.get_letter(item))
                                         break
                                 else:
                                     assert 0

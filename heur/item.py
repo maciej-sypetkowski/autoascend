@@ -1,6 +1,7 @@
 import re
 
 import nle.nethack as nh
+from nle.nethack import actions as A
 
 from glyph import WEA
 
@@ -11,7 +12,7 @@ class Item:
     UNCURSED = 2
     BLESSED = 3
 
-    def __init__(self, glyphs, count=1, status=UNKNOWN, modifier=None, worn=False, at_ready=False):
+    def __init__(self, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False):
         # glyphs is a list of possible glyphs for this item
         assert isinstance(glyphs, list)
         assert all(map(nh.glyph_is_object, glyphs))
@@ -21,7 +22,7 @@ class Item:
         self.count = count
         self.status = status
         self.modifier = modifier
-        self.worn = worn
+        self.equipped = equipped
         self.at_ready = at_ready
         self.category = ord(nh.objclass(nh.glyph_to_obj(self.glyphs[0])).oc_class)
 
@@ -116,13 +117,13 @@ class ItemManager:
 
         if info in {'weapon in paw', 'weapon in hand', 'weapon in paws', 'weapon in hands', 'being worn',
                     'being worn; slippery', 'wielded'}:
-            worn = True
+            equipped = True
             at_ready = False
         elif info in {'at the ready', 'in quiver', 'in quiver pouch'}:
-            worn = False
+            equipped = False
             at_ready = True
         elif info in {'', 'alternate weapon; not wielded'}:
-            worn = False
+            equipped = False
             at_ready = False
         else:
             assert 0, info
@@ -140,7 +141,7 @@ class ItemManager:
             return Item(
                 [i + nh.GLYPH_OBJ_OFF for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == category and
                  nh.objdescr.from_idx(i).oc_name is not None],
-                count, status, modifier, worn, at_ready)
+                count, status, modifier, equipped, at_ready)
         else:
             assert 0, category
 
@@ -171,4 +172,51 @@ class ItemManager:
         assert glyph is None or ret[0] == nh.glyph_to_obj(glyph), \
             ((ret[0], nh.objdescr.from_idx(ret[0])),
              (nh.glyph_to_obj(glyph), nh.objdescr.from_idx(nh.glyph_to_obj(glyph))))
-        return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, worn, at_ready)
+        return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, equipped, at_ready)
+
+
+class Inventory:
+    def __init__(self, agent):
+        self.agent = agent
+        self.item_manager = ItemManager(self)
+        self.items = []
+        self.letters = []
+
+        self._previous_inv_strs = None
+
+    def update(self):
+        if self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all():
+            return
+
+        self.items = []
+        self.letters = []
+        for item_name, category, glyph, letter in zip(
+                self.agent.last_observation['inv_strs'],
+                self.agent.last_observation['inv_oclasses'],
+                self.agent.last_observation['inv_glyphs'],
+                self.agent.last_observation['inv_letters']):
+            item_name = bytes(item_name).decode().strip('\0')
+            letter = chr(letter)
+            if not item_name:
+                continue
+            item = self.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
+
+            self.items.append(item)
+            self.letters.append(letter)
+
+        self._previous_inv_strs = self.agent.last_observation['inv_strs']
+
+    def get_letter(self, item):
+        assert item in self.items
+        return self.letters[self.items.index(item)]
+
+    ####### ACTIONS
+
+    def wield(self, item):
+        letter = self.get_letter(item)
+
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.WIELD)
+            self.agent.enter_text(letter)
+
+        return True
