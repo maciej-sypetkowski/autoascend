@@ -400,6 +400,7 @@ class Agent:
 
         self.last_bfs_dis = None
         self.last_bfs_step = None
+        self.last_prayer_turn = None
 
         self.previous_inv_strs = None
         self.turns_in_atom_operation = None
@@ -758,6 +759,10 @@ class Agent:
         with self.atom_operation():
             self.step(A.Command.WIELD)
             self.enter_text(letter)
+        return True
+
+    def pray(self):
+        self.step(A.Command.PRAY)
         return True
 
     def open_door(self, y, x=None):
@@ -1199,8 +1204,6 @@ class Agent:
             self.current_level().checked_item_pile[target_y, target_x] = True
 
         def take_item(only_check=False):
-            return False  # TODO: ignore for now
-
             if self.character.role == CH.MONK:
                 return False
             for item in self.inventory.values():
@@ -1211,10 +1214,10 @@ class Agent:
                     current_weapon = item
                     break
             else:
-                current_weapon_dps = 0
+                current_weapon_dps = -2
                 current_weapon = 'fists'
 
-            current_weapon_dps += 2  # take only relatively better items than yours
+            current_weapon_dps += 4  # take only relatively better items than yours
 
             mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (
                     self.bfs() != -1) & self.glyphs_mask_in(G.WEAPONS)
@@ -1304,59 +1307,88 @@ class Agent:
 
     @debug_log('main_strategy')
     def main_strategy(self):
+        # TODO: to refactor
         while 1:
-            with self.preempt([
-                self.is_any_mon_on_map,
-            ]) as outcome1:
-                if outcome1() is None:
-                    with self.preempt([
-                        lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and \
-                                self.is_any_food_on_map(),
-                        lambda: self.blstats.hunger_state >= Hunger.WEAK and any(
-                            map(lambda item: item.category == nh.FOOD_CLASS,
-                                self.inventory.values())),
-                    ]) as outcome2:
-                        if outcome2() is None:
+            with self.preempt([lambda: ((self.last_prayer_turn is None and self.blstats.time > 300) or \
+                                        (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > 900)) and \
+                                       (self.blstats.hitpoints < 1/(5 if self.blstats.experience_level < 6 else 6) * self.blstats.max_hitpoints or \
+                                        self.blstats.hitpoints < 6 or self.blstats.hunger_state >= Hunger.FAINTING),
+                               lambda: (self.blstats.hitpoints < 1/3 * self.blstats.max_hitpoints or self.blstats.hitpoints < 8 or self.blstats.hunger_state >= Hunger.FAINTING) and \
+                                        len([s for s in map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])
+                                             if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s]) > 0,
+            ]) as emergency_outcome:
+                with self.preempt([
+                    self.is_any_mon_on_map,
+                ]) as outcome1:
+                    if outcome1() is None:
+                        with self.preempt([
+                            lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and \
+                                    self.is_any_food_on_map(),
+                            lambda: self.blstats.hunger_state >= Hunger.WEAK and any(
+                                map(lambda item: item.category == nh.FOOD_CLASS,
+                                    self.inventory.values())),
+                        ]) as outcome2:
+                            if outcome2() is None:
 
-                            self.explore1(0)
+                                self.explore1(0)
 
-                            with self.preempt([
-                                # TODO: implement it better
-                                lambda: np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() and
-                                        (np.isin(self.current_level().objects, list(G.STAIR_DOWN)) & (self.bfs() != -1)).any() and self.blstats.hitpoints >= 0.8 * self.blstats.max_hitpoints,
-                            ]) as outcome3:
-                                if outcome3() is None:
-                                    self.explore1(None)
+                                with self.preempt([
+                                    # TODO: implement it better
+                                    lambda: np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() and (len(self.levels) <= 0 or self.blstats.score > 550) and
+                                            (np.isin(self.current_level().objects, list(G.STAIR_DOWN)) & (self.bfs() != -1)).any() and self.blstats.hitpoints >= 0.8 * self.blstats.max_hitpoints,
+                                ]) as outcome3:
+                                    if outcome3() is None:
 
-                            if outcome3() == 0:
-                                self.move_down()
-                                continue
+                                        self.explore1(None)
 
-                            assert 0, outcome3()
+                                if outcome3() == 0:
+                                    self.move_down()
+                                    continue
 
-                    if outcome2() == 0:
-                        self.eat1()
-                        continue
+                                assert 0, outcome3()
 
-                    if outcome2() == 1:
-                        # TODO: refactor
-                        with self.atom_operation():
-                            self.step(A.Command.EAT)
-                            for k, item in self.inventory.items():
-                                if item.category == nh.FOOD_CLASS:
-                                    self.enter_text(k)
-                                    break
-                            else:
-                                assert 0
-                        continue
+                        if outcome2() == 0:
+                            self.eat1()
+                            continue
 
-                    assert 0, outcome2()
+                        if outcome2() == 1:
+                            # TODO: refactor
+                            with self.atom_operation():
+                                self.step(A.Command.EAT)
+                                for k, item in self.inventory.items():
+                                    if item.category == nh.FOOD_CLASS:
+                                        self.enter_text(k)
+                                        break
+                                else:
+                                    assert 0
+                            continue
 
-            if outcome1() == 0:
-                self.fight1()
+                        assert 0, outcome2()
+
+                if outcome1() == 0:
+                    self.fight1()
+                    continue
+
+                assert 0, outcome()
+
+            if emergency_outcome() == 0:
+                self.last_prayer_turn = self.blstats.time
+                self.pray()
                 continue
 
-            assert 0, outcome()
+            if emergency_outcome() == 1:
+                # TODO: refactor
+                with self.atom_operation():
+                    self.enter_text('q')
+                    for letter, s in zip(self.last_observation['inv_letters'], map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])):
+                        if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s:
+                            self.enter_text(chr(letter))
+                            break
+                    else:
+                        assert 0
+                continue
+
+            assert 0
 
     ####### MAIN
 
