@@ -12,7 +12,7 @@ class Item:
     UNCURSED = 2
     BLESSED = 3
 
-    def __init__(self, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False):
+    def __init__(self, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False, text=None):
         # glyphs is a list of possible glyphs for this item
         assert isinstance(glyphs, list)
         assert all(map(nh.glyph_is_object, glyphs))
@@ -24,6 +24,8 @@ class Item:
         self.modifier = modifier
         self.equipped = equipped
         self.at_ready = at_ready
+        self.text = text
+
         self.category = ord(nh.objclass(nh.glyph_to_obj(self.glyphs[0])).oc_class)
 
         assert all(map(lambda glyph: ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category, self.glyphs))
@@ -141,7 +143,7 @@ class ItemManager:
             return Item(
                 [i + nh.GLYPH_OBJ_OFF for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == category and
                  nh.objdescr.from_idx(i).oc_name is not None],
-                count, status, modifier, equipped, at_ready)
+                count, status, modifier, equipped, at_ready, text)
         else:
             assert 0, category
 
@@ -172,7 +174,7 @@ class ItemManager:
         assert glyph is None or ret[0] == nh.glyph_to_obj(glyph), \
             ((ret[0], nh.objdescr.from_idx(ret[0])),
              (nh.glyph_to_obj(glyph), nh.objdescr.from_idx(nh.glyph_to_obj(glyph))))
-        return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, equipped, at_ready)
+        return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, equipped, at_ready, text)
 
 
 class Inventory:
@@ -183,8 +185,17 @@ class Inventory:
         self.letters = []
 
         self._previous_inv_strs = None
+        self.items_below_me = []
+        self.letters_below_me = []
+
+    def on_panic(self):
+        self.items_below_me = []
+        self.letters_below_me = []
 
     def update(self):
+        self.items_below_me = []
+        self.letters_below_me = []
+
         if self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all():
             return
 
@@ -213,10 +224,65 @@ class Inventory:
     ####### ACTIONS
 
     def wield(self, item):
-        letter = self.get_letter(item)
+        if item is None: # fists
+            letter = '-'
+        else:
+            letter = self.get_letter(item)
 
         with self.agent.atom_operation():
             self.agent.step(A.Command.WIELD)
+            assert 'What do you want to wield?' in self.agent.message
             self.agent.enter_text(letter)
+            assert re.search('(^[a-zA-z] - |welds itself to)', self.agent.message), self.agent.message
 
+        return True
+
+    def get_items_below_me(self):
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.PICKUP)
+        assert bool(self.agent.popup) ^ bool(self.agent.message), (self.agent.popup, self.agent.message)
+
+        if self.agent.message:
+            raise NotImplementedError()
+        else:
+            assert self.agent.popup[0] == 'Pick up what?'
+            lines = self.agent.popup[1:]
+            name_to_category = {
+                'Amulets': nh.AMULET_CLASS,
+                'Armors': nh.ARMOR_CLASS,
+                'Comestibles': nh.FOOD_CLASS,
+                'Coins': nh.COIN_CLASS,
+                'Gems/Stones': nh.GEM_CLASS,
+                'Potions': nh.POTION_CLASS,
+                'Rings': nh.RING_CLASS,
+                'Scrolls': nh.SCROLL_CLASS,
+                'Spellbooks': nh.SPBOOK_CLASS,
+                'Tools': nh.TOOL_CLASS,
+                'Weapons': nh.WEAPON_CLASS,
+                'Wands': nh.WAND_CLASS,
+            }
+            category = None
+            items = []
+            letters = []
+            for line in lines:
+                if line in name_to_category:
+                    category = name_to_category[line]
+                    continue
+                letter, line = line[0], line[4:]
+                letters.append(letter)
+                items.append(self.item_manager.get_item_from_text(line, category))
+
+        self.items_below_me = items
+        self.letters_below_me = letters
+        return items
+
+    def pickup(self, items):
+        if isinstance(items, Item):
+            items = [items]
+
+        assert all(map(lambda item: item in self.items_below_me, items))
+
+        with self.atom_operation():
+            self.step(A.Command.PICKUP)
+            self.step(A.Command.ESC)
         return True

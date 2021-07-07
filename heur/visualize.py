@@ -275,7 +275,7 @@ class Visualizer:
         vis = np.zeros((height, width, 3)).astype(np.uint8)
         if self.env.agent:
             item_h = FONT_SIZE
-            for i, (letter, item) in enumerate(self.env.agent.inventory.items()):
+            for i, (letter, item) in enumerate(zip(self.env.agent.inventory.letters, self.env.agent.inventory.items)):
                 vis[i * item_h:(i + 1) * item_h] = self._draw_item(letter, item, width, item_h)
         _draw_frame(vis)
         return vis

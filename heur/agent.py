@@ -122,7 +122,6 @@ class Agent:
         self.last_bfs_step = None
         self.last_prayer_turn = None
 
-        self.previous_inv_strs = None
         self.turns_in_atom_operation = None
 
         self._is_reading_message_or_popup = False
@@ -130,7 +129,7 @@ class Agent:
     ######## CONVENIENCE FUNCTIONS
 
     @contextlib.contextmanager
-    def atom_operation(self, max_different_turns=1):
+    def atom_operation(self):
         if self.turns_in_atom_operation is not None:
             yield
             return
@@ -217,6 +216,9 @@ class Agent:
 
     ######## UPDATE FUNCTIONS
 
+    def on_panic(self):
+        self.inventory.on_panic()
+
     def get_message_and_popup(self, obs):
         """ Uses MORE action to get full popup and/or message.
         """
@@ -248,7 +250,7 @@ class Agent:
 
         # assert '\n' not in message and '\r' not in message
         if self._is_reading_message_or_popup:
-            message_preffix = self.message + ' '
+            message_preffix = self.message + (' ' if self.message else '')
             popup = self.popup
         else:
             message_preffix = ''
@@ -893,8 +895,8 @@ class Agent:
             target_y, target_x = nonzero_y[i], nonzero_x[i]
 
             # with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
-            #    # TODO: search for traps before stepping in
-            #    self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
+            #      # TODO: search for traps before stepping in
+            #      self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
 
             self.current_level().checked_item_pile[target_y, target_x] = True
 
@@ -1099,6 +1101,7 @@ class Agent:
                     self.main_strategy()
                 except AgentPanic as e:
                     self.all_panics.append(e)
+                    self.on_panic()
                     if self.verbose:
                         print(f'PANIC!!!! : {e}')
         except AgentFinished:
