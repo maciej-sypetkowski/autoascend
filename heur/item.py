@@ -2,9 +2,11 @@ import functools
 import re
 
 import nle.nethack as nh
+import numpy as np
 from nle.nethack import actions as A
 
 from glyph import WEA
+import objects
 
 
 class Item:
@@ -41,9 +43,27 @@ class Item:
         assert self.category != nh.WEAPON_CLASS or len(self.glyphs) == 1, self.glyphs
         return self.category == nh.WEAPON_CLASS
 
-    def get_dps(self, big_monster):
+    def get_dps(self, large_monster):
         assert self.is_weapon()
-        return WEA.get_dps(self.glyphs[0], big_monster) + (self.modifier if self.modifier is not None else 0)
+
+        weapon = objects.weapon_from_glyph(self.glyphs[0])
+        dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
+
+        # TODO: take into account things from:
+        # https://github.com/facebookresearch/nle/blob/master/src/weapon.c : hitval
+        # https://github.com/facebookresearch/nle/blob/master/src/weapon.c : dmgval
+        # https://github.com/facebookresearch/nle/blob/master/src/uhitm.c : find_roll_to_hit
+
+        if self.modifier is not None and self.modifier > 0:
+            dmg += self.modifier
+
+        to_hit = 1
+        to_hit += 6 # compensation, TODO: abon, etc
+        to_hit += weapon.hitbon
+        if self.modifier is not None:
+            to_hit += self.modifier
+
+        return np.array([to_hit > i for i in range(1, 21)]).astype(np.float32).mean().item() * dmg
 
     def is_launcher(self):
         if not self.is_weapon():
@@ -419,7 +439,7 @@ class Inventory:
             if 'You cannot wield a two-handed sword while wearing a shield.' in self.agent.message:
                 # TODO: handle it better
                 return False
-            assert re.search(r'(You secure the tether\.  )?(^[a-zA-z] - |welds itself to|You are already wielding that|'
+            assert re.search(r'(You secure the tether\.  )?(^[a-zA-z] - |welds? itself to|You are already wielding that|'
                              r'You are already empty handed)', \
                              self.agent.message), self.agent.message
 

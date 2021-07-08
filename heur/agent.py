@@ -420,7 +420,7 @@ class Agent:
         best_dps = None
         for item in self.inventory.items:
             if item.is_weapon():
-                dps = item.get_dps(big_monster=False)  # TODO: what about monster size
+                dps = item.get_dps(large_monster=False)  # TODO: what about monster size
                 if best_dps is None or best_dps < dps:
                     best_dps = dps
                     best_item = item
@@ -916,18 +916,15 @@ class Agent:
         def take_item(only_check=False):
             if self.character.role == Character.MONK:
                 return False
-            for item in self.inventory.items:
-                if item.is_weapon() and item.equipped:
-                    if item.status == Item.CURSED:
-                        return
-                    current_weapon_dps = item.get_dps(big_monster=False)  # TODO: what about monster size
-                    current_weapon = item
-                    break
-            else:
+
+            current_weapon = self.get_best_weapon()
+            if current_weapon is None:
                 current_weapon_dps = -2
                 current_weapon = 'fists'
+            else:
+                current_weapon_dps = current_weapon.get_dps(large_monster=False)
 
-            current_weapon_dps += 4  # take only relatively better items than yours
+            current_weapon_dps *= 1.3  # take only relatively better items than yours
 
             mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (
                     self.bfs() != -1) & self.glyphs_mask_in(G.WEAPONS)
@@ -937,7 +934,7 @@ class Agent:
             best_item_dps = None
             for y, x in zip(nonzero_y, nonzero_x):
                 glyph = self.glyphs[y, x]
-                dps = Item([self.glyphs[y, x]]).get_dps(big_monster=False)
+                dps = Item([self.glyphs[y, x]]).get_dps(large_monster=False)
                 if dps > current_weapon_dps:
                     best_item_dps = dps
                     best_item = (y, x)
