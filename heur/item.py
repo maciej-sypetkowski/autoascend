@@ -555,3 +555,8 @@ class Inventory:
             else:
                 self.agent.step(A.Command.PICKUP, iter(letters + [A.MiscAction.MORE]))
         return True
+
+
+    ######## LOW-LEVEL STRATEGIES
+
+    # TODO: move item taking strategies

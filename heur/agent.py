@@ -90,6 +90,116 @@ def debug_log(txt, fun, color=(255, 255, 255)):
     return wrapper
 
 
+class Strategy:
+    @classmethod
+    def wrap(cls, func):
+        return lambda *a, **k: Strategy(wraps(func)(lambda: func(*a, **k)))
+
+    def __init__(self, strategy):
+        self.strategy = strategy
+
+    def run(self, agent=None):
+        gen = self.strategy()
+        if not next(gen):
+            return None
+        try:
+            next(gen)
+            assert 0
+        except StopIteration as e:
+            return e.value
+
+    def condition(self, condition):
+        def f(self=self, condition=condition):
+            if not condition():
+                yield False
+                assert 0
+            it = self.strategy()
+            yield next(it)
+            try:
+                next(it)
+                assert 0
+            except StopIteration as e:
+                return e.value
+
+        return Strategy(f)
+
+    def before(self, strategy):
+        def f(self=self, strategy=strategy):
+            yielded = False
+            r1, r2 = None, None
+
+            v1 = self.strategy()
+            if next(v1):
+                if not yielded:
+                    yielded = True
+                    yield True
+                try:
+                    next(v1)
+                    assert 0, v1
+                except StopIteration as e:
+                    r1 = e.value
+
+            v2 = strategy.strategy()
+            if next(v2):
+                if not yielded:
+                    yielded = True
+                    yield True
+                try:
+                    next(v2)
+                    assert 0, v2
+                except StopIteration as e:
+                    r2 = e.value
+
+            if not yielded:
+                yield False
+
+            return (r1, r2)
+
+        return Strategy(f)
+
+    def preempt(self, agent, strategies):
+        def f(self=self, agent=agent, strategies=strategies):
+            gen = self.strategy()
+            condition_passed = False
+            with agent.disallow_step_calling():
+                condition_passed = next(gen)
+
+            if not condition_passed:
+                yield False
+            yield True
+
+            assert not agent._no_step_calls
+
+            return agent.preempt(strategies, self)
+
+        return Strategy(f)
+
+    def repeat(self):
+        def f(self=self):
+            yielded = False
+            val = None
+            while 1:
+                gen = self.strategy()
+                if not next(gen):
+                    if not yielded:
+                        yield False
+                    return
+
+                if not yielded:
+                    yielded = True
+                    yield True
+
+                try:
+                    next(gen)
+                    assert 0, gen
+                except StopIteration as e:
+                    val = e.value
+            return val
+
+        return Strategy(f)
+
+
+
 class Agent:
     def __init__(self, env, seed=0, verbose=False):
         self.env = env
@@ -112,11 +222,25 @@ class Agent:
         self.last_prayer_turn = None
         self._previous_glyphs = None
 
+        self._no_step_calls = False
+
         self.turns_in_atom_operation = None
 
         self._is_reading_message_or_popup = False
 
     ######## CONVENIENCE FUNCTIONS
+
+    @contextlib.contextmanager
+    def disallow_step_calling(self):
+        if self._no_step_calls:
+            yield
+            return
+
+        try:
+            self._no_step_calls = True
+            yield
+        finally:
+            self._no_step_calls = False
 
     @contextlib.contextmanager
     def atom_operation(self):
@@ -151,23 +275,18 @@ class Agent:
             assert fun in self.on_update
             self.on_update.pop(self.on_update.index(fun))
 
-    # @contextlib.contextmanager
-    # def stop_updating(self, update_at_end=False):
-    #    on_update = self.on_update
-    #    self.on_update = []
+    @contextlib.contextmanager
+    def add_on_update(self, funcs):
+       self.on_update.extend(funcs)
 
-    #    try:
-    #        yield
-    #    finally:
-    #        assert self.on_update == []
-    #        self.on_update = on_update
-
-    #    if update_at_end:
-    #        for f in self.on_update:
-    #            f()
+       try:
+           yield
+       finally:
+           for f in funcs:
+               self.on_update.pop(self.on_update.index(f))
 
     @contextlib.contextmanager
-    def preempt(self, conditions):
+    def context_preempt(self, conditions):
         ids = []
         id2fun = {}
         for cond in conditions:
@@ -203,8 +322,59 @@ class Agent:
             self.on_update = list(filter(lambda f: f not in id2fun.values(), self.on_update))
 
         # check if less nested ChangeStategy is present
-        for fun in self.on_update:
-            fun()
+        self.call_update_functions()
+
+    def preempt(self, strategies, default):
+        id2fun = {}
+        for strategy in strategies:
+            def f(iden, strategy=strategy):
+                it = strategy.strategy()
+                if next(it):
+                    raise AgentChangeStrategy(iden, it)
+
+            fun = partial(f, id(f))
+            assert id(f) not in id2fun
+            id2fun[id(f)] = fun
+
+        inactivity_counter = 0
+        last_step = 0
+
+        is_first = True
+
+        iterator = None
+        while 1:
+            assert inactivity_counter < 100
+            if last_step != self.step_count:
+                last_step = self.step_count
+                inactivity_counter = 0
+            else:
+                inactivity_counter += 1
+
+            try:
+                if is_first:
+                    is_first = False
+                    self.call_update_functions()
+
+                with self.add_on_update(list(id2fun.values())):
+                    if isinstance(default, Strategy):
+                        val = default.run()
+                    else:
+                        val = default()
+                    break
+
+            except AgentChangeStrategy as e:
+                i = e.args[0]
+                if i not in id2fun:
+                    raise
+
+                iterator = e.args[1]
+                try:
+                    next(iterator)
+                    assert 0, iterator
+                except StopIteration:
+                    pass
+
+        return val
 
     ######## UPDATE FUNCTIONS
 
@@ -289,6 +459,9 @@ class Agent:
         return message_preffix + message, popup, False
 
     def step(self, action, additional_action_iterator=None):
+        if self._no_step_calls:
+            raise ValueError("Shouldn't call step now")
+
         if isinstance(action, str):
             assert len(action) == 1
             action = A.ACTIONS[A.ACTIONS.index(ord(action))]
@@ -353,9 +526,12 @@ class Agent:
     def update_state(self):
         self.inventory.update()
         self.update_level()
+        self.call_update_functions()
 
-        for func in self.on_update:
-            func()
+    def call_update_functions(self):
+        with self.disallow_step_calling():
+            for func in self.on_update:
+                func()
 
     def update_level(self):
         level = self.current_level()
@@ -598,23 +774,6 @@ class Agent:
         assert path[0] == (from_y, from_x) and path[-1] == (to_y, to_x)
         return path
 
-    def is_any_mon_on_map(self):
-        mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
-        mask[self.blstats.y, self.blstats.x] = 0
-        if not mask.any():
-            return False
-        return (mask & (self.bfs() != -1)).any()
-
-    def is_any_food_on_map(self):
-        level = self.current_level()
-
-        mask = self.glyphs_mask_in(G.BODIES) & (self.blstats.time - level.corpse_age <= 100)
-        mask |= self.glyphs_mask_in(G.FOOD_OBJECTS)
-        mask &= ~level.shop
-        if not mask.any():
-            return False
-        return (mask & (self.bfs() != -1)).any()
-
     ######## NON-TRIVIAL ACTIONS
 
     def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_tiles_args=None):
@@ -687,17 +846,30 @@ class Agent:
             else:
                 return False
 
+    @Strategy.wrap
     @debug_log('fight1')
     def fight1(self):
+        yielded = False
         while 1:
-            dis = self.bfs()
-
             mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
             mask[self.blstats.y, self.blstats.x] = 0
+            if not mask.any():
+                if not yielded:
+                    yield False
+                return
+
+            dis = self.bfs()
             mask &= dis != -1
 
             if not mask.any():
-                return False
+                if not yielded:
+                    yield False
+                return
+
+            if not yielded:
+                yielded = True
+                yield True
+
 
             mask &= dis == dis[mask].min()
             closests_y, closests_x = mask.nonzero()
@@ -718,7 +890,7 @@ class Agent:
                 y, x = closests_y[0], closests_x[0]
                 return abs(self.blstats.y - y) <= 1 and abs(self.blstats.x - x) <= 1
 
-            with self.preempt([
+            with self.context_preempt([
                 is_monster_next_to_me,
             ]) as outcome:
                 if outcome() is None:
@@ -752,8 +924,24 @@ class Agent:
                 if nh.glyph_is_body(self.glyphs[y, x]) and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == mon:
                     self.current_level().corpse_age[y, x] = self.blstats.time
 
+    @Strategy.wrap
     @debug_log('eat1')
     def eat1(self):
+        level = self.current_level()
+
+        mask = self.glyphs_mask_in(G.BODIES) & (self.blstats.time - level.corpse_age <= 100)
+        mask |= self.glyphs_mask_in(G.FOOD_OBJECTS)
+        mask &= ~level.shop
+        if not mask.any():
+            yield False
+
+        mask &= (self.bfs() != -1)
+        if not mask.any():
+            yield False
+
+        yield True
+
+        # TODO: use variables from the condition
         dis = self.bfs()
         closest = None
 
@@ -782,6 +970,8 @@ class Agent:
 
     @debug_log('explore1')
     def explore1(self, search_prio_limit=0):
+        # TODO: refactor entire function
+
         def open_neighbor_doors():
             for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
                 if self.glyphs[py, px] in G.DOOR_CLOSED:
@@ -841,9 +1031,18 @@ class Agent:
                 return prio
             return prio >= prio_limit
 
+        @Strategy.wrap
         def open_visit_search(search_prio_limit):
+            yielded = False
             while 1:
-                open_neighbor_doors()
+                for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False, shuffle=False):
+                    if self.glyphs[py, px] in G.DOOR_CLOSED:
+                        if not yielded:
+                            yielded = True
+                            yield True
+                        open_neighbor_doors()
+                        break
+
                 to_visit = to_visit_func()
                 to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)
 
@@ -862,6 +1061,8 @@ class Agent:
 
                 if dynamic_search_fallback:
                     if search_prio_limit is not None and search_prio_limit >= 0:
+                        if not yielded:
+                            yield False
                         return
 
                     search_prio = to_search_func(return_prio=True)
@@ -875,8 +1076,14 @@ class Agent:
                     to_search = np.isfinite(search_prio)
                     to_explore = (to_visit | to_search) & (dis != -1)
                     if not to_explore.any():
+                        if not yielded:
+                            yield False
                         return
                     nonzero_y, nonzero_x = ((search_prio == search_prio[to_explore].max()) & to_explore).nonzero()
+
+                if not yielded:
+                    yielded = True
+                    yield True
 
                 # select random closest to_explore tile
                 i = self.rng.randint(len(nonzero_y))
@@ -890,7 +1097,15 @@ class Agent:
                     if to_search[target_y, target_x] and not to_visit[target_y, target_x]:
                         self.search()
 
+            assert search_prio_limit is not None
+
+        @Strategy.wrap
         def check_item_pile():
+            if not (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) &
+                    ~self.current_level().checked_item_pile).any():
+                yield False
+            yield True
+
             mask = (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) &
                     ~self.current_level().checked_item_pile)
 
@@ -904,11 +1119,12 @@ class Agent:
                  self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
 
             self.current_level().checked_item_pile[target_y, target_x] = True
-            take_item(only_below_me=True)
+            take_item(only_below_me=True).run()
 
-        def take_item(only_check=False, only_below_me=False):
+        @Strategy.wrap
+        def take_item(only_below_me=False):
             if self.character.role == Character.MONK:
-                return False
+                yield False
 
             current_weapon = self.get_best_weapon()
             if current_weapon is None:
@@ -918,7 +1134,6 @@ class Agent:
                 current_weapon_dps = current_weapon.get_dps(large_monster=False)
 
             current_weapon_dps *= 1.3  # take only relatively better items than yours
-            current_weapon_dps *= 0
 
             if only_below_me:
                 best_item = None
@@ -930,8 +1145,10 @@ class Agent:
                             best_dps = dps
                             best_item = item
                 if best_item is not None:
+                    yield True
                     self.inventory.pickup(best_item)
-                return
+                    return
+                yield False
 
 
             mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (
@@ -948,10 +1165,9 @@ class Agent:
                     best_item = (y, x)
 
             if best_item is None:
-                return False
+                yield False
 
-            if only_check:
-                return True
+            yield True
 
             with self.env.debug_log(f'going for {Item([self.glyphs[best_item]])}'):
                 target_y, target_x = best_item
@@ -965,47 +1181,27 @@ class Agent:
                 if self.blstats.carrying_capacity != 0:
                     print(self.blstats.carrying_capacity)
 
-        while 1:
-            with self.preempt([
-                lambda: (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) &
-                         ~self.current_level().checked_item_pile).any(),
-                lambda: take_item(only_check=True)
-            ]) as outcome:
-                if outcome() is None:
-                    open_visit_search(search_prio_limit)
-                    break
+        return open_visit_search(search_prio_limit).preempt(self, [
+            check_item_pile(),
+            take_item()
+        ])
 
-            if outcome() == 0:
-                check_item_pile()
-                continue
-
-            if outcome() == 1:
-                take_item()
-                continue
-
-            assert 0, outcome()
-
+    @Strategy.wrap
     @debug_log('move_down')
     def move_down(self):
         level = self.current_level()
 
-        pos = None
-        for y in range(C.SIZE_Y):
-            for x in range(C.SIZE_X):
-                if level.objects[y, x] in G.STAIR_DOWN:
-                    pos = (y, x)
-                    break
-            else:
-                continue
-            break
+        mask = np.isin(level.objects, list(G.STAIR_DOWN))
+        if not mask.any():
+            yield False
 
-        assert pos is not None
+        mask &= (self.bfs() != -1)
+        if not mask.any():
+            yield False
+        yield True
 
-        dis = self.bfs()
-        if dis[pos] == -1:
-            return False
-
-        target_y, target_x = pos
+        nonzero_y, nonzero_x = mask.nonzero()
+        target_y, target_x = nonzero_y[0], nonzero_x[0]
 
         self.go_to(target_y, target_x, debug_tiles_args=dict(color=(0, 0, 255), is_path=True))
         with self.env.debug_log('waiting for a pet'):
@@ -1019,92 +1215,70 @@ class Agent:
                 break
             self.direction('>')
 
+    @Strategy.wrap
+    @debug_log('emergency_strategy')
+    def emergency_strategy(self):
+        # TODO: to refactor
+        if (
+                ((self.last_prayer_turn is None and self.blstats.time > 300) or
+                 (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > 900)) and
+                (self.blstats.hitpoints < 1/(5 if self.blstats.experience_level < 6 else 6) * self.blstats.max_hitpoints or
+                 self.blstats.hitpoints < 6 or self.blstats.hunger_state >= Hunger.FAINTING)
+                ):
+            yield True
+            self.last_prayer_turn = self.blstats.time
+            self.pray()
+            return
+
+        if (
+                (self.blstats.hitpoints < 1/3 * self.blstats.max_hitpoints or self.blstats.hitpoints < 8 or self.blstats.hunger_state >= Hunger.FAINTING) and
+                len([s for s in map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])
+                     if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s]) > 0
+                ):
+            yield True
+            with self.atom_operation():
+                self.type_text('q')
+                for letter, s in zip(self.last_observation['inv_letters'], map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])):
+                    if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s:
+                        self.type_text(chr(letter))
+                        break
+                else:
+                    assert 0
+            return
+
+        yield False
+
     ######## HIGH-LEVEL STRATEGIES
 
     @debug_log('main_strategy')
     def main_strategy(self):
-        # TODO: to refactor
-        while 1:
-            with self.preempt([lambda: ((self.last_prayer_turn is None and self.blstats.time > 300) or \
-                                        (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > 900)) and \
-                                       (self.blstats.hitpoints < 1/(5 if self.blstats.experience_level < 6 else 6) * self.blstats.max_hitpoints or \
-                                        self.blstats.hitpoints < 6 or self.blstats.hunger_state >= Hunger.FAINTING),
-                               lambda: (self.blstats.hitpoints < 1/3 * self.blstats.max_hitpoints or self.blstats.hitpoints < 8 or self.blstats.hunger_state >= Hunger.FAINTING) and \
-                                        len([s for s in map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])
-                                             if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s]) > 0,
-            ]) as emergency_outcome:
-                with self.preempt([
-                    self.is_any_mon_on_map,
-                ]) as outcome1:
-                    if outcome1() is None:
-                        with self.preempt([
-                            lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY and \
-                                    self.is_any_food_on_map(),
-                            lambda: self.blstats.hunger_state >= Hunger.WEAK and any(
-                                map(lambda item: item.category == nh.FOOD_CLASS,
-                                    self.inventory.items)),
-                        ]) as outcome2:
-                            if outcome2() is None:
+        @Strategy.wrap
+        def eat_from_inventory():
+            if not (self.blstats.hunger_state >= Hunger.WEAK and any(
+                    map(lambda item: item.category == nh.FOOD_CLASS,
+                        self.inventory.items))):
+                yield False
+            yield True
+            with self.atom_operation():
+                self.step(A.Command.EAT)
+                for item in self.inventory.items:
+                    if item.category == nh.FOOD_CLASS:
+                        self.type_text(self.inventory.get_letter(item))
+                        break
+                else:
+                    assert 0
 
-                                self.explore1(0)
-
-                                with self.preempt([
-                                    # TODO: implement it better
-                                    lambda: np.isin(self.current_level().objects, list(G.STAIR_DOWN)).any() and (len(self.levels) <= 0 or self.blstats.score > 550) and
-                                            (np.isin(self.current_level().objects, list(G.STAIR_DOWN)) & (self.bfs() != -1)).any() and self.blstats.hitpoints >= 0.8 * self.blstats.max_hitpoints,
-                                ]) as outcome3:
-                                    if outcome3() is None:
-
-                                        self.explore1(None)
-
-                                if outcome3() == 0:
-                                    self.move_down()
-                                    continue
-
-                                assert 0, outcome3()
-
-                        if outcome2() == 0:
-                            self.eat1()
-                            continue
-
-                        if outcome2() == 1:
-                            # TODO: refactor
-                            with self.atom_operation():
-                                self.step(A.Command.EAT)
-                                for item in self.inventory.items:
-                                    if item.category == nh.FOOD_CLASS:
-                                        self.type_text(self.inventory.get_letter(item))
-                                        break
-                                else:
-                                    assert 0
-                            continue
-
-                        assert 0, outcome2()
-
-                if outcome1() == 0:
-                    self.fight1()
-                    continue
-
-                assert 0, outcome()
-
-            if emergency_outcome() == 0:
-                self.last_prayer_turn = self.blstats.time
-                self.pray()
-                continue
-
-            if emergency_outcome() == 1:
-                # TODO: refactor
-                with self.atom_operation():
-                    self.type_text('q')
-                    for letter, s in zip(self.last_observation['inv_letters'], map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])):
-                        if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s:
-                            self.type_text(chr(letter))
-                            break
-                    else:
-                        assert 0
-                continue
-
-            assert 0
+        return \
+            (self.explore1(0).before(self.explore1(None))).preempt(self, [
+                self.move_down().condition(lambda: self.blstats.score > 550 and self.blstats.hitpoints >= 0.8 * self.blstats.max_hitpoints)
+            ]).preempt(self, [
+                self.eat1().condition(lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY),
+                eat_from_inventory(),
+            ]).preempt(self, [
+                self.fight1(),
+            ]).preempt(self, [
+                self.emergency_strategy(),
+            ])
 
     ####### MAIN
 
@@ -1119,7 +1293,8 @@ class Agent:
                 try:
                     self.step(A.Command.ESC)
                     self.step(A.Command.ESC)
-                    self.main_strategy()
+                    self.main_strategy().run()
+                    assert 0
                 except AgentPanic as e:
                     self.all_panics.append(e)
                     self.on_panic()
