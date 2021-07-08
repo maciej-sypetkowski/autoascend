@@ -1,11 +1,14 @@
+import contextlib
 import functools
 import re
+from functools import partial
 
 import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
 from glyph import WEA
+from exceptions import AgentPanic
 import objects
 
 
@@ -120,8 +123,12 @@ class ItemManager:
     def __init__(self, agent):
         self.agent = agent
 
-    @functools.lru_cache(1024 * 256)
     def get_item_from_text(self, text, category=None, glyph=None):
+        return Item(*self.parse_text(text, category, glyph))
+
+    @staticmethod
+    @functools.lru_cache(1024 * 256)
+    def parse_text(text, category=None, glyph=None):
         # TODO: there are some problems with 'inv_glyphs' and the environment gives incorrect inventory glyphs.
         #       I'm ignoring them for now
         glyph = None
@@ -144,13 +151,13 @@ class ItemManager:
             r'([a-zA-z0-9- ]+)'
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
             r'( \(([a-zA-Z0-9; ]+)\))?'
-            r'( \(for sale, (\d+) ?[a-zA-Z- ]+\))?'
+            r'( \((for sale|unpaid), (\d+) ?[a-zA-Z- ]+\))?'
             r'$',
             text)
         assert len(matches) <= 1, text
         assert len(matches), text
 
-        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_price = matches[0]
+        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, shop_price = matches[0]
         # TODO: effects, uses
 
         if info in {'weapon in paw', 'weapon in hand', 'weapon in paws', 'weapon in hands', 'being worn',
@@ -349,7 +356,7 @@ class ItemManager:
             assert len(matches) > 0, (text, name)
 
         assert category is None or category == ord(nh.objclass(ret[0]).oc_class), (text, category, ord(nh.objclass(ret[0]).oc_class))
-        return Item([r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, equipped, at_ready, text)
+        return [r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, equipped, at_ready, text
 
 
 class Inventory:
@@ -371,6 +378,26 @@ class Inventory:
         self._previous_blstats = None
 
     def update(self):
+        if not (self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all()):
+            self.items = []
+            self.letters = []
+            for item_name, category, glyph, letter in zip(
+                    self.agent.last_observation['inv_strs'],
+                    self.agent.last_observation['inv_oclasses'],
+                    self.agent.last_observation['inv_glyphs'],
+                    self.agent.last_observation['inv_letters']):
+                item_name = bytes(item_name).decode().strip('\0')
+                letter = chr(letter)
+                if not item_name:
+                    continue
+                item = self.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
+
+                self.items.append(item)
+                self.letters.append(letter)
+
+            self._previous_inv_strs = self.agent.last_observation['inv_strs']
+
+
         if self._stop_updating:
             return
 
@@ -394,30 +421,31 @@ class Inventory:
 
         assert self.items_below_me is not None and self.letters_below_me is not None
 
-        if self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all():
-            return
-
-        self.items = []
-        self.letters = []
-        for item_name, category, glyph, letter in zip(
-                self.agent.last_observation['inv_strs'],
-                self.agent.last_observation['inv_oclasses'],
-                self.agent.last_observation['inv_glyphs'],
-                self.agent.last_observation['inv_letters']):
-            item_name = bytes(item_name).decode().strip('\0')
-            letter = chr(letter)
-            if not item_name:
-                continue
-            item = self.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
-
-            self.items.append(item)
-            self.letters.append(letter)
-
-        self._previous_inv_strs = self.agent.last_observation['inv_strs']
-
     def get_letter(self, item):
-        assert item in self.items
+        assert item in self.items, (item, self.items)
         return self.letters[self.items.index(item)]
+
+    @contextlib.contextmanager
+    def panic_if_items_below_me_change(self):
+        old_items_below_me = self.items_below_me
+        old_letters_below_me = self.letters_below_me
+
+        def f(self):
+            if (
+                [(l, i.text) for i, l in zip(old_items_below_me, old_letters_below_me)] !=
+                [(l, i.text) for i, l in zip(self.items_below_me, self.letters_below_me)]
+            ):
+                raise AgentPanic('items below me changed')
+
+        fun = partial(f, self)
+
+        self.agent.on_update.append(fun)
+
+        try:
+            yield
+        finally:
+            assert fun in self.agent.on_update
+            self.agent.on_update.pop(self.agent.on_update.index(fun))
 
     ####### ACTIONS
 
@@ -435,11 +463,12 @@ class Inventory:
             if "Don't be ridiculous" in self.agent.message:
                 return False
             assert 'What do you want to wield' in self.agent.message, self.agent.message
-            self.agent.enter_text(letter)
-            if 'You cannot wield a two-handed sword while wearing a shield.' in self.agent.message:
+            self.agent.type_text(letter)
+            if 'You cannot wield a two-handed sword while wearing a shield.' in self.agent.message or \
+                    ' welded to your hand' in self.agent.message:
                 # TODO: handle it better
                 return False
-            assert re.search(r'(You secure the tether\.  )?(^[a-zA-z] - |welds? itself to|You are already wielding that|'
+            assert re.search(r'(You secure the tether\.  )?(^[a-zA-z] - |welds?( itself| themselves| ) to|You are already wielding that|'
                              r'You are already empty handed)', \
                              self.agent.message), self.agent.message
 
@@ -451,7 +480,7 @@ class Inventory:
                 if not assume_appropriate_message:
                     self.agent.step(A.Command.LOOK)
 
-                if 'Things that are here:' not in self.agent.popup:
+                if 'Things that are here:' not in self.agent.popup and not re.search('There are (several|many) objects here\.', self.agent.message):
                     if 'You see no objects here.' in self.agent.message:
                         items = []
                         letters = []
@@ -465,12 +494,17 @@ class Inventory:
                         letters = []
                 else:
                     self.agent.step(A.Command.PICKUP)
-                    if 'You cannot reach the bottom of the pit.' in self.agent.message or \
-                            'There is nothing here to pick up.' in self.agent.message:
-                        items = []
-                        letters = []
+                    if 'Pick up what?' not in self.agent.popup:
+                        if 'You cannot reach the bottom of the pit.' in self.agent.message or \
+                                'There is nothing here to pick up.' in self.agent.message or \
+                                ' solidly fixed to the floor.' in self.agent.message or \
+                                'You read:' in self.agent.message or \
+                                "You don't see anything in here to pick up." in self.agent.message:
+                            items = []
+                            letters = []
+                        else:
+                            assert 0, (self.agent.message, self.agent.popup)
                     else:
-                        assert 'Pick up what?' in self.agent.popup, (self.agent.popup, self.agent.message)
                         lines = self.agent.popup[self.agent.popup.index('Pick up what?') + 1:]
                         name_to_category = {
                             'Amulets': nh.AMULET_CLASS,
@@ -506,10 +540,18 @@ class Inventory:
     def pickup(self, items):
         if isinstance(items, Item):
             items = [items]
-
+        assert len(items) > 0
         assert all(map(lambda item: item in self.items_below_me, items))
 
-        with self.atom_operation():
-            self.step(A.Command.PICKUP)
-            self.step(A.Command.ESC)
+        letters = [self.letters_below_me[self.items_below_me.index(item)] for item in items]
+        assert len(set(letters)) == len(letters), 'TODO: not implemented'
+
+        with self.panic_if_items_below_me_change():
+            self.get_items_below_me()
+
+        with self.agent.atom_operation():
+            if len(self.items_below_me) == 1:
+                self.agent.step(A.Command.PICKUP)
+            else:
+                self.agent.step(A.Command.PICKUP, iter(letters + [A.MiscAction.MORE]))
         return True

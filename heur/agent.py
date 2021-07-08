@@ -13,6 +13,7 @@ import utils
 from glyph import SS, MON, C
 from item import Item, Inventory
 from character import Character
+from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
@@ -77,18 +78,6 @@ class Level:
         self.corpse_age = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32) - 10000
         self.shop = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
         self.checked_item_pile = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
-
-
-class AgentFinished(Exception):
-    pass
-
-
-class AgentPanic(Exception):
-    pass
-
-
-class AgentChangeStrategy(Exception):
-    pass
 
 
 @toolz.curry
@@ -299,7 +288,10 @@ class Agent:
 
         return message_preffix + message, popup, False
 
-    def step(self, action):
+    def step(self, action, additional_action_iterator=None):
+        if isinstance(action, str):
+            assert len(action) == 1
+            action = A.ACTIONS[A.ACTIONS.index(ord(action))]
         observation, reward, done, info = self.env.step(action)
         observation = {k: v.copy() for k, v in observation.items()}
         self.step_count += 1
@@ -308,30 +300,40 @@ class Agent:
         if done:
             raise AgentFinished()
 
-        self.update(observation)
+        self.update(observation, additional_action_iterator)
 
-    def update(self, observation):
-        should_update = True
-
+    def update(self, observation, additional_action_iterator=None):
         self.message, self.popup, done = self.get_message_and_popup(observation)
-
-        if not done:
-            self.step(A.TextCharacters.SPACE)
-            return
 
         self.message = self.message.strip()
         self.popup = [p.strip() for p in self.popup]
+
+        if additional_action_iterator is not None:
+            is_next_action = True
+            try:
+                next_action = next(additional_action_iterator)
+            except StopIteration:
+                is_next_action = False
+
+            if is_next_action:
+                self.step(next_action, additional_action_iterator)
+                return
+
+        # FIXME: self.update_state() won't be called on all states sometimes.
+        #        Otherwise there are problems with atomic operations.
+        if not done:
+            self.step(A.TextCharacters.SPACE)
+            return
 
         if observation['misc'][1]:  # entering text
             self.step(A.Command.ESC)
             return
 
         if b'[yn]' in bytes(observation['tty_chars'].reshape(-1)):
-            self.enter_text('y')
+            self.type_text('y')
             return
 
-        # FIXME: self.update_state() won't be called on all states sometimes.
-        #        Otherwise there are problems with atomic operations.
+        should_update = True
 
         if self.turns_in_atom_operation is not None:
             should_update = False
@@ -433,7 +435,7 @@ class Agent:
         if item is None:
             return False
         if not item.equipped:
-            self.wield(item)
+            self.inventory.wield(item)
             return True
         return False
 
@@ -443,27 +445,20 @@ class Agent:
             text = ' '.join(self.popup)
             self.character = Character.parse(text)
 
-    def enter_text(self, text):
+    def type_text(self, text):
         with self.atom_operation():
             for char in text:
-                char = ord(char)
-                self.step(A.ACTIONS[A.ACTIONS.index(char)])
+                self.step(char)
 
     def eat(self):  # TODO: eat what
         with self.atom_operation():
             self.step(A.Command.EAT)
             if "You don't have anything to eat." in self.message:
                 return False
-            self.enter_text('y')
+            self.type_text('y')
             if "You don't have that object." in self.message:
                 self.step(A.Command.ESC)
                 return False
-        return True
-
-    def take_item(self):  # TODO: take what
-        with self.atom_operation():
-            self.step(A.Command.PICKUP)
-            self.step(A.Command.ESC)
         return True
 
     def pray(self):
@@ -485,12 +480,9 @@ class Agent:
     def fire(self, item, direction):
         with self.atom_operation():
             self.step(A.Command.THROW)
-            self.enter_text(self.inventory.get_letter(item))
+            self.type_text(self.inventory.get_letter(item))
             self.direction(direction)
         return True
-
-    def wield(self, item):
-        return self.inventory.wield(item)
 
     def kick(self, y, x=None):
         with self.panic_if_position_changes():
@@ -679,7 +671,7 @@ class Agent:
             # TODO: consider using monster information to select the best combination
             launcher, ammo = valid_combinations[0]
             if not launcher.equipped:
-                self.wield(launcher)
+                self.inventory.wield(launcher)
                 continue
 
             mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
@@ -907,13 +899,14 @@ class Agent:
             i = self.rng.randint(len(nonzero_y))
             target_y, target_x = nonzero_y[i], nonzero_x[i]
 
-            # with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
-            #      # TODO: search for traps before stepping in
-            #      self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
+            with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
+                 # TODO: search for traps before stepping in
+                 self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
 
             self.current_level().checked_item_pile[target_y, target_x] = True
+            take_item(only_below_me=True)
 
-        def take_item(only_check=False):
+        def take_item(only_check=False, only_below_me=False):
             if self.character.role == Character.MONK:
                 return False
 
@@ -925,6 +918,21 @@ class Agent:
                 current_weapon_dps = current_weapon.get_dps(large_monster=False)
 
             current_weapon_dps *= 1.3  # take only relatively better items than yours
+            current_weapon_dps *= 0
+
+            if only_below_me:
+                best_item = None
+                best_dps = current_weapon_dps
+                for item in self.inventory.items_below_me:
+                    if item.is_weapon():
+                        dps = item.get_dps(large_monster=False)
+                        if dps > best_dps:
+                            best_dps = dps
+                            best_item = item
+                if best_item is not None:
+                    self.inventory.pickup(best_item)
+                return
+
 
             mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (
                     self.bfs() != -1) & self.glyphs_mask_in(G.WEAPONS)
@@ -950,7 +958,8 @@ class Agent:
                 self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
                 if self.current_level().shop[target_y, target_x]:
                     return
-                self.take_item()
+                if self.inventory.items_below_me:
+                    self.inventory.pickup(self.inventory.items_below_me)
 
                 self.wield_best_weapon()
                 if self.blstats.carrying_capacity != 0:
@@ -1064,7 +1073,7 @@ class Agent:
                                 self.step(A.Command.EAT)
                                 for item in self.inventory.items:
                                     if item.category == nh.FOOD_CLASS:
-                                        self.enter_text(self.inventory.get_letter(item))
+                                        self.type_text(self.inventory.get_letter(item))
                                         break
                                 else:
                                     assert 0
@@ -1086,10 +1095,10 @@ class Agent:
             if emergency_outcome() == 1:
                 # TODO: refactor
                 with self.atom_operation():
-                    self.enter_text('q')
+                    self.type_text('q')
                     for letter, s in zip(self.last_observation['inv_letters'], map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])):
                         if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s:
-                            self.enter_text(chr(letter))
+                            self.type_text(chr(letter))
                             break
                     else:
                         assert 0
