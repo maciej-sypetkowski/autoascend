@@ -1545,7 +1545,7 @@ def possibilities_from_glyph(i):
             'yellow': ['citrine', 'chrysoberyl', 'worthless piece of yellow glass'],
             'yellowish brown': ['amber', 'topaz', 'worthless piece of yellowish brown glass'],
         }
-        return [from_name(name) for name in desc2names[desc]]
+        return [from_name(name, cat) for name in desc2names[desc]]
 
     if cat == nh.AMULET_CLASS:
         if desc == 'Amulet of Yendor':
@@ -1590,23 +1590,13 @@ def possibilities_from_glyph(i):
     assert 0, (obj_id, objects[obj_id])
 
 
-@functools.lru_cache(len(objects))
+@functools.lru_cache(len(objects) * 100)
 def from_name(name, category=None):
-    # category is for 'blank paper' identification
-    if name == 'blank paper':
-        if category == nh.SPBOOK_CLASS:
-            for o in objects:
-                if o is not None and o.name == name and o.descr == 'plain':
-                    return o
-            assert 0
-        if category == nh.SCROLL:
-            for o in objects:
-                if o is not None and o.name == name and o.descr == 'unlabeled':
-                    return o
-            assert 0
-        assert 0
+    ret = []
+    for i, o in enumerate(objects):
+        if o is not None and o.name == name and \
+                (category is None or ord(nh.objclass(i).oc_class) == category):
+            ret.append(o)
 
-    for o in objects:
-        if o is not None and o.name == name:
-            return o
-    assert 0, name
+    assert len(ret) == 1, (name, category, ret)
+    return ret[0]

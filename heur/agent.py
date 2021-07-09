@@ -1,12 +1,10 @@
 import contextlib
 import re
 from collections import namedtuple
-from functools import partial, wraps
-from itertools import chain
+from functools import partial
 
 import nle.nethack as nh
 import numpy as np
-import toolz
 from nle.nethack import actions as A
 
 import objects
@@ -15,6 +13,7 @@ from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from glyph import SS, MON, C
 from item import Item, Inventory
+from strategy import Strategy
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
@@ -79,126 +78,6 @@ class Level:
         self.corpse_age = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32) - 10000
         self.shop = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
         self.checked_item_pile = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
-
-
-@toolz.curry
-def debug_log(txt, fun, color=(255, 255, 255)):
-    @wraps(fun)
-    def wrapper(self, *args, **kwargs):
-        with self.env.debug_log(txt=txt, color=color):
-            return fun(self, *args, **kwargs)
-
-    return wrapper
-
-
-class Strategy:
-    @classmethod
-    def wrap(cls, func):
-        return lambda *a, **k: Strategy(wraps(func)(lambda: func(*a, **k)))
-
-    def __init__(self, strategy):
-        self.strategy = strategy
-
-    def run(self, agent=None):
-        gen = self.strategy()
-        if not next(gen):
-            return None
-        try:
-            next(gen)
-            assert 0
-        except StopIteration as e:
-            return e.value
-
-    def condition(self, condition):
-        def f(self=self, condition=condition):
-            if not condition():
-                yield False
-                assert 0
-            it = self.strategy()
-            yield next(it)
-            try:
-                next(it)
-                assert 0
-            except StopIteration as e:
-                return e.value
-
-        return Strategy(f)
-
-    def before(self, strategy):
-        def f(self=self, strategy=strategy):
-            yielded = False
-            r1, r2 = None, None
-
-            v1 = self.strategy()
-            if next(v1):
-                if not yielded:
-                    yielded = True
-                    yield True
-                try:
-                    next(v1)
-                    assert 0, v1
-                except StopIteration as e:
-                    r1 = e.value
-
-            v2 = strategy.strategy()
-            if next(v2):
-                if not yielded:
-                    yielded = True
-                    yield True
-                try:
-                    next(v2)
-                    assert 0, v2
-                except StopIteration as e:
-                    r2 = e.value
-
-            if not yielded:
-                yield False
-
-            return (r1, r2)
-
-        return Strategy(f)
-
-    def preempt(self, agent, strategies):
-        def f(self=self, agent=agent, strategies=strategies):
-            gen = self.strategy()
-            condition_passed = False
-            with agent.disallow_step_calling():
-                condition_passed = next(gen)
-
-            if not condition_passed:
-                yield False
-            yield True
-
-            assert not agent._no_step_calls
-
-            return agent.preempt(strategies, self)
-
-        return Strategy(f)
-
-    def repeat(self):
-        def f(self=self):
-            yielded = False
-            val = None
-            while 1:
-                gen = self.strategy()
-                if not next(gen):
-                    if not yielded:
-                        yield False
-                    return
-
-                if not yielded:
-                    yielded = True
-                    yield True
-
-                try:
-                    next(gen)
-                    assert 0, gen
-                except StopIteration as e:
-                    val = e.value
-            return val
-
-        return Strategy(f)
-
 
 
 class Agent:
@@ -340,7 +219,7 @@ class Agent:
         inactivity_counter = 0
         last_step = 0
 
-        is_first = True
+        call_update = True
 
         while 1:
             assert inactivity_counter < 100
@@ -352,11 +231,11 @@ class Agent:
 
             iterator = None
             try:
-                if is_first:
-                    is_first = False
-                    self.call_update_functions()
-
                 with self.add_on_update(list(id2fun.values())):
+                    if call_update:
+                        call_update = False
+                        self.call_update_functions()
+
                     if isinstance(default, Strategy):
                         val = default.run()
                     else:
@@ -545,16 +424,16 @@ class Agent:
             self._previous_glyphs = self.last_observation['glyphs']
 
             # TODO: all statues
-            mask = self.glyphs_mask_in(G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED)
+            mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED)
             level.walkable[mask] = True
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
 
-            mask = self.glyphs_mask_in(G.WALL, G.DOOR_CLOSED)
+            mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED)
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
 
-            mask = self.glyphs_mask_in(G.MONS, G.PETS, G.BODIES, G.OBJECTS)
+            mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS)
             level.seen[mask] = True
             level.walkable[mask] = True
 
@@ -570,10 +449,6 @@ class Agent:
         if key not in self.levels:
             self.levels[key] = Level()
         return self.levels[key]
-
-    def glyphs_mask_in(self, *gset):
-        gset = list(chain(*gset))
-        return np.isin(self.glyphs, gset)
 
     @staticmethod
     def calc_direction(from_y, from_x, to_y, to_x, allow_nonunit_distance=False):
@@ -739,11 +614,11 @@ class Agent:
 
         level = self.current_level()
 
-        walkable = level.walkable & ~self.glyphs_mask_in(G.SHOPKEEPER, G.BOULDER)
+        walkable = level.walkable & ~utils.isin(self.glyphs, G.SHOPKEEPER, G.BOULDER)
 
         dis = utils.bfs(y, x,
                         walkable=walkable,
-                        walkable_diagonally=walkable & ~np.isin(level.objects, list(G.DOORS)) & (level.objects != -1))
+                        walkable_diagonally=walkable & ~utils.isin(level.objects, G.DOORS) & (level.objects != -1))
 
         if y == self.blstats.y and x == self.blstats.x:
             self.last_bfs_dis = dis
@@ -812,7 +687,7 @@ class Agent:
 
     ######## LOW-LEVEL STRATEGIES
 
-    @debug_log('ranged_stance1')
+    @utils.debug_log('ranged_stance1')
     def ranged_stance1(self):
         while True:
             launchers = [i for i in self.inventory.items if i.is_launcher()]
@@ -835,7 +710,7 @@ class Agent:
                 self.inventory.wield(launcher)
                 continue
 
-            mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
+            mask = utils.isin(self.glyphs, G.MONS - G.SHOPKEEPER)
             mask[self.blstats.y, self.blstats.x] = 0
             for y, x in zip(*mask.nonzero()):
                 if (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
@@ -848,12 +723,12 @@ class Agent:
             else:
                 return False
 
+    @utils.debug_log('fight1')
     @Strategy.wrap
-    @debug_log('fight1')
     def fight1(self):
         yielded = False
         while 1:
-            mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
+            mask = utils.isin(self.glyphs, G.MONS - G.SHOPKEEPER)
             mask[self.blstats.y, self.blstats.x] = 0
             if not mask.any():
                 if not yielded:
@@ -882,7 +757,7 @@ class Agent:
 
             def is_monster_next_to_me():
                 dis = self.bfs()
-                mask = self.glyphs_mask_in(G.MONS - G.SHOPKEEPER)
+                mask = utils.isin(self.glyphs, G.MONS - G.SHOPKEEPER)
                 mask[self.blstats.y, self.blstats.x] = 0
                 mask &= dis != -1
                 if not mask.any():
@@ -926,13 +801,13 @@ class Agent:
                 if nh.glyph_is_body(self.glyphs[y, x]) and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == mon:
                     self.current_level().corpse_age[y, x] = self.blstats.time
 
+    @utils.debug_log('eat1')
     @Strategy.wrap
-    @debug_log('eat1')
     def eat1(self):
         level = self.current_level()
 
-        mask = self.glyphs_mask_in(G.BODIES) & (self.blstats.time - level.corpse_age <= 100)
-        mask |= self.glyphs_mask_in(G.FOOD_OBJECTS)
+        mask = utils.isin(self.glyphs, G.BODIES) & (self.blstats.time - level.corpse_age <= 100)
+        mask |= utils.isin(self.glyphs, G.FOOD_OBJECTS)
         mask &= ~level.shop
         if not mask.any():
             yield False
@@ -970,7 +845,7 @@ class Agent:
         if not self.current_level().shop[self.blstats.y, self.blstats.x]:
             self.eat()  # TODO: what
 
-    @debug_log('explore1')
+    @utils.debug_log('explore1')
     def explore1(self, search_prio_limit=0):
         # TODO: refactor entire function
 
@@ -998,9 +873,9 @@ class Agent:
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     if dy != 0 or dx != 0:
-                        to_visit |= utils.translate(~level.seen & self.glyphs_mask_in(G.STONE), dy, dx)
+                        to_visit |= utils.translate(~level.seen & utils.isin(self.glyphs, G.STONE), dy, dx)
                         if dx == 0 or dy == 0:
-                            to_visit |= utils.translate(self.glyphs_mask_in(G.DOOR_CLOSED), dy, dx)
+                            to_visit |= utils.translate(utils.isin(self.glyphs, G.DOOR_CLOSED), dy, dx)
             return to_visit
 
         def to_search_func(prio_limit=0, return_prio=False):
@@ -1010,8 +885,8 @@ class Agent:
             prio = np.zeros((C.SIZE_Y, C.SIZE_X), np.float32)
             prio[:] = -1
             prio -= level.search_count ** 2 * 2
-            is_on_corridor = np.isin(level.objects, list(G.CORRIDOR))
-            is_on_door = np.isin(level.objects, list(G.DOORS))
+            is_on_corridor = utils.isin(level.objects, G.CORRIDOR)
+            is_on_door = utils.isin(level.objects, G.DOORS)
 
             stones = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
             walls = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
@@ -1019,8 +894,8 @@ class Agent:
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     if dy != 0 or dx != 0:
-                        stones += np.isin(utils.translate(level.objects, dy, dx), list(G.STONE))
-                        walls += np.isin(utils.translate(level.objects, dy, dx), list(G.WALL))
+                        stones += utils.isin(utils.translate(level.objects, dy, dx), G.STONE)
+                        walls += utils.isin(utils.translate(level.objects, dy, dx), G.WALL)
 
             prio += (is_on_door & (stones > 3)) * 250
             prio += (np.stack([utils.translate(level.walkable, y, x).astype(np.int32)
@@ -1101,99 +976,16 @@ class Agent:
 
             assert search_prio_limit is not None
 
-        @Strategy.wrap
-        def check_item_pile():
-            if not (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) &
-                    ~self.current_level().checked_item_pile).any():
-                yield False
-            yield True
-
-            mask = (((self.last_observation['specials'] & nh.MG_OBJPILE) > 0) & (self.bfs() != -1) &
-                    ~self.current_level().checked_item_pile)
-
-            dis = self.bfs()
-            nonzero_y, nonzero_x = (mask & (dis == dis[mask].min())).nonzero()
-            i = self.rng.randint(len(nonzero_y))
-            target_y, target_x = nonzero_y[i], nonzero_x[i]
-
-            with self.env.debug_tiles(mask, color=(255, 0, 0, 128)):
-                 # TODO: search for traps before stepping in
-                 self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
-
-            self.current_level().checked_item_pile[target_y, target_x] = True
-            take_item(only_below_me=True).run()
-
-        @Strategy.wrap
-        def take_item(only_below_me=False):
-            if self.character.role == Character.MONK:
-                yield False
-
-            current_weapon = self.get_best_weapon()
-            if current_weapon is None:
-                current_weapon_dps = -2
-                current_weapon = 'fists'
-            else:
-                current_weapon_dps = current_weapon.get_dps(large_monster=False)
-
-            current_weapon_dps *= 1.3  # take only relatively better items than yours
-
-            if only_below_me:
-                best_item = None
-                best_dps = current_weapon_dps
-                for item in self.inventory.items_below_me:
-                    if item.is_weapon():
-                        dps = item.get_dps(large_monster=False)
-                        if dps > best_dps:
-                            best_dps = dps
-                            best_item = item
-                if best_item is not None:
-                    yield True
-                    self.inventory.pickup(best_item)
-                    return
-                yield False
-
-
-            mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (
-                    self.bfs() != -1) & self.glyphs_mask_in(G.WEAPONS)
-            nonzero_y, nonzero_x = mask.nonzero()
-
-            best_item = None
-            best_item_dps = None
-            for y, x in zip(nonzero_y, nonzero_x):
-                glyph = self.glyphs[y, x]
-                dps = Item([objects.possibilities_from_glyph(self.glyphs[y, x])[0]]).get_dps(large_monster=False)
-                if dps > current_weapon_dps:
-                    best_item_dps = dps
-                    best_item = (y, x)
-
-            if best_item is None:
-                yield False
-
-            yield True
-
-            with self.env.debug_log(f'going for {Item([objects.possibilities_from_glyph(self.glyphs[y, x])[0]])}'):
-                target_y, target_x = best_item
-                self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
-                if self.current_level().shop[target_y, target_x]:
-                    return
-                if self.inventory.items_below_me:
-                    self.inventory.pickup(self.inventory.items_below_me)
-
-                self.wield_best_weapon()
-                if self.blstats.carrying_capacity != 0:
-                    print(self.blstats.carrying_capacity)
-
         return open_visit_search(search_prio_limit).preempt(self, [
-            check_item_pile(),
-            take_item()
+            self.inventory.gather_items(),
         ])
 
+    @utils.debug_log('move_down')
     @Strategy.wrap
-    @debug_log('move_down')
     def move_down(self):
         level = self.current_level()
 
-        mask = np.isin(level.objects, list(G.STAIR_DOWN))
+        mask = utils.isin(level.objects, G.STAIR_DOWN)
         if not mask.any():
             yield False
 
@@ -1217,8 +1009,8 @@ class Agent:
                 break
             self.direction('>')
 
+    @utils.debug_log('emergency_strategy')
     @Strategy.wrap
-    @debug_log('emergency_strategy')
     def emergency_strategy(self):
         # TODO: to refactor
         if (
@@ -1252,7 +1044,7 @@ class Agent:
 
     ######## HIGH-LEVEL STRATEGIES
 
-    @debug_log('main_strategy')
+    @utils.debug_log('main_strategy')
     def main_strategy(self):
         @Strategy.wrap
         def eat_from_inventory():

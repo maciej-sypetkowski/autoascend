@@ -1,5 +1,11 @@
+from itertools import chain
+
 import numba as nb
 import numpy as np
+import toolz
+from functools import partial, wraps
+
+from strategy import Strategy
 
 
 @nb.njit(cache=True)
@@ -54,3 +60,36 @@ def translate(array, y_offset, x_offset):
     sy, sx = max(y_offset, 0), max(x_offset, 0)
     ret[sy: sy + array.shape[0], sx: sx + array.shape[1]] = array
     return ret
+
+
+def isin(array, *elems):
+    elems = list(chain(*elems))
+    return np.isin(array, elems)
+
+
+@toolz.curry
+def debug_log(txt, fun, color=(255, 255, 255)):
+    @wraps(fun)
+    def wrapper(self, *args, **kwargs):
+        # TODO: make it cleaner
+        if type(self).__name__ != 'Agent':
+            env = self.agent.env
+        else:
+            env = self.env
+
+        with env.debug_log(txt=txt, color=color):
+            ret = fun(self, *args, **kwargs)
+            if isinstance(ret, Strategy):
+                def f(strategy=ret.strategy, *a, **k):
+                    it = strategy(*a, **k)
+                    yield next(it)
+                    with env.debug_log(txt=txt, color=color):
+                        try:
+                            next(it)
+                            assert 0
+                        except StopIteration as e:
+                            return e.value
+                ret.strategy = partial(f, ret.strategy)
+            return ret
+
+    return wrapper

@@ -7,9 +7,11 @@ import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
-from glyph import WEA
+import objects as O
+import utils
 from exceptions import AgentPanic
-import objects
+from glyph import WEA
+from strategy import Strategy
 
 
 class Item:
@@ -31,7 +33,7 @@ class Item:
         self.at_ready = at_ready
         self.text = text
 
-        self.category = ord(nh.objclass(objects.objects.index(self.objs[0])).oc_class)
+        self.category = ord(nh.objclass(O.objects.index(self.objs[0])).oc_class)
         assert glyph is None or ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category
 
     def is_ambiguous(self):
@@ -125,6 +127,11 @@ class ItemManager:
         # TODO: pass glyph if not on hallu
         return Item(*self.parse_text(text, category, None))
 
+    def possible_objects_from_glyph(self, glyph):
+        # TODO: take into account identified objects
+        assert nh.glyph_is_object(glyph)
+        return O.possibilities_from_glyph(glyph)
+
     @staticmethod
     @functools.lru_cache(1024 * 256)
     def parse_text(text, category=None, glyph=None):
@@ -142,7 +149,7 @@ class ItemManager:
             r'( (cursed|uncursed|blessed))?'
             r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used))*'
             r'( ([+-]\d+))? '
-            r'([a-zA-z0-9- ]+)'
+            r'([a-zA-z0-9-! ]+)'
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
             r'( \(([a-zA-Z0-9; ]+)\))?'
             r'( \((for sale|unpaid), (\d+) ?[a-zA-Z- ]+\))?'
@@ -325,9 +332,9 @@ class ItemManager:
         if obj_ids:
             assert len(obj_ids) == 1, text
             obj_id = list(obj_ids)[0]
-            objs = [objects.objects[obj_id]]
+            objs = [O.objects[obj_id]]
             if glyph is not None:
-                assert objs[0] in objects.possibilities_from_glyph(glyph), (objs[0], objects.possibilities_from_glyph(glyph))
+                assert objs[0] in O.possibilities_from_glyph(glyph), (objs[0], O.possibilities_from_glyph(glyph))
         else:
             obj_id = list(appearance_ids)[0]
             if glyph is not None:
@@ -335,8 +342,8 @@ class ItemManager:
             else:
                 if len(appearance_ids) == 1:
                     glyph = obj_id + nh.GLYPH_OBJ_OFF
-            objs = objects.possibilities_from_glyph(obj_id + nh.GLYPH_OBJ_OFF)
-            assert all(map(lambda i: objects.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF) == objs, appearance_ids)), text
+            objs = O.possibilities_from_glyph(obj_id + nh.GLYPH_OBJ_OFF)
+            assert all(map(lambda i: O.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF) == objs, appearance_ids)), text
 
         assert category is None or category == ord(nh.objclass(obj_id).oc_class), (text, category, ord(nh.objclass(obj_id).oc_class))
         return objs, glyph, count, status, modifier, equipped, at_ready, text
@@ -354,6 +361,8 @@ class Inventory:
         self._stop_updating = False
         self.items_below_me = None
         self.letters_below_me = None
+        self._interesting_item_glyphs = []
+        self._interesting_items = []
 
     def on_panic(self):
         self.items_below_me = None
@@ -540,6 +549,125 @@ class Inventory:
         return True
 
 
+    ######## STRATEGIES helpers
+
+    def update_interesting_items(self):
+        # TODO
+        if self.agent.character.role == self.agent.character.RANGER:
+            self._interesting_item_glyphs = np.array(list(range(1, 6))) + nh.GLYPH_OBJ_OFF
+        else:
+            self._interesting_item_glyphs = []
+
+        self._interesting_items = set()
+        for glyph in self._interesting_item_glyphs:
+            for object in self.item_manager.possible_objects_from_glyph(glyph):
+                self._interesting_items.add(object)
+
+        #if self.character.role == Character.MONK:
+        #    yield False
+
+        #current_weapon = self.get_best_weapon()
+        #if current_weapon is None:
+        #    current_weapon_dps = -2
+        #    current_weapon = 'fists'
+        #else:
+        #    current_weapon_dps = current_weapon.get_dps(large_monster=False)
+
+        #current_weapon_dps *= 1.3  # take only relatively better items than yours
+
+        #if only_below_me:
+        #    best_item = None
+        #    best_dps = current_weapon_dps
+        #    for item in self.inventory.items_below_me:
+        #        if item.is_weapon():
+        #            dps = item.get_dps(large_monster=False)
+        #            if dps > best_dps:
+        #                best_dps = dps
+        #                best_item = item
+        #    if best_item is not None:
+        #        yield True
+        #        self.inventory.pickup(best_item)
+        #        return
+        #    yield False
+
+
+        #mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (
+        #        self.bfs() != -1) & utils.isin(self.glyphs, G.WEAPONS)
+        #nonzero_y, nonzero_x = mask.nonzero()
+
+        #best_item = None
+        #best_item_dps = None
+        #for y, x in zip(nonzero_y, nonzero_x):
+        #    glyph = self.glyphs[y, x]
+        #    dps = Item([O.possibilities_from_glyph(self.glyphs[y, x])[0]]).get_dps(large_monster=False)
+        #    if dps > current_weapon_dps:
+        #        best_item_dps = dps
+        #        best_item = (y, x)
+
+        #if best_item is None:
+        #    yield False
+
+        #yield True
+
+        #with self.env.debug_log(f'going for {Item([O.possibilities_from_glyph(self.glyphs[y, x])[0]])}'):
+        #    target_y, target_x = best_item
+        #    self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
+        #    if self.current_level().shop[target_y, target_x]:
+        #        return
+        #    if self.inventory.items_below_me:
+        #        self.inventory.pickup(self.inventory.items_below_me)
+
+        #    self.wield_best_weapon()
+        #    if self.blstats.carrying_capacity != 0:
+        #        print(self.blstats.carrying_capacity)
+
+
     ######## LOW-LEVEL STRATEGIES
 
-    # TODO: move item taking strategies
+    def gather_items(self):
+        return self.pickup_items_below_me().before(
+               self.go_to_item().preempt(self.agent, [
+                   self.pickup_items_below_me()
+               ])).repeat()
+
+    @utils.debug_log('inventory.go_to_item')
+    @Strategy.wrap
+    def go_to_item(self):
+        mask = ((self.agent.last_observation['specials'] & nh.MG_OBJPILE) > 0) & \
+               ~self.agent.current_level().checked_item_pile
+        mask |= utils.isin(self.agent.glyphs, self._interesting_item_glyphs)
+
+        if not mask.any():
+            yield False
+
+        dis = self.agent.bfs()
+        mask &= dis != -1
+        if not mask.any():
+            yield False
+        yield True
+
+        nonzero_y, nonzero_x = (mask & (dis == dis[mask].min())).nonzero()
+        i = self.agent.rng.randint(len(nonzero_y))
+        target_y, target_x = nonzero_y[i], nonzero_x[i]
+
+        with self.agent.env.debug_tiles(mask, color=(255, 0, 0, 128)):
+            # TODO: search for traps before stepping in
+            self.agent.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
+
+    @utils.debug_log('inventory.pickup_items_below_me')
+    @Strategy.wrap
+    def pickup_items_below_me(self):
+        if len(self.items_below_me) > 1:
+            self.agent.current_level().checked_item_pile[self.agent.blstats.y, self.agent.blstats.x] = True
+
+        self.update_interesting_items() # TODO: optimize (do it less frequently)
+
+        to_pickup = []
+        for item in self.items_below_me:
+            if item.glyph is not None and item.glyph in self._interesting_item_glyphs:
+                to_pickup.append(item)
+            elif len(set(item.objs).intersection(self._interesting_items)) == len(item.objs):
+                to_pickup.append(item)
+
+        yield bool(to_pickup)
+        self.pickup(to_pickup)
