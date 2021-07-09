@@ -9,6 +9,7 @@ from nle.nethack import actions as A
 
 import objects as O
 import utils
+from character import Character
 from exceptions import AgentPanic
 from glyph import WEA
 from strategy import Strategy
@@ -33,7 +34,7 @@ class Item:
         self.at_ready = at_ready
         self.text = text
 
-        self.category = ord(nh.objclass(O.objects.index(self.objs[0])).oc_class)
+        self.category = O.get_category(self.objs[0])
         assert glyph is None or ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category
 
     def is_ambiguous(self):
@@ -118,6 +119,15 @@ class Item:
     def __repr__(self):
         return str(self)
 
+    ######## ARMOR
+    def is_armor(self):
+        return self.category == nh.ARMOR_CLASS
+
+    def get_ac(self):
+        assert self.is_armor()
+        return self.object().ac + (self.modifier if self.modifier is not None else 0)
+
+
 
 class ItemManager:
     def __init__(self, agent):
@@ -161,8 +171,7 @@ class ItemManager:
         count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, shop_price = matches[0]
         # TODO: effects, uses
 
-        if info in {'weapon in paw', 'weapon in hand', 'weapon in paws', 'weapon in hands', 'being worn',
-                    'being worn; slippery', 'wielded'}:
+        if info in {'being worn', 'being worn; slippery', 'wielded'} or info.startswith('weapon in '):
             equipped = True
             at_ready = False
         elif info in {'at the ready', 'in quiver', 'in quiver pouch', 'lit'}:
@@ -457,12 +466,53 @@ class Inventory:
             assert 'What do you want to wield' in self.agent.message, self.agent.message
             self.agent.type_text(letter)
             if 'You cannot wield a two-handed sword while wearing a shield.' in self.agent.message or \
+                    'You cannot wield a two-handed weapon while wearing a shield.' in self.agent.message or \
                     ' welded to your hand' in self.agent.message:
                 # TODO: handle it better
                 return False
             assert re.search(r'(You secure the tether\.  )?(^[a-zA-z] - |welds?( itself| themselves| ) to|You are already wielding that|'
                              r'You are already empty handed)', \
                              self.agent.message), self.agent.message
+
+        return True
+
+    def wear(self, item):
+        assert item is not None
+        letter = self.get_letter(item)
+
+        if item.equipped:
+            return True
+
+        for i in self.items:
+            assert not isinstance(i, O.Armor) or i.sub != item.sub or not i.equipped, (i, item)
+
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.WEAR)
+            assert 'What do you want to wear?' in self.agent.message, self.agent.message
+            self.agent.type_text(letter)
+            assert 'You finish your dressing maneuver.' in self.agent.message or \
+                   'You are now wearing ' in self.agent.message, self.agent.message
+
+        return True
+
+    def takeoff(self, item):
+        assert item is not None and item.equipped, item
+        letter = self.get_letter(item)
+        assert item.status != Item.CURSED, item
+
+        equipped_armors = [i for i in self.items if i.is_armor() and i.equipped]
+        assert item in equipped_armors
+
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.TAKEOFF)
+
+            if len(equipped_armors) > 1:
+                assert 'What do you want to take off?' in self.agent.message, self.agent.message
+                self.agent.type_text(letter)
+            if 'It is cursed.' in self.agent.message or 'They are cursed.' in self.agent.message:
+                return False
+            assert 'You finish taking off ' in self.agent.message or \
+                   'You were wearing ' in self.agent.message, self.agent.message
 
         return True
 
@@ -551,84 +601,120 @@ class Inventory:
 
     ######## STRATEGIES helpers
 
+    def get_best_weapon(self, return_dps=False):
+        # select the best
+        best_item = None
+        best_dps = None
+        for item in self.items:
+            if item.is_weapon():
+                dps = item.get_dps(large_monster=False)  # TODO: what about monster size
+                if best_dps is None or best_dps < dps:
+                    best_dps = dps
+                    best_item = item
+        if return_dps:
+            return best_item, best_dps
+        return best_item
+
+
+    def get_best_armorset(self, return_ac=False):
+        best_items = [None] * O.ARM_NUM
+        best_ac = [None] * O.ARM_NUM
+        for item in self.items:
+            if item.is_armor() and item.is_ambiguous():
+                slot = item.object().sub
+                ac = item.get_ac()
+                if best_ac[slot] is None or best_ac[slot] < ac:
+                    best_ac[slot] = ac
+                    best_items[slot] = item
+        if return_ac:
+            return best_items, best_ac
+        return best_items
+
+
     def update_interesting_items(self):
         # TODO
-        if self.agent.character.role == self.agent.character.RANGER:
-            self._interesting_item_glyphs = np.array(list(range(1, 6))) + nh.GLYPH_OBJ_OFF
+        self._interesting_items = set()
+        if self.agent.character.role == Character.RANGER:
+            self._interesting_item_glyphs = list(range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + 6))
         else:
             self._interesting_item_glyphs = []
 
-        self._interesting_items = set()
-        for glyph in self._interesting_item_glyphs:
-            for object in self.item_manager.possible_objects_from_glyph(glyph):
-                self._interesting_items.add(object)
+        if self.agent.character.role != Character.MONK:
+            best_weapon, best_weapon_dps = self.get_best_weapon(return_dps=True)
+            if best_weapon_dps is None:
+                best_weapon_dps = 0
+            best_weapon_dps *= 1.15  # take only relatively better items than yours
 
-        #if self.character.role == Character.MONK:
-        #    yield False
+            best_armorset, best_armorset_ac = self.get_best_armorset(return_ac=True)
 
-        #current_weapon = self.get_best_weapon()
-        #if current_weapon is None:
-        #    current_weapon_dps = -2
-        #    current_weapon = 'fists'
-        #else:
-        #    current_weapon_dps = current_weapon.get_dps(large_monster=False)
+            for glyph in range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + nh.NUM_OBJECTS - 6):
+                obj = O.objects[glyph - nh.GLYPH_OBJ_OFF]
+                item = Item(self.item_manager.possible_objects_from_glyph(glyph))
+                if not item.is_ambiguous():
+                    continue
 
-        #current_weapon_dps *= 1.3  # take only relatively better items than yours
-
-        #if only_below_me:
-        #    best_item = None
-        #    best_dps = current_weapon_dps
-        #    for item in self.inventory.items_below_me:
-        #        if item.is_weapon():
-        #            dps = item.get_dps(large_monster=False)
-        #            if dps > best_dps:
-        #                best_dps = dps
-        #                best_item = item
-        #    if best_item is not None:
-        #        yield True
-        #        self.inventory.pickup(best_item)
-        #        return
-        #    yield False
-
-
-        #mask = ((self.last_observation['specials'] & nh.MG_OBJPILE) == 0) & ~self.current_level().shop & (
-        #        self.bfs() != -1) & utils.isin(self.glyphs, G.WEAPONS)
-        #nonzero_y, nonzero_x = mask.nonzero()
-
-        #best_item = None
-        #best_item_dps = None
-        #for y, x in zip(nonzero_y, nonzero_x):
-        #    glyph = self.glyphs[y, x]
-        #    dps = Item([O.possibilities_from_glyph(self.glyphs[y, x])[0]]).get_dps(large_monster=False)
-        #    if dps > current_weapon_dps:
-        #        best_item_dps = dps
-        #        best_item = (y, x)
-
-        #if best_item is None:
-        #    yield False
-
-        #yield True
-
-        #with self.env.debug_log(f'going for {Item([O.possibilities_from_glyph(self.glyphs[y, x])[0]])}'):
-        #    target_y, target_x = best_item
-        #    self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
-        #    if self.current_level().shop[target_y, target_x]:
-        #        return
-        #    if self.inventory.items_below_me:
-        #        self.inventory.pickup(self.inventory.items_below_me)
-
-        #    self.wield_best_weapon()
-        #    if self.blstats.carrying_capacity != 0:
-        #        print(self.blstats.carrying_capacity)
+                if isinstance(obj, O.Weapon): # TODO: WepTool
+                    dps = item.get_dps(large_monster=False)
+                    if dps > best_weapon_dps:
+                        self._interesting_item_glyphs.append(glyph)
+                        self._interesting_items.add(obj)
+                elif isinstance(obj, O.Armor):
+                    ac = item.get_ac()
+                    my_ac = best_armorset_ac[item.object().sub]
+                    if my_ac is None or my_ac < ac:
+                        self._interesting_item_glyphs.append(glyph)
+                        self._interesting_items.add(obj)
 
 
     ######## LOW-LEVEL STRATEGIES
 
     def gather_items(self):
         return self.pickup_items_below_me().before(
+               self.wear_best_stuff()).before(
                self.go_to_item().preempt(self.agent, [
                    self.pickup_items_below_me()
                ])).repeat()
+
+    @utils.debug_log('inventory.wear_best_stuff')
+    @Strategy.wrap
+    def wear_best_stuff(self):
+        yielded = False
+        while 1:
+            best_armorset = self.get_best_armorset()
+
+            is_equipped = [any(map(lambda i: i is not None and i.is_armor() and i.objs[0].sub == slot, self.items)) for slot in range(O.ARM_NUM)]
+            wants_to_wear = [best_armorset[slot] is not None and not best_armorset[slot].equipped for slot in range(O.ARM_NUM)]
+
+            for slot in range(O.ARM_NUM):
+                if wants_to_wear[slot]:
+                    if slot == O.ARM_SHIRT and (is_equipped[O.ARM_SUIT] or is_equipped[O.ARM_CLOAK]):
+                        continue
+                    if slot == O.ARM_SUIT and is_equipped[O.ARM_CLOAK]:
+                        continue
+
+                    worn_item = None
+                    for i in self.items:
+                        if i.is_armor() and i.objs[0].sub == slot and i.equipped:
+                            worn_item = i
+                            break
+                    if worn_item is not None and worn_item.status == Item.CURSED:
+                        continue
+
+                    if not yielded:
+                        yielded = True
+                        yield True
+
+                    if worn_item is not None:
+                        self.takeoff(worn_item)
+                        break
+                    self.wear(best_armorset[slot])
+                    break
+            else:
+                break
+
+        if not yielded:
+            yield False
+
 
     @utils.debug_log('inventory.go_to_item')
     @Strategy.wrap

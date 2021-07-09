@@ -469,22 +469,11 @@ class Agent:
 
         return ret
 
-    def get_best_weapon(self):
-        # select the best
-        best_item = None
-        best_dps = None
-        for item in self.inventory.items:
-            if item.is_weapon():
-                dps = item.get_dps(large_monster=False)  # TODO: what about monster size
-                if best_dps is None or best_dps < dps:
-                    best_dps = dps
-                    best_item = item
-        return best_item
-
     ######## TRIVIAL ACTIONS
 
     def wield_best_weapon(self):
-        item = self.get_best_weapon()
+        # TODO: move to inventory
+        item = self.inventory.get_best_weapon()
         if item is None:
             return False
         if not item.equipped:

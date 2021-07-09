@@ -122,6 +122,8 @@ ARM_BOOTS  = 4#,
 ARM_CLOAK  = 5#,
 ARM_SHIRT  = 6#
 
+ARM_NUM = 7
+
 NODIR = 1     #/* for wands/spells: non-directional */
 IMMEDIATE = 2 #/*               directional */
 RAY = 3       #/*               zap beams */
@@ -1600,3 +1602,8 @@ def from_name(name, category=None):
 
     assert len(ret) == 1, (name, category, ret)
     return ret[0]
+
+
+@functools.lru_cache(len(objects))
+def get_category(obj):
+    return ord(nh.objclass(objects.index(obj)).oc_class)

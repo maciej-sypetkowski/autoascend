@@ -246,7 +246,7 @@ class EnvWrapper:
         }
 
 
-def single_simulation(seed, timeout=720, step_limit=None):
+def single_simulation(seed, timeout=180, step_limit=None):
     start_time = time.time()
     env = EnvWrapper(gym.make('NetHackChallenge-v0'), step_limit=step_limit)
     env.env.seed(seed, seed)
@@ -257,7 +257,7 @@ def single_simulation(seed, timeout=720, step_limit=None):
         pool = multiprocessing.pool.ThreadPool(processes=1)
     try:
         if timeout is not None:
-            pool.apply_async(agent.main).get(60)
+            pool.apply_async(agent.main).get(timeout)
         else:
             agent.main()
     except multiprocessing.context.TimeoutError:
