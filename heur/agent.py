@@ -95,7 +95,7 @@ class Agent:
         self.popup = []
 
         self.inventory = Inventory(self)
-        self.character = 'x-x-x-x'
+        self.character = Character(self)
 
         self.last_bfs_dis = None
         self.last_bfs_step = None
@@ -492,12 +492,6 @@ class Agent:
             return True
         return False
 
-    def parse_character(self):
-        with self.atom_operation():
-            self.step(A.Command.ATTRIBUTES)
-            text = ' '.join(self.popup)
-            self.character = Character.parse(text)
-
     def type_text(self, text):
         with self.atom_operation():
             for char in text:
@@ -746,7 +740,7 @@ class Agent:
             if not yielded:
                 yielded = True
                 yield True
-
+                self.character.parse_enhance_view()
 
             mask &= dis == dis[mask].min()
             closests_y, closests_x = mask.nonzero()
@@ -1078,7 +1072,8 @@ class Agent:
 
     def main(self):
         self.update({k: v.copy() for k, v in self.env.reset().items()})
-        self.parse_character()
+        self.character.parse()
+        self.character.parse_enhance_view()
 
         try:
             self.step(A.Command.AUTOPICKUP)

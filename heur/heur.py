@@ -240,7 +240,7 @@ class EnvWrapper:
             'turns': self.agent.blstats.time,
             'level_num': len(self.agent.levels),
             'panic_num': len(self.agent.all_panics),
-            'character': str(self.agent.character),
+            'character': str(self.agent.character).split()[0],
             'end_reason': self.end_reason,
             'seed': self.env.get_seeds(),
         }
