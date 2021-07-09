@@ -18,13 +18,12 @@ class Item:
     UNCURSED = 2
     BLESSED = 3
 
-    def __init__(self, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False, text=None):
-        # glyphs is a list of possible glyphs for this item
-        assert isinstance(glyphs, list)
-        assert all(map(nh.glyph_is_object, glyphs))
-        assert len(glyphs)
+    def __init__(self, objs, glyph=None, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False, text=None):
+        assert isinstance(objs, list) and len(objs) >= 1
+        assert glyph is None or nh.glyph_is_object(glyph)
 
-        self.glyphs = glyphs
+        self.objs = objs
+        self.glyph = glyph
         self.count = count
         self.status = status
         self.modifier = modifier
@@ -32,24 +31,25 @@ class Item:
         self.at_ready = at_ready
         self.text = text
 
-        self.category = ord(nh.objclass(nh.glyph_to_obj(self.glyphs[0])).oc_class)
+        self.category = ord(nh.objclass(objects.objects.index(self.objs[0])).oc_class)
+        assert glyph is None or ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category
 
-        assert all(map(lambda glyph: ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category, self.glyphs))
+    def is_ambiguous(self):
+        return len(self.objs) == 1, self.objs
 
-    def base_cost(self):
-        assert len(self.glyphs) == 1, 'TODO: what in this case?'
-        return nh.objclass(nh.glyph_to_obj(self.glyphs[0])).oc_cost
+    def object(self):
+        assert self.is_ambiguous()
+        return self.objs[0]
 
     ######## WEAPON
 
     def is_weapon(self):
-        assert self.category != nh.WEAPON_CLASS or len(self.glyphs) == 1, self.glyphs
         return self.category == nh.WEAPON_CLASS
 
     def get_dps(self, large_monster):
         assert self.is_weapon()
 
-        weapon = objects.weapon_from_glyph(self.glyphs[0])
+        weapon = self.object()
         dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
 
         # TODO: take into account things from:
@@ -72,8 +72,7 @@ class Item:
         if not self.is_weapon():
             return False
 
-        return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
-               ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
+        return self.object().name in ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
 
     def is_fired_projectile(self, launcher=None):
         if not self.is_weapon():
@@ -82,18 +81,17 @@ class Item:
         arrows = ['arrow', 'elven arrow', 'orcish arrow', 'silver arrow', 'ya']
 
         if launcher is None:
-            return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
-                   arrows + ['crossbow bolt']
+            return self.object().name in (arrows + ['crossbow bolt']) # TODO: sling ammo
         else:
-            launcher_name = nh.objdescr.from_idx(nh.glyph_to_obj(launcher.glyphs[0])).oc_name
+            launcher_name = launcher.object().name
             if launcher_name == 'crossbow':
-                return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name == 'crossbow bolt'
+                return self.object().name == 'crossbow bolt'
             elif launcher_name == 'sling':
                 # TODO: sling ammo
                 return False
             else:  # any bow
-                assert launcher_name in ['bow', 'elven bow', 'orcish bow', 'yumi']
-                return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in arrows
+                assert launcher_name in ['bow', 'elven bow', 'orcish bow', 'yumi'], launcher_name
+                return self.object().name in arrows
 
     def is_thrown_projectile(self):
         if not self.is_weapon():
@@ -101,18 +99,18 @@ class Item:
 
         # TODO: boomerang
         # TODO: aklys, Mjollnir
-        return nh.objdescr.from_idx(nh.glyph_to_obj(self.glyphs[0])).oc_name in \
+        return self.object().name in \
                ['orcish dagger', 'dagger silver', 'athame dagger', 'elven dagger',
                 'worm tooth', 'knife', 'stiletto', 'scalpel', 'crysknife',
                 'dart', 'shuriken']
 
     def __str__(self):
-        if self.text is not None:
-            return self.text
+        #if self.text is not None:
+        #    return self.text
         return (f'{self.count}_'
                 f'{self.status if self.status is not None else ""}_'
                 f'{self.modifier if self.modifier is not None else ""}_'
-                f'{",".join([nh.objdescr.from_idx(nh.glyph_to_obj(glyph)).oc_name for glyph in self.glyphs])}'
+                f'{",".join(list(map(lambda x: x.name, self.objs)))}'
                 )
 
     def __repr__(self):
@@ -124,16 +122,12 @@ class ItemManager:
         self.agent = agent
 
     def get_item_from_text(self, text, category=None, glyph=None):
-        return Item(*self.parse_text(text, category, glyph))
+        # TODO: pass glyph if not on hallu
+        return Item(*self.parse_text(text, category, None))
 
     @staticmethod
     @functools.lru_cache(1024 * 256)
     def parse_text(text, category=None, glyph=None):
-        # TODO: there are some problems with 'inv_glyphs' and the environment gives incorrect inventory glyphs.
-        #       I'm ignoring them for now
-        glyph = None
-
-        #assert category is not None or glyph is not None
         assert glyph is None or nh.glyph_is_normal_object(glyph)
 
         if category is None and glyph is not None:
@@ -232,10 +226,8 @@ class ItemManager:
             name = name[:name.index(' named ')]
 
 
-        pressumed_category = None
-
         # object identified (look on names)
-        ret_from_names = set()
+        obj_ids = set()
         prefixes = [
             ('scroll of ', nh.SCROLL_CLASS),
             ('scrolls of ', nh.SCROLL_CLASS),
@@ -270,7 +262,7 @@ class ItemManager:
                 if ord(nh.objclass(i).oc_class) == c:
                     obj_name = nh.objdescr.from_idx(i).oc_name
                     if obj_name and name == pref + obj_name:
-                        ret_from_names.add(i)
+                        obj_ids.add(i)
 
             for suf, c in suffixes:
                 if ord(nh.objclass(i).oc_class) == c:
@@ -278,11 +270,11 @@ class ItemManager:
                     if obj_name and (name == obj_name + suf or \
                                      (c == nh.FOOD_CLASS and \
                                       name == obj_name.split()[0] + suf + ' ' + ' '.join(obj_name.split()[1:]))):
-                        ret_from_names.add(i)
+                        obj_ids.add(i)
 
 
         # object unidentified (look on descriptions)
-        ret_from_descriptions = set()
+        appearance_ids = set()
         prefixes = [
             ('scroll labeled ', nh.SCROLL_CLASS),
             ('scrolls labeled ', nh.SCROLL_CLASS),
@@ -313,50 +305,41 @@ class ItemManager:
             ('s', nh.FOOD_CLASS),
         ]
 
-        matches = set()
         for i in range(nh.NUM_OBJECTS):
             for pref, c in prefixes:
                 if ord(nh.objclass(i).oc_class) == c:
                     obj_descr = nh.objdescr.from_idx(i).oc_descr
                     if obj_descr and name == pref + obj_descr:
-                        matches.add(i)
+                        appearance_ids.add(i)
 
             for suf, c in suffixes:
                 if ord(nh.objclass(i).oc_class) == c:
                     obj_descr = nh.objdescr.from_idx(i).oc_descr
                     if obj_descr and name == obj_descr + suf:
-                        matches.add(i)
+                        appearance_ids.add(i)
 
-        matches = list(matches)
-        assert len(matches) == 0 or len({ord(nh.objclass(i).oc_class) for i in matches}), (text, name)
+        appearance_ids = list(appearance_ids)
+        assert len(appearance_ids) == 0 or len({ord(nh.objclass(i).oc_class) for i in appearance_ids}), (text, name)
 
-        if len(matches) > 0:
-            pressumed_category = ord(nh.objclass(matches[0]).oc_class)
-
-            if pressumed_category in [nh.AMULET_CLASS, nh.GEM_CLASS, nh.POTION_CLASS, nh.RING_CLASS, nh.SCROLL_CLASS, \
-                                      nh.SPBOOK_CLASS, nh.WAND_CLASS]:
-                # TODO: smart solving
-                for i in range(nh.NUM_OBJECTS):
-                    if ord(nh.objclass(i).oc_class) == pressumed_category:
-                        ret_from_descriptions.add(i)
-                assert len(ret_from_descriptions) > 0, text
-
-            else:
-                assert pressumed_category in [nh.ARMOR_CLASS, nh.WEAPON_CLASS, nh.FOOD_CLASS, nh.TOOL_CLASS], text
-                ret_from_descriptions = ret_from_descriptions.union(matches)
-
-
-        assert (len(ret_from_names) > 0) ^ (len(ret_from_descriptions) > 0), \
-               (name, ret_from_names, ret_from_descriptions)
-        if ret_from_names:
-            assert len(ret_from_names) == 1, text
-            ret = list(ret_from_names)
+        assert (len(obj_ids) > 0) ^ (len(appearance_ids) > 0), (name, obj_ids, appearance_ids)
+        if obj_ids:
+            assert len(obj_ids) == 1, text
+            obj_id = list(obj_ids)[0]
+            objs = [objects.objects[obj_id]]
+            if glyph is not None:
+                assert objs[0] in objects.possibilities_from_glyph(glyph), (objs[0], objects.possibilities_from_glyph(glyph))
         else:
-            ret = list(ret_from_descriptions)
-            assert len(matches) > 0, (text, name)
+            obj_id = list(appearance_ids)[0]
+            if glyph is not None:
+                assert glyph in list(map(lambda i: i + nh.GLYPH_OBJ_OFF, appearance_ids))
+            else:
+                if len(appearance_ids) == 1:
+                    glyph = obj_id + nh.GLYPH_OBJ_OFF
+            objs = objects.possibilities_from_glyph(obj_id + nh.GLYPH_OBJ_OFF)
+            assert all(map(lambda i: objects.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF) == objs, appearance_ids)), text
 
-        assert category is None or category == ord(nh.objclass(ret[0]).oc_class), (text, category, ord(nh.objclass(ret[0]).oc_class))
-        return [r + nh.GLYPH_OBJ_OFF for r in ret], count, status, modifier, equipped, at_ready, text
+        assert category is None or category == ord(nh.objclass(obj_id).oc_class), (text, category, ord(nh.objclass(obj_id).oc_class))
+        return objs, glyph, count, status, modifier, equipped, at_ready, text
 
 
 class Inventory:

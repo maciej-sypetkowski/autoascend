@@ -9,11 +9,12 @@ import numpy as np
 import toolz
 from nle.nethack import actions as A
 
+import objects
 import utils
-from glyph import SS, MON, C
-from item import Item, Inventory
 from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
+from glyph import SS, MON, C
+from item import Item, Inventory
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
@@ -341,7 +342,6 @@ class Agent:
 
         is_first = True
 
-        iterator = None
         while 1:
             assert inactivity_counter < 100
             if last_step != self.step_count:
@@ -350,6 +350,7 @@ class Agent:
             else:
                 inactivity_counter += 1
 
+            iterator = None
             try:
                 if is_first:
                     is_first = False
@@ -366,8 +367,9 @@ class Agent:
                 i = e.args[0]
                 if i not in id2fun:
                     raise
-
                 iterator = e.args[1]
+
+            if iterator is not None:
                 try:
                     next(iterator)
                     assert 0, iterator
@@ -1159,7 +1161,7 @@ class Agent:
             best_item_dps = None
             for y, x in zip(nonzero_y, nonzero_x):
                 glyph = self.glyphs[y, x]
-                dps = Item([self.glyphs[y, x]]).get_dps(large_monster=False)
+                dps = Item([objects.possibilities_from_glyph(self.glyphs[y, x])[0]]).get_dps(large_monster=False)
                 if dps > current_weapon_dps:
                     best_item_dps = dps
                     best_item = (y, x)
@@ -1169,7 +1171,7 @@ class Agent:
 
             yield True
 
-            with self.env.debug_log(f'going for {Item([self.glyphs[best_item]])}'):
+            with self.env.debug_log(f'going for {Item([objects.possibilities_from_glyph(self.glyphs[y, x])[0]])}'):
                 target_y, target_x = best_item
                 self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
                 if self.current_level().shop[target_y, target_x]:
