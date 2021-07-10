@@ -1047,7 +1047,7 @@ class Agent:
 
         return \
             (self.explore1(0).before(self.explore1(None))).preempt(self, [
-                self.move_down().condition(lambda: self.blstats.score > 550 and self.blstats.hitpoints >= 0.8 * self.blstats.max_hitpoints)
+                self.move_down().condition(lambda: self.blstats.score > 850 + 100 * len(self.levels) and self.blstats.hitpoints >= 0.9 * self.blstats.max_hitpoints)
             ]).preempt(self, [
                 self.eat1().condition(lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 eat_from_inventory(),
