@@ -3,7 +3,7 @@ from collections import namedtuple
 from enum import Enum
 
 Weapon = namedtuple('Weapon', 'name,desc,kn,mg,bi,prob,wt,cost,sdam,ldam,hitbon,typ,sub,metal,color,damage_small,damage_large'.split(','))
-Armor = namedtuple('Armor', 'name,desc,kn,mgc,blk,power,prob,delay,wt,cost,ac,can,sub,metal,c'.split(','))
+Armor = namedtuple('Armor', 'name,desc,kn,mgc,blk,power,prob,delay,wt,cost,ac,can,sub,metal,c'.split(',')) # ac is always <= 0, i.e. ac = original_ac - 10
 Ring = namedtuple('Ring', 'name,desc,power,cost,mgc,spec,mohs,metal,color'.split(','))
 Amulet = namedtuple('Amulet', 'name,desc,power,prob'.split(',')) # Amulet of Yendor(s) not included
 
@@ -278,7 +278,7 @@ def BOW(name,desc,kn,prob,wt,cost,hitbon,metal,sub,color):
 #        power, ARMOR_CLASS, prob, delay, wt,                     \
 #        cost, 0, 0, 10 - ac, can, wt, c)
 def ARMOR(*args):
-    return Armor(*args)
+    return Armor(*args[:-5], args[-5] - 10, *args[-4:])
 
 ##define HELM(name,desc,kn,mgc,power,prob,delay,wt,cost,ac,can,metal,c)  \
 #    ARMOR(name, desc, kn, mgc, 0, power, prob, delay, wt,  \

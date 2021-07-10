@@ -131,7 +131,7 @@ class Item:
 
     def get_ac(self):
         assert self.is_armor()
-        return self.object().ac + (self.modifier if self.modifier is not None else 0)
+        return self.object().ac - (self.modifier if self.modifier is not None else 0)
 
 
 
@@ -685,7 +685,7 @@ class Inventory:
             if item.is_armor() and item.is_ambiguous():
                 slot = item.object().sub
                 ac = item.get_ac()
-                if best_ac[slot] is None or best_ac[slot] < ac:
+                if best_ac[slot] is None or best_ac[slot] > ac:
                     best_ac[slot] = ac
                     best_items[slot] = item
         if return_ac:

@@ -35,9 +35,7 @@ class G:  # Glyphs
     MONS = set(MON.ALL_MONS)
     PETS = set(MON.ALL_PETS)
 
-    WEAPONS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == nh.WEAPON_CLASS}
-
-    SHOPKEEPER = {MON.fn('shopkeeper')}
+    PEACEFUL_MONS = {i + nh.GLYPH_MON_OFF for i in range(nh.NUMMONS) if nh.permonst(i).mflags2 & MON.M2_PEACEFUL}
 
     BODIES = {nh.GLYPH_BODY_OFF + i for i in range(nh.NUMMONS)}
     OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) != nh.ROCK_CLASS}
@@ -597,7 +595,7 @@ class Agent:
 
         level = self.current_level()
 
-        walkable = level.walkable & ~utils.isin(self.glyphs, G.SHOPKEEPER, G.BOULDER)
+        walkable = level.walkable & ~utils.isin(self.glyphs, G.PEACEFUL_MONS, G.BOULDER)
 
         dis = utils.bfs(y, x,
                         walkable=walkable,
@@ -654,7 +652,7 @@ class Agent:
                 if stop_one_before:
                     path = path[:-1]
                 for y, x in path:
-                    if self.glyphs[y, x] in G.SHOPKEEPER:
+                    if self.glyphs[y, x] in G.PEACEFUL_MONS:
                         cont = True
                         break
                     if not self.current_level().walkable[y, x]:
@@ -693,7 +691,7 @@ class Agent:
                 self.inventory.wield(launcher)
                 continue
 
-            mask = utils.isin(self.glyphs, G.MONS - G.SHOPKEEPER)
+            mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
             mask[self.blstats.y, self.blstats.x] = 0
             for y, x in zip(*mask.nonzero()):
                 if (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
@@ -711,7 +709,7 @@ class Agent:
     def fight1(self):
         yielded = False
         while 1:
-            mask = utils.isin(self.glyphs, G.MONS - G.SHOPKEEPER)
+            mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
             mask[self.blstats.y, self.blstats.x] = 0
             if not mask.any():
                 if not yielded:
@@ -740,7 +738,7 @@ class Agent:
 
             def is_monster_next_to_me():
                 dis = self.bfs()
-                mask = utils.isin(self.glyphs, G.MONS - G.SHOPKEEPER)
+                mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
                 mask[self.blstats.y, self.blstats.x] = 0
                 mask &= dis != -1
                 if not mask.any():
