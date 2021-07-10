@@ -81,10 +81,11 @@ class Level:
 
 
 class Agent:
-    def __init__(self, env, seed=0, verbose=False):
+    def __init__(self, env, seed=0, verbose=False, panic_on_errors=False):
         self.env = env
         self.verbose = verbose
         self.rng = np.random.RandomState(seed)
+        self.panic_on_errors = panic_on_errors
         self.all_panics = []
 
         self.on_update = []
@@ -1073,6 +1074,15 @@ class Agent:
                     self.main_strategy().run()
                     assert 0
                 except AgentPanic as e:
+                    self.all_panics.append(e)
+                    self.on_panic()
+                    if self.verbose:
+                        print(f'PANIC!!!! : {e}')
+                except AgentFinished:
+                    raise
+                except BaseException as e:
+                    if not self.panic_on_errors:
+                        raise
                     self.all_panics.append(e)
                     self.on_panic()
                     if self.verbose:

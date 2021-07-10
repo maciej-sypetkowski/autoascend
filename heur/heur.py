@@ -266,7 +266,7 @@ def prepare_env(args, seed, step_limit=None):
 def single_simulation(args, seed, timeout=180):
     start_time = time.time()
     env = prepare_env(args, seed)
-    agent = Agent(env, verbose=False)
+    agent = Agent(env, verbose=False, panic_on_errors=args.panic_on_errors)
     env.set_agent(agent)
 
     if timeout is not None:
@@ -475,6 +475,7 @@ def parse_args():
     parser.add_argument('--role', choices=('arc', 'bar', 'cav', 'hea', 'kni',
                                            'mon', 'pri', 'ran', 'rog', 'sam',
                                            'tou', 'val', 'wiz'))
+    parser.add_argument('--panic-on-errors', action='store_true')
 
     args = parser.parse_args()
     if args.seed is None:
