@@ -1,9 +1,9 @@
+from functools import partial, wraps
 from itertools import chain
 
 import numba as nb
 import numpy as np
 import toolz
-from functools import partial, wraps
 
 from strategy import Strategy
 
@@ -89,10 +89,15 @@ def debug_log(txt, fun, color=(255, 255, 255)):
                             assert 0
                         except StopIteration as e:
                             return e.value
+
                 ret.strategy = partial(f, ret.strategy)
             return ret
 
     return wrapper
+
+
+def adjacent(p1, p2):
+    return max(abs(p1[0] - p2[0]), abs(p1[1] - p2[1])) == 1
 
 
 def calc_dps(to_hit, damage):

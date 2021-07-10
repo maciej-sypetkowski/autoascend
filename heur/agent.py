@@ -7,12 +7,11 @@ import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
-import objects
 import utils
 from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from glyph import SS, MON, C
-from item import Item, Inventory
+from item import Inventory
 from strategy import Strategy
 
 BLStats = namedtuple('BLStats',
@@ -158,13 +157,13 @@ class Agent:
 
     @contextlib.contextmanager
     def add_on_update(self, funcs):
-       self.on_update.extend(funcs)
+        self.on_update.extend(funcs)
 
-       try:
-           yield
-       finally:
-           for f in funcs:
-               self.on_update.pop(self.on_update.index(f))
+        try:
+            yield
+        finally:
+            for f in funcs:
+                self.on_update.pop(self.on_update.index(f))
 
     @contextlib.contextmanager
     def context_preempt(self, conditions):
@@ -444,7 +443,7 @@ class Agent:
             if self.glyphs[y, x] in G.STONE:
                 level.seen[y, x] = True
                 level.objects[y, x] = self.glyphs[y, x]
-                level.walkable[y, x] = False # necessary for the exit route from vaults
+                level.walkable[y, x] = False  # necessary for the exit route from vaults
 
     ######## TRIVIAL HELPERS
 
@@ -701,7 +700,7 @@ class Agent:
                 self.inventory.wield(launcher)
                 continue
 
-            for _, y, x, _ in self.get_visible_monsters():
+            for _, y, x, _, _ in self.get_visible_monsters():
                 if (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
                     # TODO: don't shoot pet !
                     # TODO: limited range
@@ -719,12 +718,45 @@ class Agent:
         mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
         mask[self.blstats.y, self.blstats.x] = 0
         mask &= dis != -1
-        # mask &= dis == dis[mask].min()
         ret = []
         for y, x in zip(*mask.nonzero()):
-            ret.append((dis[y][x], y, x, nh.glyph_to_mon(self.glyphs[y][x])))
+            ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))
         ret.sort()
         return ret
+
+    def should_keep_distance(self, monsters):
+        ret = np.zeros(len(monsters), dtype=bool)
+        for i, (dis, y, x, mon, _) in enumerate(monsters):
+            if max(abs(x - self.blstats.x), abs(y - self.blstats.y)) not in (1, 2):
+                continue
+            # if mon.mname == 'goblin':
+            #     ret[i] = True
+            if self.blstats.hitpoints <= 8:
+                ret[i] = True
+        return ret
+
+    @utils.debug_log('keep_distance')
+    def keep_distance(self, monsters, keep_distance):
+        if not keep_distance.any():
+            return False
+        monsters = [m for m, k in zip(monsters, keep_distance) if k]
+        bad_tiles = ~self.current_level().walkable
+        for _, y, x, _, _ in monsters:
+            for y1 in (y - 1, y, y + 1):
+                for x1 in (x - 1, x, x + 1):
+                    if 0 <= y1 <= bad_tiles.shape[0] and 0 <= x1 <= bad_tiles.shape[1]:
+                        bad_tiles[y1, x1] = True
+
+        with self.env.debug_tiles(bad_tiles, color=(255, 0, 0, 64)):
+            for y1 in (y - 1, y, y + 1):
+                for x1 in (x - 1, x, x + 1):
+                    if 0 <= y1 <= bad_tiles.shape[0] and 0 <= x1 <= bad_tiles.shape[1]:
+                        if not bad_tiles[y1][x1]:
+                            with self.env.debug_tiles([[y1, x1]], color=(0, 255, 0, 64)):
+                                self.move(y1, x1)
+                            return True
+
+        return False
 
     @utils.debug_log('fight1')
     @Strategy.wrap
@@ -747,13 +779,16 @@ class Agent:
                 self.character.parse_enhance_view()
 
             assert len(monsters) > 0
-            dis, y, x, mon = monsters[0]
+            dis, y, x, _, mon_glyph = monsters[0]
 
             def is_monster_next_to_me():
                 monsters = self.get_visible_monsters()
                 if not monsters:
                     return False
-                return True
+                for _, y, x, _, _ in monsters:
+                    if utils.adjacent((y, x), (self.blstats.y, self.blstats.x)):
+                        return True
+                return False
 
             with self.context_preempt([
                 is_monster_next_to_me,
@@ -761,6 +796,13 @@ class Agent:
                 if outcome() is None:
                     if self.ranged_stance1():
                         continue
+
+            keep_distance = self.should_keep_distance(monsters)
+            if self.keep_distance(monsters, keep_distance):
+                continue
+            # else:
+            #     if self.emergency_strategy().run(return_condition=True):
+            #         continue
 
             # TODO: why is this possible
             if self.bfs()[y, x] == -1:
@@ -785,7 +827,8 @@ class Agent:
             try:
                 self.fight(y, x)
             finally:  # TODO: what if panic?
-                if nh.glyph_is_body(self.glyphs[y, x]) and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == mon:
+                if nh.glyph_is_body(self.glyphs[y, x]) \
+                        and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == nh.glyph_to_mon(mon_glyph):
                     self.current_level().corpse_age[y, x] = self.blstats.time
 
     @utils.debug_log('eat1')
@@ -816,8 +859,6 @@ class Agent:
         closests_y, closests_x = mask.nonzero()
         target_y, target_x = closests_y[0], closests_x[0]
 
-        path = self.path(self.blstats.y, self.blstats.x, target_y, target_x)
-
         self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 255, 0), is_path=True))
         if not self.current_level().shop[self.blstats.y, self.blstats.x]:
             self.eat()  # TODO: what
@@ -846,7 +887,6 @@ class Agent:
         def to_visit_func():
             level = self.current_level()
             to_visit = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
-            dis = self.bfs()
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     if dy != 0 or dx != 0:
@@ -862,7 +902,7 @@ class Agent:
             prio = np.zeros((C.SIZE_Y, C.SIZE_X), np.float32)
             prio[:] = -1
             prio -= level.search_count ** 2 * 2
-            is_on_corridor = utils.isin(level.objects, G.CORRIDOR)
+            # is_on_corridor = utils.isin(level.objects, G.CORRIDOR)
             is_on_door = utils.isin(level.objects, G.DOORS)
 
             stones = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
@@ -993,23 +1033,27 @@ class Agent:
         if (
                 ((self.last_prayer_turn is None and self.blstats.time > 300) or
                  (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > 900)) and
-                (self.blstats.hitpoints < 1/(5 if self.blstats.experience_level < 6 else 6) * self.blstats.max_hitpoints or
-                 self.blstats.hitpoints < 6 or self.blstats.hunger_state >= Hunger.FAINTING)
-                ):
+                (self.blstats.hitpoints < 1 / (5 if self.blstats.experience_level < 6 else 6)
+                 * self.blstats.max_hitpoints or self.blstats.hitpoints < 6
+                 or self.blstats.hunger_state >= Hunger.FAINTING)
+        ):
             yield True
             self.last_prayer_turn = self.blstats.time
             self.pray()
             return
 
         if (
-                (self.blstats.hitpoints < 1/3 * self.blstats.max_hitpoints or self.blstats.hitpoints < 8 or self.blstats.hunger_state >= Hunger.FAINTING) and
+                (self.blstats.hitpoints < 1 / 3 * self.blstats.max_hitpoints
+                 or self.blstats.hitpoints < 8 or self.blstats.hunger_state >= Hunger.FAINTING) and
                 len([s for s in map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])
-                     if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s]) > 0
-                ):
+                     if 'potion of healing' in s or 'potion of extra healing' in s
+                        or 'potion of full healing' in s]) > 0
+        ):
             yield True
             with self.atom_operation():
                 self.type_text('q')
-                for letter, s in zip(self.last_observation['inv_letters'], map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])):
+                for letter, s in zip(self.last_observation['inv_letters'],
+                                     map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])):
                     if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s:
                         self.type_text(chr(letter))
                         break
@@ -1025,9 +1069,8 @@ class Agent:
     def main_strategy(self):
         @Strategy.wrap
         def eat_from_inventory():
-            if not (self.blstats.hunger_state >= Hunger.WEAK and any(
-                    map(lambda item: item.category == nh.FOOD_CLASS,
-                        self.inventory.items))):
+            if not (self.blstats.hunger_state >= Hunger.WEAK
+                    and any(map(lambda item: item.category == nh.FOOD_CLASS, self.inventory.items))):
                 yield False
             yield True
             with self.atom_operation():
@@ -1043,9 +1086,11 @@ class Agent:
 
         return \
             (self.explore1(0).before(self.explore1(None))).preempt(self, [
-                self.move_down().condition(lambda: self.blstats.score > 850 + 100 * len(self.levels) and self.blstats.hitpoints >= 0.9 * self.blstats.max_hitpoints)
+                self.move_down().condition(lambda: self.blstats.score > 850 + 100 * len(self.levels)
+                                                   and self.blstats.hitpoints >= 0.9 * self.blstats.max_hitpoints)
             ]).preempt(self, [
-                self.eat1().condition(lambda: self.blstats.time % 3 == 0 and self.blstats.hunger_state >= Hunger.NOT_HUNGRY),
+                self.eat1().condition(lambda: self.blstats.time % 3 == 0
+                                              and self.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 eat_from_inventory(),
             ]).preempt(self, [
                 self.fight1(),

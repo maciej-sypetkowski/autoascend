@@ -1,7 +1,6 @@
-from functools import wraps
-
 import cv2
 import numpy as np
+from item import Item
 
 from glyph import C
 
@@ -256,12 +255,11 @@ class Visualizer:
         vis = np.zeros((height, width, 3)).astype(np.uint8)
         _draw_frame(vis, color=(50, 50, 50), thickness=2)
         _put_text(vis, str(letter), (0, 0))
-        import agent
         status_str, status_col = {
-            agent.Item.UNKNOWN: (' ', (255, 255, 255)),
-            agent.Item.CURSED: ('C', (255, 0, 0)),
-            agent.Item.UNCURSED: ('U', (0, 255, 255)),
-            agent.Item.BLESSED: ('B', (0, 255, 0)),
+            Item.UNKNOWN: (' ', (255, 255, 255)),
+            Item.CURSED: ('C', (255, 0, 0)),
+            Item.UNCURSED: ('U', (0, 255, 255)),
+            Item.BLESSED: ('B', (0, 255, 0)),
         }[item.status]
         _put_text(vis, str(letter), (0, 0))
         _put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)

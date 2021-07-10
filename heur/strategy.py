@@ -9,14 +9,18 @@ class Strategy:
     def __init__(self, strategy):
         self.strategy = strategy
 
-    def run(self, agent=None):
+    def run(self, agent=None, return_condition=False):
         gen = self.strategy()
         if not next(gen):
+            if return_condition:
+                return False
             return None
         try:
             next(gen)
             assert 0
         except StopIteration as e:
+            if return_condition:
+                return True
             return e.value
 
     def condition(self, condition):
