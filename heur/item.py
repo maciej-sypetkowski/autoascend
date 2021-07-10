@@ -149,7 +149,7 @@ class ItemManager:
         return O.possibilities_from_glyph(glyph)
 
     @staticmethod
-    @functools.lru_cache(1024 * 256)
+    @functools.lru_cache(1024 * 1024)
     def parse_text(text, category=None, glyph=None):
         assert glyph is None or nh.glyph_is_normal_object(glyph)
 
@@ -247,7 +247,21 @@ class ItemManager:
             # TODO: many of these are artifacts
             name = name[:name.index(' named ')]
 
+        objs, ret_glyph = ItemManager.parse_name(name)
+        assert category is None or category == O.get_category(objs[0]), (text, category, O.get_category(objs[0]))
 
+        if glyph is not None and ret_glyph is None:
+            pos = O.possibilities_from_glyph(glyph)
+            assert all(map(lambda o: o in pos)), (objs, pos)
+            ret_glyph = glyph
+        elif glyph is not None and ret_glyph is not None:
+            assert glyph == ret_glyph
+        return objs, ret_glyph, count, status, modifier, equipped, at_ready, text
+
+
+    @staticmethod
+    @functools.lru_cache(1024 * 256)
+    def parse_name(name):
         # object identified (look on names)
         obj_ids = set()
         prefixes = [
@@ -344,24 +358,20 @@ class ItemManager:
         assert len(appearance_ids) == 0 or len({ord(nh.objclass(i).oc_class) for i in appearance_ids}), (text, name)
 
         assert (len(obj_ids) > 0) ^ (len(appearance_ids) > 0), (name, obj_ids, appearance_ids)
+
+        glyph = None
         if obj_ids:
             assert len(obj_ids) == 1, text
             obj_id = list(obj_ids)[0]
             objs = [O.objects[obj_id]]
-            if glyph is not None:
-                assert objs[0] in O.possibilities_from_glyph(glyph), (objs[0], O.possibilities_from_glyph(glyph))
         else:
             obj_id = list(appearance_ids)[0]
-            if glyph is not None:
-                assert glyph in list(map(lambda i: i + nh.GLYPH_OBJ_OFF, appearance_ids))
-            else:
-                if len(appearance_ids) == 1:
-                    glyph = obj_id + nh.GLYPH_OBJ_OFF
+            if len(appearance_ids) == 1:
+                glyph = obj_id + nh.GLYPH_OBJ_OFF
             objs = O.possibilities_from_glyph(obj_id + nh.GLYPH_OBJ_OFF)
             assert all(map(lambda i: O.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF) == objs, appearance_ids)), text
 
-        assert category is None or category == ord(nh.objclass(obj_id).oc_class), (text, category, ord(nh.objclass(obj_id).oc_class))
-        return objs, glyph, count, status, modifier, equipped, at_ready, text
+        return objs, glyph
 
 
 class InventoryItems:
@@ -454,6 +464,7 @@ class Inventory:
         self.letters_below_me = None
         self._interesting_item_glyphs = []
         self._interesting_items = []
+        self._last_interesting_item_update_turn = None
 
     def on_panic(self):
         self.items_below_me = None
@@ -693,7 +704,12 @@ class Inventory:
         return best_items
 
 
-    def update_interesting_items(self):
+    def update_interesting_items(self, force=False):
+        if not force and self._last_interesting_item_update_turn is not None and \
+                self._last_interesting_item_update_turn + 10 > self.agent.blstats.time:
+            return
+        self._last_interesting_item_update_turn = self.agent.blstats.time
+
         # TODO
         self._interesting_items = set()
         if self.agent.character.role == Character.RANGER:
