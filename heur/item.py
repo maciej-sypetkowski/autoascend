@@ -229,6 +229,8 @@ class ItemManager:
             name = 'lenses'
         elif name.startswith('small glob'):
             name = name[len('small '):]
+        elif name == 'knives':
+            name = 'knife'
 
 
         # TODO: pass to Item class instance
@@ -242,6 +244,8 @@ class ItemManager:
             name = 'figurine'
         elif name.startswith('paperback book named ') or name.startswith('paperback books named ') or name in ['novel', 'paperback']:
             name = 'spellbook of novel'
+        elif name.endswith(' egg') or name.endswith(' eggs'):
+            name = 'egg'
 
         if ' named ' in name:
             # TODO: many of these are artifacts
@@ -273,8 +277,7 @@ class ItemManager:
             ('rings of ', nh.RING_CLASS),
             ('wand of ', nh.WAND_CLASS),
             ('wands of ', nh.WAND_CLASS),
-            ('amulet of ', nh.AMULET_CLASS),
-            ('amulets of ', nh.AMULET_CLASS),
+            ('', nh.AMULET_CLASS),
             ('potion of ', nh.POTION_CLASS),
             ('potions of ', nh.POTION_CLASS),
             ('', nh.GEM_CLASS),
@@ -355,13 +358,13 @@ class ItemManager:
                         appearance_ids.add(i)
 
         appearance_ids = list(appearance_ids)
-        assert len(appearance_ids) == 0 or len({ord(nh.objclass(i).oc_class) for i in appearance_ids}), (text, name)
+        assert len(appearance_ids) == 0 or len({ord(nh.objclass(i).oc_class) for i in appearance_ids}), name
 
         assert (len(obj_ids) > 0) ^ (len(appearance_ids) > 0), (name, obj_ids, appearance_ids)
 
         glyph = None
         if obj_ids:
-            assert len(obj_ids) == 1, text
+            assert len(obj_ids) == 1, name
             obj_id = list(obj_ids)[0]
             objs = [O.objects[obj_id]]
         else:
@@ -369,7 +372,7 @@ class ItemManager:
             if len(appearance_ids) == 1:
                 glyph = obj_id + nh.GLYPH_OBJ_OFF
             objs = O.possibilities_from_glyph(obj_id + nh.GLYPH_OBJ_OFF)
-            assert all(map(lambda i: O.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF) == objs, appearance_ids)), text
+            assert all(map(lambda i: O.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF) == objs, appearance_ids)), name
 
         return objs, glyph
 
@@ -582,7 +585,9 @@ class Inventory:
             if 'It is cursed.' in self.agent.message or 'They are cursed.' in self.agent.message:
                 return False
             assert 'You finish taking off ' in self.agent.message or \
-                   'You were wearing ' in self.agent.message, self.agent.message
+                   'You were wearing ' in self.agent.message or \
+                   'You feel that monsters no longer have difficulty pinpointing your location.' in self.agent.message \
+                   , self.agent.message
 
         return True
 
@@ -612,7 +617,8 @@ class Inventory:
                                 'There is nothing here to pick up.' in self.agent.message or \
                                 ' solidly fixed to the floor.' in self.agent.message or \
                                 'You read:' in self.agent.message or \
-                                "You don't see anything in here to pick up." in self.agent.message:
+                                "You don't see anything in here to pick up." in self.agent.message or \
+                                'You cannot reach the ground.' in self.agent.message:
                             items = []
                             letters = []
                         else:
@@ -667,6 +673,9 @@ class Inventory:
                 self.agent.step(A.Command.PICKUP)
             else:
                 self.agent.step(A.Command.PICKUP, iter(letters + [A.MiscAction.MORE]))
+            if re.search('You have [a-z ]+ lifting ', self.agent.message) and \
+                    'Continue?' in self.agent.message:
+                self.agent.type_text('y')
         return True
 
 

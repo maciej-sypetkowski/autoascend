@@ -277,7 +277,7 @@ def single_simulation(args, seed, timeout=180):
         else:
             agent.main()
     except multiprocessing.context.TimeoutError:
-        env.end_reason = 'timeout'
+        env.end_reason = f'timeout'
     except BaseException as e:
         env.end_reason = f'exception: {"".join(traceback.format_exception(None, e, e.__traceback__))}'
         print(f'Seed {seed}, step {env.step_count}:', env.end_reason)
@@ -292,13 +292,8 @@ def run_single_interactive_game(args):
     termios.tcgetattr(sys.stdin)
     tty.setcbreak(sys.stdin.fileno())
     try:
-        env = prepare_env(args, 0)
-
-        agent = Agent(env, verbose=True)
-        env.set_agent(agent)
-
-        agent.main()
-
+        summary = single_simulation(args, 0, timeout=None)
+        pprint(summary)
     finally:
         os.system('stty sane')
 

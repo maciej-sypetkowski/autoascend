@@ -32,6 +32,8 @@ class G:  # Glyphs
     DOOR_OPENED: ['-', '|'] = {SS.S_vodoor, SS.S_hodoor}
     DOORS = set.union(DOOR_CLOSED, DOOR_OPENED)
 
+    BARS = {SS.S_bars}
+
     MONS = set(MON.ALL_MONS)
     PETS = set(MON.ALL_PETS)
 
@@ -301,9 +303,7 @@ class Agent:
         marker_pos, marker_type = find_marker(lines)
 
         if marker_pos is None:
-            self._is_reading_message_or_popup = False
             return message_preffix + message, popup, True
-        self._is_reading_message_or_popup = True
 
         pref = ''
         message_lines_count = 0
@@ -373,9 +373,11 @@ class Agent:
 
         # FIXME: self.update_state() won't be called on all states sometimes.
         #        Otherwise there are problems with atomic operations.
-        if not done:
+        if not done or observation['misc'][2]:
+            self._is_reading_message_or_popup = True
             self.step(A.TextCharacters.SPACE)
             return
+        self._is_reading_message_or_popup = False
 
         if observation['misc'][1]:  # entering text
             self.step(A.Command.ESC)
@@ -427,18 +429,21 @@ class Agent:
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
 
-            mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED)
+            mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS)
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
+            level.walkable[mask] = False
 
             mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS)
             level.seen[mask] = True
+            level.objects[mask & ~level.walkable] = -1
             level.walkable[mask] = True
 
         for y, x in self.neighbors(self.blstats.y, self.blstats.x, shuffle=False):
             if self.glyphs[y, x] in G.STONE:
                 level.seen[y, x] = True
                 level.objects[y, x] = self.glyphs[y, x]
+                level.walkable[y, x] = False # necessary for the exit route from vaults
 
     ######## TRIVIAL HELPERS
 
@@ -615,6 +620,10 @@ class Agent:
             dis = self.bfs(from_y, from_x)
 
         assert dis[to_y, to_x] != -1
+
+        # FIXME: currently the path can lead through diagonally inwalkable tiles.
+        #        The path is the shortest possible, so the agent is guaranteed to
+        #        unstuck itself eventually (usually a few panic exceptions) if that happens
 
         cur_y, cur_x = to_y, to_x
         path_rev = [(cur_y, cur_x)]
@@ -799,27 +808,12 @@ class Agent:
 
         yield True
 
-        # TODO: use variables from the condition
         dis = self.bfs()
-        closest = None
+        mask &= dis == dis[mask].min()
 
-        level = self.current_level()
-        # TODO: iter by distance
-        for y in range(C.SIZE_Y):
-            for x in range(C.SIZE_X):
-                if dis[y, x] != -1 and (closest is None or dis[y, x] < dis[closest]) and not level.shop[y, x]:
-                    if self.glyphs[y, x] in G.BODIES and self.blstats.time - level.corpse_age[y, x] <= 100:
-                        closest = (y, x)
-                    if nh.glyph_is_normal_object(self.glyphs[y, x]):
-                        obj = nh.objclass(nh.glyph_to_obj(self.glyphs[y, x]))
-                        if ord(obj.oc_class) == nh.FOOD_CLASS:
-                            closest = (y, x)
+        closests_y, closests_x = mask.nonzero()
+        target_y, target_x = closests_y[0], closests_x[0]
 
-        assert closest is not None
-        # if closest is None:
-        #    return False
-
-        target_y, target_x = closest
         path = self.path(self.blstats.y, self.blstats.x, target_y, target_x)
 
         self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 255, 0), is_path=True))
@@ -1036,6 +1030,8 @@ class Agent:
             yield True
             with self.atom_operation():
                 self.step(A.Command.EAT)
+                while re.search('There is[a-zA-z ]* corpse here', self.message):
+                    self.type_text('n')
                 for item in self.inventory.items:
                     if item.category == nh.FOOD_CLASS:
                         self.type_text(self.inventory.items.get_letter(item))
