@@ -324,6 +324,8 @@ class MON: # monsters, pets
             return nh.permonst(nh.glyph_to_mon(glyph))
         elif nh.glyph_is_pet(glyph):
             return nh.permonst(nh.glyph_to_pet(glyph))
+        elif nh.glyph_is_body(glyph):
+            return nh.permonst(glyph - nh.GLYPH_BODY_OFF)
         else:
             assert 0
 

@@ -796,7 +796,12 @@ class Agent:
     def eat1(self):
         level = self.current_level()
 
-        mask = utils.isin(self.glyphs, G.BODIES) & (self.blstats.time - level.corpse_age <= 100)
+        if self.character.race == Character.ORC:
+            flags = MON.M1_ACID
+        else:
+            flags = MON.M1_ACID | MON.M1_POIS
+        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags == 0]
+        mask = utils.isin(self.glyphs, editable_bodies) & (self.blstats.time - level.corpse_age <= 50)
         mask |= utils.isin(self.glyphs, G.FOOD_OBJECTS)
         mask &= ~level.shop
         if not mask.any():
