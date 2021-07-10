@@ -1076,6 +1076,8 @@ class Agent:
                         print(f'PANIC!!!! : {e}')
                 except AgentFinished:
                     raise
+                except KeyboardInterrupt:
+                    raise
                 except BaseException as e:
                     if not self.panic_on_errors:
                         raise
