@@ -49,19 +49,22 @@ class Item:
     def is_weapon(self):
         return self.category == nh.WEAPON_CLASS
 
-    def get_dps(self, large_monster):
+    def get_dmg(self, large_monster):
+        weapon = self.object()
+        dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
+        if self.modifier is not None and self.modifier > 0:
+            dmg += self.modifier
+        return dmg
+
+    def get_to_hit(self):
         assert self.is_weapon()
 
         weapon = self.object()
-        dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
 
         # TODO: take into account things from:
         # https://github.com/facebookresearch/nle/blob/master/src/weapon.c : hitval
         # https://github.com/facebookresearch/nle/blob/master/src/weapon.c : dmgval
         # https://github.com/facebookresearch/nle/blob/master/src/uhitm.c : find_roll_to_hit
-
-        if self.modifier is not None and self.modifier > 0:
-            dmg += self.modifier
 
         to_hit = 1
         to_hit += 6 # compensation, TODO: abon, etc
@@ -69,7 +72,10 @@ class Item:
         if self.modifier is not None:
             to_hit += self.modifier
 
-        return np.array([to_hit > i for i in range(1, 21)]).astype(np.float32).mean().item() * dmg
+        return np.array([to_hit > i for i in range(1, 21)]).astype(np.float32).mean().item()
+
+    def get_dps(self, large_monster):
+        return self.get_dmg(large_monster) * self.get_to_hit()
 
     def is_launcher(self):
         if not self.is_weapon():
@@ -661,7 +667,9 @@ class Inventory:
         best_dps = None
         for item in self.items:
             if item.is_weapon():
-                dps = item.get_dps(large_monster=False)  # TODO: what about monster size
+                to_hit, dmg = self.agent.character.get_weapon_bonus(item, large_monster=False)
+                dps = utils.calc_dps(to_hit, dmg)
+                # dps = item.get_dps(large_monster=False)  # TODO: what about monster size
                 if best_dps is None or best_dps < dps:
                     best_dps = dps
                     best_item = item

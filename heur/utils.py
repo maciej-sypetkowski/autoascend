@@ -93,3 +93,7 @@ def debug_log(txt, fun, color=(255, 255, 255)):
             return ret
 
     return wrapper
+
+
+def calc_dps(to_hit, damage):
+    return damage * np.clip((to_hit - 1), 0, 20) / 20

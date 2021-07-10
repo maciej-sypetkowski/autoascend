@@ -267,7 +267,13 @@ class Visualizer:
         _put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)
         if item.modifier is not None:
             _put_text(vis, str(item.modifier), (FONT_SIZE * 2, 0))
-        _put_text(vis, str(item), (FONT_SIZE * 4, 0))
+
+        if item.is_weapon():
+            _put_text(vis, str(self.env.agent.character.get_weapon_bonus(item)), (FONT_SIZE * 4, 0))
+
+        _put_text(vis, str(item), (FONT_SIZE * 8, 0))
+        if item.equipped:
+            _draw_frame(vis, color=(0, 255, 255), thickness=10)
         return vis
 
     def _draw_inventory(self, height):

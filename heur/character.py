@@ -131,6 +131,45 @@ class Character:
     SKILL_LEVEL_MASTER = 5
     SKILL_LEVEL_GRAND_MASTER = 6
 
+    weapon_bonus = {
+        SKILL_LEVEL_RESTRICTED: (-4, 2),
+        SKILL_LEVEL_UNSKILLED: (-4, 2),
+        SKILL_LEVEL_BASIC: (0, 0),
+        SKILL_LEVEL_SKILLED: (2, 1),
+        SKILL_LEVEL_EXPERT: (3, 2),
+    }
+    two_weapon_bonus = {
+        SKILL_LEVEL_RESTRICTED: (-9, -3),
+        SKILL_LEVEL_UNSKILLED: (-9, -3),
+        SKILL_LEVEL_BASIC: (-7, -1),
+        SKILL_LEVEL_SKILLED: (-5, 0),
+        SKILL_LEVEL_EXPERT: (-3, 1),
+    }
+    riding_bonus = {
+        SKILL_LEVEL_RESTRICTED: (-2, 0),
+        SKILL_LEVEL_UNSKILLED: (-2, 0),
+        SKILL_LEVEL_BASIC: (-1, 0),
+        SKILL_LEVEL_SKILLED: (0, 1),
+        SKILL_LEVEL_EXPERT: (0, 2),
+    }
+    unarmed_bonus = {
+        SKILL_LEVEL_RESTRICTED: (1, 0),
+        SKILL_LEVEL_UNSKILLED: (1, 0),
+        SKILL_LEVEL_BASIC: (1, 1),
+        SKILL_LEVEL_SKILLED: (2, 1),
+        SKILL_LEVEL_EXPERT: (2, 2),
+        SKILL_LEVEL_MASTER: (3, 2),
+        SKILL_LEVEL_GRAND_MASTER: (3, 3),
+    }
+    martial_bonus = {
+        SKILL_LEVEL_UNSKILLED: (2, 1),
+        SKILL_LEVEL_BASIC: (3, 3),
+        SKILL_LEVEL_SKILLED: (4, 4),
+        SKILL_LEVEL_EXPERT: (5, 6),
+        SKILL_LEVEL_MASTER: (6, 7),
+        SKILL_LEVEL_GRAND_MASTER: (7, 9),
+    }
+
     name_to_skill_level = {k: v for k, v in zip(['Restricted'] + possible_skill_levels,
                                                 [SKILL_LEVEL_RESTRICTED,
                                                  SKILL_LEVEL_UNSKILLED, SKILL_LEVEL_BASIC, SKILL_LEVEL_SKILLED,
@@ -216,6 +255,180 @@ class Character:
                 assert letter not in self.upgradable_skills.values()
                 self.upgradable_skills[self.name_to_skill_type[skill_type]] = letter
             self.skill_levels[self.name_to_skill_type[skill_type]] = self.name_to_skill_level[skill_level]
+
+    def _get_str_dex_to_hit_bonus(self):
+        bonus = 0
+        # /* attack bonus for strength & dexterity */
+        # int
+        # abon()
+        # {
+        #     int sbon;
+        #     int str = ACURR(A_STR), dex = ACURR(A_DEX);
+        strength = self.agent.blstats.strength
+        dexterity = self.agent.blstats.dexterity
+
+        #     if (Upolyd)
+        #         return (adj_lev(&mons[u.umonnum]) - 3);
+
+        #     if (str < 6)
+        #         sbon = -2;
+        #     else if (str < 8)
+        #         sbon = -1;
+        #     else if (str < 17)
+        #         sbon = 0;
+        #     else if (str <= STR18(50))
+        #         sbon = 1; /* up to 18/50 */
+        #     else if (str < STR18(100))
+        #         sbon = 2;
+        #     else
+        #         sbon = 3;
+        if strength < 6:
+            bonus -= 2
+        elif strength < 8:
+            bonus -= 1
+        elif strength < 17:
+            pass
+        elif strength <= 18 + 50:
+            bonus += 1
+        elif strength < 18 + 100:
+            bonus += 2
+        else:
+            bonus += 3
+
+        #     /* Game tuning kludge: make it a bit easier for a low level character to
+        #      * hit */
+        #     sbon += (u.ulevel < 3) ? 1 : 0;
+
+        #     if (dex < 4)
+        #         return (sbon - 3);
+        #     else if (dex < 6)
+        #         return (sbon - 2);
+        #     else if (dex < 8)
+        #         return (sbon - 1);
+        #     else if (dex < 14)
+        #         return sbon;
+        #     else
+        #         return (sbon + dex - 14);
+        #
+
+        if dexterity < 4:
+            bonus -= 3
+        elif dexterity < 6:
+            bonus -= 2
+        elif dexterity < 8:
+            bonus -= 1
+        elif dexterity < 14:
+            pass
+        else:
+            return bonus + dexterity - 14
+
+        return bonus
+
+    def _get_weapon_skill_bonus(self, item):
+        """ Retuns a pair (to hit bonus, damage bonus) """
+
+        if item is None:
+            if self.role in (self.MONK, self.SAMURAI):
+                return self.martial_bonus[self.skill_levels[O.P_BARE_HANDED_COMBAT]]
+            else:
+                return self.unarmed_bonus[self.skill_levels[O.P_BARE_HANDED_COMBAT]]
+        else:
+            # TODO: two weapon, riding
+
+            # TODO: proper sub
+            assert all(item.objs[0].sub == obj.sub for obj in item.objs), item.objs
+            sub = abs(item.objs[0].sub)
+
+            if not (0 <= sub < len(self.skill_levels)):
+                raise ValueError('Invalid item sub: ' + str(item) + ' sub: ' + str(sub))
+            # TODO:
+            return self.weapon_bonus[self.skill_levels[sub]]
+
+    def get_weapon_bonus(self, item, monster=None, large_monster=False):
+        """ Returns a pair (to_hit, damaga)
+        https://github.com/facebookresearch/nle/blob/master/src/uhitm.c : find_roll_to_hit
+         """
+        if monster is not None:
+            raise NotImplementedError()
+
+        # TODO:
+        # tmp = 1 + Luck + abon() + find_mac(mtmp) + u.uhitinc
+        # + maybe_polyd(youmonst.data->mlevel, u.ulevel);
+        roll_offset = 1 + self._get_str_dex_to_hit_bonus() + self.agent.blstats.experience_level
+
+        # TODO:
+        # /* some actions should occur only once during multiple attacks */
+        # if (!(*attk_count)++) {
+        #     /* knight's chivalry or samurai's giri */
+        #     check_caitiff(mtmp);
+        # }
+
+        # TODO:
+        # /* adjust vs. (and possibly modify) monster state */
+        # if (mtmp->mstun)
+        #     tmp += 2;
+        # if (mtmp->mflee)
+        #     tmp += 2;
+
+        # TODO:
+        # if (mtmp->msleeping) {
+        #     mtmp->msleeping = 0;
+        #     tmp += 2;
+        # }
+
+        # TODO:
+        # if (!mtmp->mcanmove) {
+        #     tmp += 4;
+        #     if (!rn2(10)) {
+        #         mtmp->mcanmove = 1;
+        #         mtmp->mfrozen = 0;
+        #     }
+        # }
+
+        # /* role/race adjustments */
+
+        # TODO: polymorphed
+        # if (Role_if(PM_MONK) && !Upolyd) {
+        if self.role == self.MONK:
+            # if (uarm)
+            if self.agent.inventory.items.suit is not None:
+                # tmp -= (*role_roll_penalty = urole.spelarmr);
+                roll_offset -= 20
+            elif item is None and self.agent.inventory.items.off_hand is None:
+            #  else if (!uwep && !uarms)
+                # tmp += (u.ulevel / 3) + 2;
+                roll_offset += (self.agent.blstats.experience_level // 3) + 2
+
+        # TODO:
+        # if (is_orc(mtmp->data)
+        #     && maybe_polyd(is_elf(youmonst.data), Race_if(PM_ELF)))
+        #     tmp++;
+
+        # TODO:
+        # /* encumbrance: with a lot of luggage, your agility diminishes */
+        # if ((tmp2 = near_capacity()) != 0)
+        #     tmp -= (tmp2 * 2) - 1;
+        # if (u.utrap)
+        #     tmp -= 3;
+
+        # /*
+        #  * hitval applies if making a weapon attack while wielding a weapon;
+        #  * weapon_hit_bonus applies if doing a weapon attack even bare-handed
+        #  * or if kicking as martial artist
+        #  */
+        # if (aatyp == AT_WEAP || aatyp == AT_CLAW) {
+        #     if (weapon)
+        #         tmp += hitval(weapon, mtmp);
+        #     tmp += weapon_hit_bonus(weapon);
+        # } else if (aatyp == AT_KICK && martial_bonus()) {
+        #     tmp += weapon_hit_bonus((struct obj *) 0);
+        # }
+        skill_hit_bonus, dmg_bonus = self._get_weapon_skill_bonus(item)
+        roll_offset += skill_hit_bonus
+
+        if item is not None:
+            dmg_bonus += item.get_dmg(large_monster)
+        return roll_offset, dmg_bonus
 
     def __str__(self):
         inv_skill_type = {v: k for k, v in self.name_to_skill_type.items()}
