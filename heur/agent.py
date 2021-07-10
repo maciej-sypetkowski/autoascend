@@ -701,9 +701,7 @@ class Agent:
                 self.inventory.wield(launcher)
                 continue
 
-            mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
-            mask[self.blstats.y, self.blstats.x] = 0
-            for y, x in zip(*mask.nonzero()):
+            for _, y, x, _ in self.get_visible_monsters():
                 if (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
                     # TODO: don't shoot pet !
                     # TODO: limited range
@@ -714,22 +712,31 @@ class Agent:
             else:
                 return False
 
+    def get_visible_monsters(self):
+        """ Returns list of tuples (distance, y, x, monster)
+        """
+        dis = self.bfs()
+        mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
+        mask[self.blstats.y, self.blstats.x] = 0
+        mask &= dis != -1
+        # mask &= dis == dis[mask].min()
+        ret = []
+        for y, x in zip(*mask.nonzero()):
+            ret.append((dis[y][x], y, x, nh.glyph_to_mon(self.glyphs[y][x])))
+        ret.sort()
+        return ret
+
     @utils.debug_log('fight1')
     @Strategy.wrap
     def fight1(self):
         yielded = False
         while 1:
-            mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
-            mask[self.blstats.y, self.blstats.x] = 0
-            if not mask.any():
-                if not yielded:
-                    yield False
-                return
+            monsters = self.get_visible_monsters()
 
-            dis = self.bfs()
-            mask &= dis != -1
+            # get only monsters with path to them
+            monsters = [m for m in monsters if m[0] != -1]
 
-            if not mask.any():
+            if not monsters:
                 if not yielded:
                     yield False
                 return
@@ -739,24 +746,14 @@ class Agent:
                 yield True
                 self.character.parse_enhance_view()
 
-            mask &= dis == dis[mask].min()
-            closests_y, closests_x = mask.nonzero()
-
-            assert len(closests_y) > 0
-
-            y, x = closests_y[0], closests_x[0]
+            assert len(monsters) > 0
+            dis, y, x, mon = monsters[0]
 
             def is_monster_next_to_me():
-                dis = self.bfs()
-                mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
-                mask[self.blstats.y, self.blstats.x] = 0
-                mask &= dis != -1
-                if not mask.any():
+                monsters = self.get_visible_monsters()
+                if not monsters:
                     return False
-                mask &= dis == dis[mask].min()
-                closests_y, closests_x = mask.nonzero()
-                y, x = closests_y[0], closests_x[0]
-                return abs(self.blstats.y - y) <= 1 and abs(self.blstats.x - x) <= 1
+                return True
 
             with self.context_preempt([
                 is_monster_next_to_me,
@@ -765,6 +762,7 @@ class Agent:
                     if self.ranged_stance1():
                         continue
 
+            # TODO: why is this possible
             if self.bfs()[y, x] == -1:
                 continue
 
@@ -781,8 +779,6 @@ class Agent:
                 self.go_to(y, x, stop_one_before=True, max_steps=1,
                            debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
                 continue
-
-            mon = nh.glyph_to_mon(self.glyphs[y, x])
 
             if self.wield_best_weapon():
                 continue
