@@ -71,12 +71,7 @@ class EnvWrapper:
             print('Seed :', self.env.get_seeds())
             print('Items below me :', self.agent.inventory.items_below_me)
             print()
-            obj_classes = {getattr(nh, x): x[:-len('_CLASS')] for x in dir(nh) if x.endswith('_CLASS')}
-            for letter, text, cls in zip(self.last_observation['inv_letters'],
-                                         self.last_observation['inv_strs'],
-                                         self.last_observation['inv_oclasses']):
-                if (text != 0).any():
-                    print(obj_classes[cls].ljust(7), chr(letter), '->', bytes(text).decode())
+            print(self.agent.inventory.items)
             print('-' * 20)
             self.env.render()
             print('-' * 20)

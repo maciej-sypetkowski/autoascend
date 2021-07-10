@@ -358,14 +358,90 @@ class ItemManager:
         return objs, glyph, count, status, modifier, equipped, at_ready, text
 
 
+class InventoryItems:
+    def __init__(self, agent):
+        self.agent = agent
+        self._previous_inv_strs = None
+
+        self._clear()
+
+    def _clear(self):
+        self.main_hand = None
+        self.off_hand = None
+        self.suit = None
+        self.helm = None
+        self.gloves = None
+        self.boots = None
+        self.cloak = None
+        self.shirt = None
+
+        self.all_items = []
+        self.all_letters = []
+
+    def __iter__(self):
+        return iter(self.all_items)
+
+    def __str__(self):
+        return (
+            f'main_hand: {self.main_hand}\n'
+            f'off_hand : {self.off_hand}\n'
+            f'suit     : {self.suit}\n'
+            f'helm     : {self.helm}\n'
+            f'gloves   : {self.gloves}\n'
+            f'boots    : {self.boots}\n'
+            f'cloak    : {self.cloak}\n'
+            f'shirt    : {self.shirt}\n'
+            f'Items:\n' +
+            '\n'.join([f' {l} - {i}' for l, i in zip(self.all_letters, self.all_items)])
+        )
+
+    def update(self):
+        if not (self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all()):
+            self._clear()
+
+            for item_name, category, glyph, letter in zip(
+                    self.agent.last_observation['inv_strs'],
+                    self.agent.last_observation['inv_oclasses'],
+                    self.agent.last_observation['inv_glyphs'],
+                    self.agent.last_observation['inv_letters']):
+                item_name = bytes(item_name).decode().strip('\0')
+                letter = chr(letter)
+                if not item_name:
+                    continue
+                item = self.agent.inventory.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
+
+                self.all_items.append(item)
+                self.all_letters.append(letter)
+
+                if item.equipped:
+                    for types, sub, name in [
+                        ((O.Weapon, O.WepTool), None,         'main_hand'),
+                        (O.Armor,               O.ARM_SHIELD, 'off_hand'), # TODO: twoweapon support
+                        (O.Armor,               O.ARM_SUIT,   'suit'),
+                        (O.Armor,               O.ARM_HELM,   'helm'),
+                        (O.Armor,               O.ARM_GLOVES, 'gloves'),
+                        (O.Armor,               O.ARM_BOOTS,  'boots'),
+                        (O.Armor,               O.ARM_CLOAK,  'cloak'),
+                        (O.Armor,               O.ARM_SHIRT,  'shirt'),
+                    ]:
+                        if isinstance(item.objs[0], types) and (sub is None or sub == item.objs[0].sub):
+                            assert getattr(self, name) is None
+                            setattr(self, name, item)
+                            break
+
+            self._previous_inv_strs = self.agent.last_observation['inv_strs']
+
+    def get_letter(self, item):
+        assert item in self.all_items, (item, self.all_items)
+        return self.all_letters[self.all_items.index(item)]
+
+
 class Inventory:
     def __init__(self, agent):
         self.agent = agent
         self.item_manager = ItemManager(self)
-        self.items = []
-        self.letters = []
+        self.items = InventoryItems(self.agent)
 
-        self._previous_inv_strs = None
         self._previous_blstats = None
         self._stop_updating = False
         self.items_below_me = None
@@ -379,26 +455,7 @@ class Inventory:
         self._previous_blstats = None
 
     def update(self):
-        if not (self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all()):
-            self.items = []
-            self.letters = []
-            for item_name, category, glyph, letter in zip(
-                    self.agent.last_observation['inv_strs'],
-                    self.agent.last_observation['inv_oclasses'],
-                    self.agent.last_observation['inv_glyphs'],
-                    self.agent.last_observation['inv_letters']):
-                item_name = bytes(item_name).decode().strip('\0')
-                letter = chr(letter)
-                if not item_name:
-                    continue
-                item = self.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
-
-                self.items.append(item)
-                self.letters.append(letter)
-
-            self._previous_inv_strs = self.agent.last_observation['inv_strs']
-
-
+        self.items.update()
         if self._stop_updating:
             return
 
@@ -421,10 +478,6 @@ class Inventory:
                 self._stop_updating = False
 
         assert self.items_below_me is not None and self.letters_below_me is not None
-
-    def get_letter(self, item):
-        assert item in self.items, (item, self.items)
-        return self.letters[self.items.index(item)]
 
     @contextlib.contextmanager
     def panic_if_items_below_me_change(self):
@@ -454,7 +507,7 @@ class Inventory:
         if item is None: # fists
             letter = '-'
         else:
-            letter = self.get_letter(item)
+            letter = self.items.get_letter(item)
 
         if item is not None and item.equipped:
             return True
@@ -478,7 +531,7 @@ class Inventory:
 
     def wear(self, item):
         assert item is not None
-        letter = self.get_letter(item)
+        letter = self.items.get_letter(item)
 
         if item.equipped:
             return True
@@ -497,7 +550,7 @@ class Inventory:
 
     def takeoff(self, item):
         assert item is not None and item.equipped, item
-        letter = self.get_letter(item)
+        letter = self.items.get_letter(item)
         assert item.status != Item.CURSED, item
 
         equipped_armors = [i for i in self.items if i.is_armor() and i.equipped]
@@ -538,6 +591,7 @@ class Inventory:
                     self.agent.step(A.Command.PICKUP)
                     if 'Pick up what?' not in self.agent.popup:
                         if 'You cannot reach the bottom of the pit.' in self.agent.message or \
+                                'You cannot reach the floor.' in self.agent.message or \
                                 'There is nothing here to pick up.' in self.agent.message or \
                                 ' solidly fixed to the floor.' in self.agent.message or \
                                 'You read:' in self.agent.message or \
@@ -682,31 +736,38 @@ class Inventory:
         while 1:
             best_armorset = self.get_best_armorset()
 
-            is_equipped = [any(map(lambda i: i is not None and i.is_armor() and i.objs[0].sub == slot, self.items)) for slot in range(O.ARM_NUM)]
-            wants_to_wear = [best_armorset[slot] is not None and not best_armorset[slot].equipped for slot in range(O.ARM_NUM)]
+            # TODO: twoweapon
+            for slot, name in [(O.ARM_SHIELD, 'off_hand'), (O.ARM_HELM, 'helm'), (O.ARM_GLOVES, 'gloves'), (O.ARM_BOOTS, 'boots'), \
+                               (O.ARM_SHIRT, 'shirt'), (O.ARM_SUIT, 'suit'), (O.ARM_CLOAK, 'cloak')]:
+                if best_armorset[slot] == getattr(self.items, name) or \
+                        (getattr(self.items, name) is not None and getattr(self.items, name).status == Item.CURSED):
+                    continue
+                additional_cond = True
+                if slot == O.ARM_SHIELD:
+                    additional_cond &= self.items.main_hand is None or not self.items.main_hand.objs[0].bi
+                if slot == O.ARM_GLOVES:
+                    additional_cond &= self.items.main_hand is None or self.items.main_hand.status != Item.CURSED
+                if slot == O.ARM_SHIRT or slot == O.ARM_SUIT:
+                    assert self.items.main_hand is None or self.items.main_hand.status != Item.CURSED, "check this case!"
+                    additional_cond &= self.items.cloak is None or self.items.cloak.status != Item.CURSED
+                if slot == O.ARM_SHIRT:
+                    assert self.items.main_hand is None or self.items.main_hand.status != Item.CURSED, "check this case!"
+                    additional_cond &= self.items.suit is None or self.items.suit.status != Item.CURSED
 
-            for slot in range(O.ARM_NUM):
-                if wants_to_wear[slot]:
-                    if slot == O.ARM_SHIRT and (is_equipped[O.ARM_SUIT] or is_equipped[O.ARM_CLOAK]):
-                        continue
-                    if slot == O.ARM_SUIT and is_equipped[O.ARM_CLOAK]:
-                        continue
-
-                    worn_item = None
-                    for i in self.items:
-                        if i.is_armor() and i.objs[0].sub == slot and i.equipped:
-                            worn_item = i
-                            break
-                    if worn_item is not None and worn_item.status == Item.CURSED:
-                        continue
-
+                if additional_cond:
                     if not yielded:
                         yielded = True
                         yield True
-
-                    if worn_item is not None:
-                        self.takeoff(worn_item)
+                    if (slot == O.ARM_SHIRT or slot == O.ARM_SUIT) and self.items.cloak is not None:
+                        self.takeoff(self.items.cloak)
                         break
+                    if slot == O.ARM_SHIRT and self.items.suit is not None:
+                        self.takeoff(self.items.suit)
+                        break
+                    if getattr(self.items, name) is not None:
+                        self.takeoff(getattr(self.items, name))
+                        break
+                    assert best_armorset[slot] is not None
                     self.wear(best_armorset[slot])
                     break
             else:

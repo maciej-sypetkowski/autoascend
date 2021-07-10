@@ -516,7 +516,7 @@ class Agent:
     def fire(self, item, direction):
         with self.atom_operation():
             self.step(A.Command.THROW)
-            self.type_text(self.inventory.get_letter(item))
+            self.type_text(self.inventory.items.get_letter(item))
             self.direction(direction)
         return True
 
@@ -1040,7 +1040,7 @@ class Agent:
                 self.step(A.Command.EAT)
                 for item in self.inventory.items:
                     if item.category == nh.FOOD_CLASS:
-                        self.type_text(self.inventory.get_letter(item))
+                        self.type_text(self.inventory.items.get_letter(item))
                         break
                 else:
                     assert 0
