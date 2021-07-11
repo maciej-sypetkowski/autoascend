@@ -418,7 +418,7 @@ class Agent:
     def update_level(self):
         level = self.current_level()
 
-        if '(for sale,' in self.message:
+        if '(for sale,' in self.message or any('(for sale' in p for p in self.popup):
             level.shop[self.blstats.y, self.blstats.x] = 1
 
         if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
