@@ -25,9 +25,9 @@ from glyph import ALL
 
 
 class EnvWrapper:
-    def __init__(self, env, skip_to=0, visualizer=False, step_limit=None):
+    def __init__(self, env, to_skip=0, visualizer=False, step_limit=None):
         self.env = env
-        self.skip_to = skip_to
+        self.to_skip = to_skip
         self.step_limit = step_limit
         self.visualizer = None
         if visualizer:
@@ -149,6 +149,9 @@ class EnvWrapper:
                 continue
             elif key == 127:  # Backspace
                 return None
+            elif key == 126:  # Delete
+                self.to_skip = 16
+                return None
             else:
                 actions = [a for a in self.env._actions if int(a) == key]
                 assert len(actions) < 2
@@ -167,7 +170,8 @@ class EnvWrapper:
             print('agent_action:', agent_action, repr(chr(int(agent_action))))
             print()
 
-            if self.step_count < self.skip_to:
+            if self.to_skip > 0:
+                self.to_skip -= 1
                 self.visualizer.frame_skipping = visualize.FAST_FRAME_SKIPPING
                 action = None
             else:
@@ -258,7 +262,7 @@ def prepare_env(args, seed, step_limit=None):
             seed += 10 ** 9
 
     env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=200),
-                     skip_to=args.skip_to, visualizer=args.mode == 'run')
+                     to_skip=args.skip_to, visualizer=args.mode == 'run')
     env.env.seed(seed, seed)
     return env
 

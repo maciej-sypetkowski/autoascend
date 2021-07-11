@@ -10,73 +10,14 @@ from nle.nethack import actions as A
 import utils
 from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
-from glyph import SS, MON, C
-from item import Inventory
+from global_logic import GlobalLogic
+from glyph import SS, MON, C, Hunger, G
+from item import Item, Inventory
+from level import Level
 from strategy import Strategy
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number')
-
-
-class G:  # Glyphs
-    FLOOR: ['.'] = {SS.S_room, SS.S_ndoor, SS.S_darkroom}
-    STONE: [' '] = {SS.S_stone}
-    WALL: ['|', '-'] = {SS.S_vwall, SS.S_hwall, SS.S_tlcorn, SS.S_trcorn, SS.S_blcorn, SS.S_brcorn,
-                        SS.S_crwall, SS.S_tuwall, SS.S_tdwall, SS.S_tlwall, SS.S_trwall}
-    CORRIDOR: ['#'] = {SS.S_corr}
-    STAIR_UP: ['<'] = {SS.S_upstair}
-    STAIR_DOWN: ['>'] = {SS.S_dnstair}
-
-    DOOR_CLOSED: ['+'] = {SS.S_vcdoor, SS.S_hcdoor}
-    DOOR_OPENED: ['-', '|'] = {SS.S_vodoor, SS.S_hodoor}
-    DOORS = set.union(DOOR_CLOSED, DOOR_OPENED)
-
-    BARS = {SS.S_bars}
-
-    MONS = set(MON.ALL_MONS)
-    PETS = set(MON.ALL_PETS)
-
-    PEACEFUL_MONS = {i + nh.GLYPH_MON_OFF for i in range(nh.NUMMONS) if nh.permonst(i).mflags2 & MON.M2_PEACEFUL}
-
-    BODIES = {nh.GLYPH_BODY_OFF + i for i in range(nh.NUMMONS)}
-    OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) != nh.ROCK_CLASS}
-    BOULDER = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == nh.ROCK_CLASS}
-
-    NORMAL_OBJECTS = {i for i in range(nh.MAX_GLYPH) if nh.glyph_is_normal_object(i)}
-    FOOD_OBJECTS = {i for i in NORMAL_OBJECTS if ord(nh.objclass(nh.glyph_to_obj(i)).oc_class) == nh.FOOD_CLASS}
-
-    DICT = {k: v for k, v in locals().items() if not k.startswith('_')}
-
-    @classmethod
-    def assert_map(cls, glyphs, chars):
-        for glyph, char in zip(glyphs.reshape(-1), chars.reshape(-1)):
-            char = bytes([char]).decode()
-            for k, v in cls.__annotations__.items():
-                assert glyph not in cls.DICT[k] or char in v, f'{k} {v} {glyph} {char}'
-
-
-G.INV_DICT = {i: [k for k, v in G.DICT.items() if i in v]
-              for i in set.union(*map(set, G.DICT.values()))}
-
-
-class Hunger:
-    SATIATED = 0
-    NOT_HUNGRY = 1
-    HUNGRY = 2
-    WEAK = 3
-    FAINTING = 4
-
-
-class Level:
-    def __init__(self):
-        self.walkable = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
-        self.seen = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
-        self.objects = np.zeros((C.SIZE_Y, C.SIZE_X), np.int16)
-        self.objects[:] = -1
-        self.search_count = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
-        self.corpse_age = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32) - 10000
-        self.shop = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
-        self.checked_item_pile = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
 
 
 class Agent:
@@ -96,6 +37,7 @@ class Agent:
 
         self.inventory = Inventory(self)
         self.character = Character(self)
+        self.global_logic = GlobalLogic(self)
 
         self.last_bfs_dis = None
         self.last_bfs_step = None
@@ -204,7 +146,7 @@ class Agent:
         # check if less nested ChangeStategy is present
         self.call_update_functions()
 
-    def preempt(self, strategies, default):
+    def preempt(self, strategies, default, continue_after_preemption=True):
         id2fun = {}
         for strategy in strategies:
             def f(iden, strategy=strategy):
@@ -221,6 +163,7 @@ class Agent:
 
         call_update = True
 
+        val = None
         while 1:
             assert inactivity_counter < 100
             if last_step != self.step_count:
@@ -254,6 +197,9 @@ class Agent:
                     assert 0, iterator
                 except StopIteration:
                     pass
+
+                if not continue_after_preemption:
+                    break
 
         return val
 
@@ -448,9 +394,12 @@ class Agent:
     ######## TRIVIAL HELPERS
 
     def current_level(self):
-        key = (self.blstats.dungeon_number, self.blstats.level_number)
+        return self.get_level(self.blstats.dungeon_number, self.blstats.level_number)
+
+    def get_level(self, dungeon_number, level_number):
+        key = (dungeon_number, level_number)
         if key not in self.levels:
-            self.levels[key] = Level()
+            self.levels[key] = Level(*key)
         return self.levels[key]
 
     @staticmethod
@@ -562,7 +511,19 @@ class Agent:
         expected_y = self.blstats.y + ('s' in dir) - ('n' in dir)
         expected_x = self.blstats.x + ('e' in dir) - ('w' in dir)
 
-        self.direction(dir)
+        # TODO: portals
+        if dir in ['<', '>']:
+            level = self.current_level()
+            with self.atom_operation():
+                self.direction(dir)
+                assert self.current_level().key() != level.key(), self.message
+                level.stair_destination[expected_y, expected_x] = \
+                        (self.current_level().key(), (self.blstats.y, self.blstats.x))
+                self.current_level().stair_destination[
+                        (self.blstats.y, self.blstats.x)] = (level.key(), (expected_y, expected_x))
+
+        else:
+            self.direction(dir)
 
         if self.blstats.y != expected_y or self.blstats.x != expected_x:
             raise AgentPanic(f'agent position do not match after "move": '
@@ -997,35 +958,6 @@ class Agent:
             self.inventory.gather_items(),
         ])
 
-    @utils.debug_log('move_down')
-    @Strategy.wrap
-    def move_down(self):
-        level = self.current_level()
-
-        mask = utils.isin(level.objects, G.STAIR_DOWN)
-        if not mask.any():
-            yield False
-
-        mask &= (self.bfs() != -1)
-        if not mask.any():
-            yield False
-        yield True
-
-        nonzero_y, nonzero_x = mask.nonzero()
-        target_y, target_x = nonzero_y[0], nonzero_x[0]
-
-        self.go_to(target_y, target_x, debug_tiles_args=dict(color=(0, 0, 255), is_path=True))
-        with self.env.debug_log('waiting for a pet'):
-            for _ in range(8):
-                for y, x in self.neighbors(self.blstats.y, self.blstats.x):
-                    if self.glyphs[y, x] in G.PETS:
-                        break
-                else:
-                    self.direction('.')
-                    continue
-                break
-            self.direction('>')
-
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
     def emergency_strategy(self):
@@ -1065,38 +997,23 @@ class Agent:
 
     ######## HIGH-LEVEL STRATEGIES
 
-    @utils.debug_log('main_strategy')
-    def main_strategy(self):
-        @Strategy.wrap
-        def eat_from_inventory():
-            if not (self.blstats.hunger_state >= Hunger.WEAK
-                    and any(map(lambda item: item.category == nh.FOOD_CLASS, self.inventory.items))):
-                yield False
-            yield True
-            with self.atom_operation():
-                self.step(A.Command.EAT)
-                while re.search('There is[a-zA-z ]* corpse here', self.message):
-                    self.type_text('n')
-                for item in self.inventory.items:
-                    if item.category == nh.FOOD_CLASS:
-                        self.type_text(self.inventory.items.get_letter(item))
-                        break
-                else:
-                    assert 0
-
-        return \
-            (self.explore1(0).before(self.explore1(None))).preempt(self, [
-                self.move_down().condition(lambda: self.blstats.score > 850 + 100 * len(self.levels)
-                                                   and self.blstats.hitpoints >= 0.9 * self.blstats.max_hitpoints)
-            ]).preempt(self, [
-                self.eat1().condition(lambda: self.blstats.time % 3 == 0
-                                              and self.blstats.hunger_state >= Hunger.NOT_HUNGRY),
-                eat_from_inventory(),
-            ]).preempt(self, [
-                self.fight1(),
-            ]).preempt(self, [
-                self.emergency_strategy(),
-            ])
+    @Strategy.wrap
+    def eat_from_inventory(self):
+        if not (self.blstats.hunger_state >= Hunger.WEAK and any(
+                map(lambda item: item.category == nh.FOOD_CLASS,
+                    self.inventory.items))):
+            yield False
+        yield True
+        with self.atom_operation():
+            self.step(A.Command.EAT)
+            while re.search('There is[a-zA-z ]* corpse here', self.message):
+                self.type_text('n')
+            for item in self.inventory.items:
+                if item.category == nh.FOOD_CLASS:
+                    self.type_text(self.inventory.items.get_letter(item))
+                    break
+            else:
+                assert 0
 
     ####### MAIN
 
@@ -1112,7 +1029,7 @@ class Agent:
                 try:
                     self.step(A.Command.ESC)
                     self.step(A.Command.ESC)
-                    self.main_strategy().run()
+                    self.global_logic.global_strategy().run()
                     assert 0
                 except AgentPanic as e:
                     self.all_panics.append(e)

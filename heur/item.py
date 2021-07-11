@@ -815,6 +815,7 @@ class Inventory:
         mask = ((self.agent.last_observation['specials'] & nh.MG_OBJPILE) > 0) & \
                ~self.agent.current_level().checked_item_pile
         mask |= utils.isin(self.agent.glyphs, self._interesting_item_glyphs)
+        mask &= ~self.agent.current_level().shop
 
         if not mask.any():
             yield False
@@ -836,6 +837,9 @@ class Inventory:
     @utils.debug_log('inventory.pickup_items_below_me')
     @Strategy.wrap
     def pickup_items_below_me(self):
+        if self.agent.current_level().shop[self.agent.blstats.y, self.agent.blstats.x]:
+            yield False
+
         if len(self.items_below_me) > 1:
             self.agent.current_level().checked_item_pile[self.agent.blstats.y, self.agent.blstats.x] = True
 

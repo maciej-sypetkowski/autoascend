@@ -10,14 +10,11 @@ from strategy import Strategy
 
 @nb.njit(cache=True)
 def bfs(y, x, *, walkable, walkable_diagonally):
-    SIZE_X = 79  # C.SIZE_X
-    SIZE_Y = 21  # C.SIZE_Y
-
-    dis = np.zeros((SIZE_Y, SIZE_X), dtype=np.int32)
+    dis = np.zeros(walkable.shape, dtype=np.int32)
     dis[:] = -1
     dis[y, x] = 0
 
-    buf = np.zeros((SIZE_Y * SIZE_X, 2), dtype=np.uint32)
+    buf = np.zeros((walkable.shape[0] * walkable.shape[1], 2), dtype=np.uint32)
     index = 0
     buf[index] = (y, x)
     size = 1
@@ -29,11 +26,10 @@ def bfs(y, x, *, walkable, walkable_diagonally):
         # dir: SE
         # @|
         # -.
-        # TODO: debug diagonal moving into and from doors
         for dy in [-1, 0, 1]:
             for dx in [-1, 0, 1]:
                 py, px = y + dy, x + dx
-                if 0 <= py < SIZE_Y and 0 <= px < SIZE_X and (dy != 0 or dx != 0):
+                if 0 <= py < walkable.shape[0] and 0 <= px < walkable.shape[1] and (dy != 0 or dx != 0):
                     if (walkable[py, px] and
                             (abs(dy) + abs(dx) <= 1 or (walkable_diagonally[py, px] and walkable_diagonally[y, x] and
                                                         (walkable[py, x] or walkable[y, px])))):

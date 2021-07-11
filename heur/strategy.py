@@ -9,7 +9,7 @@ class Strategy:
     def __init__(self, strategy):
         self.strategy = strategy
 
-    def run(self, agent=None, return_condition=False):
+    def run(self, return_condition=False):
         gen = self.strategy()
         if not next(gen):
             if return_condition:
@@ -22,6 +22,10 @@ class Strategy:
             if return_condition:
                 return True
             return e.value
+
+    def check_condition(self):
+        gen = self.strategy()
+        return next(gen)
 
     def condition(self, condition):
         def f(self=self, condition=condition):
@@ -37,6 +41,15 @@ class Strategy:
                 return e.value
 
         return Strategy(f)
+
+    def until(self, agent, condition):
+        def f():
+            if not condition():
+                yield False
+                assert 0
+            yield True
+
+        return self.preempt(agent, [Strategy(f)], continue_after_preemption=False)
 
     def before(self, strategy):
         def f(self=self, strategy=strategy):
@@ -72,7 +85,7 @@ class Strategy:
 
         return Strategy(f)
 
-    def preempt(self, agent, strategies):
+    def preempt(self, agent, strategies, continue_after_preemption=True):
         def f(self=self, agent=agent, strategies=strategies):
             gen = self.strategy()
             condition_passed = False
@@ -85,7 +98,7 @@ class Strategy:
 
             assert not agent._no_step_calls
 
-            return agent.preempt(strategies, self)
+            return agent.preempt(strategies, self, continue_after_preemption=continue_after_preemption)
 
         return Strategy(f)
 
