@@ -141,6 +141,7 @@ class ItemManager:
 
     def get_item_from_text(self, text, category=None, glyph=None):
         # TODO: pass glyph if not on hallu
+        # TODO: when blind, it may not work as expected, e.g. "a shield", "a gem", "a potion", etc
         return Item(*self.parse_text(text, category, None))
 
     def possible_objects_from_glyph(self, glyph):
@@ -168,13 +169,13 @@ class ItemManager:
             r'([a-zA-z0-9-! ]+)'
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
             r'( \(([a-zA-Z0-9; ]+)\))?'
-            r'( \((for sale|unpaid), (\d+) ?[a-zA-Z- ]+\))?'
+            r'( \((for sale|unpaid), ((\d+) ?[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
         assert len(matches) <= 1, text
         assert len(matches), text
 
-        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, shop_price = matches[0]
+        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, _, shop_price = matches[0]
         # TODO: effects, uses
 
         if info in {'being worn', 'being worn; slippery', 'wielded'} or info.startswith('weapon in '):
@@ -610,7 +611,7 @@ class Inventory:
                         items = []
                         letters = []
                 else:
-                    self.agent.step(A.Command.PICKUP)
+                    self.agent.step(A.Command.PICKUP) # FIXME: parse LOOK output, add this fragment to pickup method
                     if 'Pick up what?' not in self.agent.popup:
                         if 'You cannot reach the bottom of the pit.' in self.agent.message or \
                                 'You cannot reach the floor.' in self.agent.message or \
@@ -781,10 +782,8 @@ class Inventory:
                 if slot == O.ARM_GLOVES:
                     additional_cond &= self.items.main_hand is None or self.items.main_hand.status != Item.CURSED
                 if slot == O.ARM_SHIRT or slot == O.ARM_SUIT:
-                    assert self.items.main_hand is None or self.items.main_hand.status != Item.CURSED, "check this case!"
                     additional_cond &= self.items.cloak is None or self.items.cloak.status != Item.CURSED
                 if slot == O.ARM_SHIRT:
-                    assert self.items.main_hand is None or self.items.main_hand.status != Item.CURSED, "check this case!"
                     additional_cond &= self.items.suit is None or self.items.suit.status != Item.CURSED
 
                 if additional_cond:

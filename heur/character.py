@@ -243,9 +243,11 @@ class Character:
             raise ValueError('Invalid ehance popup text format.' + str(self.agent.popup))
         self.upgradable_skills = dict()
         for line in self.agent.popup[1:]:
-            if line.strip() in self.possible_skill_types:
+            if line.strip() in self.possible_skill_types or \
+                    line.strip() == '(Skill flagged by "#" cannot be enhanced any further.)' or \
+                    line.strip() == '(Skill flagged by "*" may be enhanced when you\'re more experienced.)':
                 continue
-            matches = re.findall(r'^([a-zA-Z] -)? *' +
+            matches = re.findall(r'^([a-zA-Z] -)?#?\*? *' +
                                  r'(' + '|'.join(self.name_to_skill_type.keys()) + ') *' +
                                  r'\[(' + '|'.join(self.possible_skill_levels) + ')\]', line)
             assert len(matches) == 1, (matches, line)
