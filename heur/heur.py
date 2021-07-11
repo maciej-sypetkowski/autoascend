@@ -59,6 +59,17 @@ class EnvWrapper:
 
     def render(self):
         if self.visualizer is not None:
+            with self.debug_tiles(self.agent.current_level().walkable, color=(0, 255, 0, 128)) \
+                    if self.draw_walkable else contextlib.suppress():
+                with self.debug_tiles(~self.agent.current_level().seen, color=(255, 0, 0, 128)) \
+                        if self.draw_seen else contextlib.suppress():
+                    with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0, color=(0, 255, 255, 128)):
+                        self.visualizer.step(self.last_observation)
+                        self.visualizer.render()
+
+            if self.visualizer.frame_counter % self.visualizer.frame_skipping != 0:
+                return
+
             if self.agent is not None:
                 print('Message:', self.agent.message)
                 print('Pop-up :', self.agent.popup)
@@ -75,16 +86,10 @@ class EnvWrapper:
             print()
             print(self.agent.inventory.items)
             print('-' * 20)
+
             self.env.render()
             print('-' * 20)
             print()
-            with self.debug_tiles(self.agent.current_level().walkable, color=(0, 255, 0, 128)) \
-                    if self.draw_walkable else contextlib.suppress():
-                with self.debug_tiles(~self.agent.current_level().seen, color=(255, 0, 0, 128)) \
-                        if self.draw_seen else contextlib.suppress():
-                    with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0, color=(0, 255, 255, 128)):
-                        self.visualizer.step(self.last_observation)
-                        self.visualizer.render()
 
     def print_help(self):
         scene_glyphs = set(self.env.last_observation[0].reshape(-1))
@@ -184,7 +189,6 @@ class EnvWrapper:
             if action is None:
                 action = agent_action
 
-            print('\n' * 10)
             print('action:', action)
             print()
         else:

@@ -6,11 +6,13 @@ import utils
 from glyph import Hunger, G
 from level import Level
 from strategy import Strategy
+import soko_solver
 
 
 class Milestones(IntEnum):
     FIND_GNOMISH_MINES = auto()
     FIND_SOKOBAN = auto()
+    SOLVE_SOKOBAN = auto()
     GO_DOWN = auto() # TODO
 
 
@@ -60,6 +62,44 @@ class GlobalLogic:
         stairs = self.agent.get_level(Level.GNOMISH_MINES, 1).get_stairs(up=True)
         assert len(stairs) == 1
         return list(stairs.values())[0][0]
+
+    @utils.debug_log('solving sokoban')
+    @Strategy.wrap
+    def solve_sokoban_strategy(self):
+        # TODO: refactor
+        yield True
+        wall_map = utils.isin(self.agent.current_level().objects, G.WALL)
+        for smap, answer in soko_solver.maps.items():
+            sokomap = soko_solver.convert_map(smap)
+            offset = np.array(min(zip(*wall_map.nonzero()))) - \
+                     np.array(min(zip(*(sokomap.sokomap == soko_solver.WALL).nonzero())))
+            mask = wall_map[offset[0] : offset[0] + sokomap.sokomap.shape[0],
+                            offset[1] : offset[1] + sokomap.sokomap.shape[1]]
+            print(offset)
+            print(mask.astype(int))
+            print((sokomap.sokomap == soko_solver.WALL).astype(int))
+            if (mask & (sokomap.sokomap == soko_solver.WALL) == mask).all():
+                break
+        else:
+            assert 0, 'sokomap not found'
+
+        for (y, x), (dy, dx) in answer:
+            boulder_map = utils.isin(self.agent.glyphs, G.BOULDER)
+            mask = boulder_map[offset[0] : offset[0] + sokomap.sokomap.shape[0],
+                               offset[1] : offset[1] + sokomap.sokomap.shape[1]]
+            ty, tx = offset[0] + y - dy, offset[1] + x - dx,
+            soko_boulder_mask = sokomap.sokomap == soko_solver.BOULDER
+            if self.agent.bfs()[ty, tx] != -1 and \
+                    ((soko_boulder_mask | mask) == soko_boulder_mask).all() and \
+                    self.agent.glyphs[ty + dy, tx + dx] in G.BOULDER:
+                sokomap.print()
+                soko_solver.SokoMap((0, 0), mask * soko_solver.BOULDER).print()
+                self.agent.go_to(ty, tx, debug_tiles_args=dict(color=(255, 255, 255), is_path=True))
+                self.agent.move(ty + dy, tx + dx)
+
+            sokomap.move(y, x, dy, dx)
+
+        assert 0, 'sakomap unsolvable'
 
     @utils.debug_log('exploring stairs')
     @Strategy.wrap
@@ -222,6 +262,15 @@ class GlobalLogic:
             # assert 0, level.key()
             yield False
 
+        elif self.milestone == Milestones.SOLVE_SOKOBAN:
+            yield True
+            if utils.isin(self.agent.last_observation['chars'], [ord('^')]).any():
+                self.solve_sokoban_strategy().run()
+                return
+            self.check_unexplored_stairs_strategy(up=True, down=True).run()
+            assert 0
+            return
+
         elif self.milestone == Milestones.GO_DOWN:
             # TODO
             if self.check_unexplored_stairs_strategy(down=True).check_condition():
@@ -236,14 +285,16 @@ class GlobalLogic:
 
     def global_strategy(self):
         return \
-            (self.agent.explore1(0).before(self.agent.explore1(None).preempt(self.agent, [
+            (self.agent.explore1(0).condition(lambda: self.milestone != Milestones.SOLVE_SOKOBAN).before(
+                self.agent.explore1(None).preempt(self.agent, [
                 self.current_strategy().condition(lambda:
                     self.agent.blstats.score > 850 + 100 * len(self.agent.levels) and \
                     self.agent.blstats.hitpoints >= 0.9 * self.agent.blstats.max_hitpoints)
             ], continue_after_preemption=False))).repeat().preempt(self.agent, [
                 self.agent.eat1().condition(lambda: self.agent.blstats.time % 3 == 0 and \
-                                                    self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
-                self.agent.eat_from_inventory(),
+                                                    self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY)\
+                                 .condition(lambda: self.milestone != Milestones.SOLVE_SOKOBAN),
+                self.agent.eat_from_inventory().condition(lambda: self.milestone != Milestones.SOLVE_SOKOBAN),
             ]).preempt(self.agent, [
                 self.agent.fight1(),
             ]).preempt(self.agent, [

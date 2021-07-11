@@ -169,8 +169,6 @@ class Visualizer:
         inventory = self._draw_inventory(rendered.shape[0])
         rendered = np.concatenate([rendered, inventory], axis=1)
 
-        self.frame_counter += 1
-
         cv2.imshow('NetHackVis', rendered[..., ::-1])
         cv2.waitKey(1)
 
@@ -179,7 +177,6 @@ class Visualizer:
         popup_vis = self._draw_popup_history(width // 3)
         log_messages_vis = self._draw_debug_message_log(width - 2 * (width // 3))
         ret = np.concatenate([messages_vis, popup_vis, log_messages_vis], axis=1)
-        print(width, ret.shape)
         assert ret.shape[1] == width
         return ret
 
