@@ -288,7 +288,7 @@ def single_simulation(args, seed, timeout=180):
         env.end_reason = f'timeout'
     except BaseException as e:
         env.end_reason = f'exception: {"".join(traceback.format_exception(None, e, e.__traceback__))}'
-        print(f'Seed {seed}, step {env.step_count}:', env.end_reason)
+        print(f'Seed {env.env.get_seeds()}, step {env.step_count}:', env.end_reason)
 
     end_time = time.time()
     summary = env.get_summary()
