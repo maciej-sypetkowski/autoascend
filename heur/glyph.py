@@ -416,6 +416,11 @@ class G:  # Glyphs
     NORMAL_OBJECTS = {i for i in range(nh.MAX_GLYPH) if nh.glyph_is_normal_object(i)}
     FOOD_OBJECTS = {i for i in NORMAL_OBJECTS if ord(nh.objclass(nh.glyph_to_obj(i)).oc_class) == nh.FOOD_CLASS}
 
+    TRAPS = {SS.S_arrow_trap, SS.S_dart_trap, SS.S_falling_rock_trap, SS.S_squeaky_board, SS.S_bear_trap,
+             SS.S_land_mine, SS.S_rolling_boulder_trap, SS.S_sleeping_gas_trap, SS.S_rust_trap, SS.S_fire_trap,
+             SS.S_pit, SS.S_spiked_pit, SS.S_hole, SS.S_trap_door, SS.S_teleportation_trap, SS.S_level_teleporter,
+             SS.S_magic_portal, SS.S_web, SS.S_statue_trap, SS.S_magic_trap, SS.S_anti_magic_trap, SS.S_polymorph_trap}
+
     DICT = {k: v for k, v in locals().items() if not k.startswith('_')}
 
     @classmethod

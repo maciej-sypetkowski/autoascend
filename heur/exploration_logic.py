@@ -1,4 +1,5 @@
 import numpy as np
+from nle import nethack as nh
 
 import utils
 from glyph import G, C
@@ -165,6 +166,26 @@ class ExplorationLogic:
         yield True
         return self.agent.go_to(y, x, *args, **kwargs)
 
+    @Strategy.wrap
+    def search_neighbors_for_traps(self):
+        search_count = 0
+        level = self.agent.current_level()
+        for y, x in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, shuffle=False):
+            if level.was_on[y, x] or \
+                    level.objects[y, x] in G.TRAPS or \
+                    (self.agent.last_observation['specials'][y, x] & nh.MG_OBJPILE) == 0:
+                continue
+
+            c = level.search_count[min(y - 1, 0) : y + 2, min(x - 1, 0) : x + 2].sum()
+            search_count = max(search_count, 4 - c)
+
+        if search_count == 0:
+            yield False
+        yield True
+
+        for _ in range(search_count):
+            self.agent.search()
+
     @utils.debug_log('explore1')
     def explore1(self, search_prio_limit=0):
         # TODO: refactor entire function
@@ -296,6 +317,12 @@ class ExplorationLogic:
 
             assert search_prio_limit is not None
 
-        return open_visit_search(search_prio_limit).preempt(self.agent, [
-            self.agent.inventory.gather_items(),
-        ])
+        return (
+            open_visit_search(search_prio_limit)
+            .preempt(self.agent, [
+                self.agent.inventory.gather_items(),
+            ])
+            .preempt(self.agent, [
+                self.search_neighbors_for_traps(),
+            ])
+        )

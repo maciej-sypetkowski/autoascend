@@ -51,6 +51,7 @@ class Agent:
         self.turns_in_atom_operation = None
 
         self._is_reading_message_or_popup = False
+        self._last_terrain_check = None
 
     ######## CONVENIENCE FUNCTIONS
 
@@ -356,6 +357,8 @@ class Agent:
 
     def update_state(self):
         self.inventory.update()
+        if self._last_terrain_check is None or self.blstats.time - self._last_terrain_check > 50:
+            self.check_terrain()
         self.update_level()
         self.call_update_functions()
 
@@ -374,7 +377,7 @@ class Agent:
             self._previous_glyphs = self.last_observation['glyphs']
 
             # TODO: all statues
-            mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED)
+            mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS)
             level.walkable[mask] = True
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
@@ -388,6 +391,8 @@ class Agent:
             level.seen[mask] = True
             level.objects[mask & ~level.walkable] = -1
             level.walkable[mask] = True
+
+        level.was_on[self.blstats.y, self.blstats.x] = True
 
         for y, x in self.neighbors(self.blstats.y, self.blstats.x, shuffle=False):
             if self.glyphs[y, x] in G.STONE:
@@ -423,6 +428,14 @@ class Agent:
         return ret
 
     ######## TRIVIAL ACTIONS
+
+    def check_terrain(self):
+        self._last_terrain_check = self.blstats.time
+        with self.atom_operation():
+            self.type_text('#te')
+            self.step(A.MiscAction.MORE, iter('b'))
+            self.update_level()
+            self.step(A.Command.ESC)
 
     def wield_best_weapon(self):
         # TODO: move to inventory
@@ -483,7 +496,9 @@ class Agent:
         with self.panic_if_position_changes():
             self.step(A.Command.SEARCH)
             self.current_level().search_count[self.blstats.y, self.blstats.x] += 1
-            return True
+            if 'You find ' in self.message:
+                self.check_terrain()
+        return True
 
     def direction(self, y, x=None):
         if x is not None:
@@ -563,7 +578,8 @@ class Agent:
 
         level = self.current_level()
 
-        walkable = level.walkable & ~utils.isin(self.glyphs, G.PEACEFUL_MONS, G.BOULDER)
+        walkable = level.walkable & ~utils.isin(self.glyphs, G.PEACEFUL_MONS, G.BOULDER) & \
+                   ~utils.isin(level.objects, G.TRAPS)
 
         dis = utils.bfs(y, x,
                         walkable=walkable,
@@ -913,6 +929,8 @@ class Agent:
 
                     self.step(A.Command.ESC)
                     self.step(A.Command.ESC)
+                    self.check_terrain()
+
                     self.global_logic.global_strategy().run()
                     assert 0
                 except AgentPanic as e:

@@ -27,6 +27,7 @@ class Level:
         self.corpse_age = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32) - 10000
         self.shop = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
         self.checked_item_pile = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
+        self.was_on = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
 
         self.stair_destination = {}  # {(y, x) -> ((dungeon, level), (y, x))}
 
