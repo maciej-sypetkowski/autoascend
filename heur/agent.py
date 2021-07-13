@@ -163,15 +163,15 @@ class Agent:
             id2fun[iden] = fun
 
         inactivity_counter = 0
-        last_step = 0
+        last_turn = 0
 
         call_update = True
 
         val = None
         while 1:
             assert inactivity_counter < 100
-            if last_step != self.step_count:
-                last_step = self.step_count
+            if last_turn != self.blstats.time:
+                last_turn = self.blstats.time
                 inactivity_counter = 0
             else:
                 inactivity_counter += 1
@@ -895,15 +895,25 @@ class Agent:
         try:
             self.step(A.Command.AUTOPICKUP)
 
+            inactivity_counter = 0
+            last_turn = 0
             while 1:
+                assert inactivity_counter < 100
+                if last_turn != self.blstats.time:
+                    last_turn = self.blstats.time
+                    inactivity_counter = 0
+                else:
+                    inactivity_counter += 1
+
                 try:
+                    self.on_panic()
+
                     self.step(A.Command.ESC)
                     self.step(A.Command.ESC)
                     self.global_logic.global_strategy().run()
                     assert 0
                 except AgentPanic as e:
                     self.all_panics.append(e)
-                    self.on_panic()
                     if self.verbose:
                         print(f'PANIC!!!! : {e}')
                 except AgentFinished:
@@ -914,7 +924,6 @@ class Agent:
                     if not self.panic_on_errors:
                         raise
                     self.all_panics.append(e)
-                    self.on_panic()
                     if self.verbose:
                         print(f'PANIC!!!! : {e}')
         except AgentFinished:

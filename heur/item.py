@@ -593,8 +593,12 @@ class Inventory:
             with self.agent.atom_operation():
                 if not assume_appropriate_message:
                     self.agent.step(A.Command.LOOK)
+                elif 'Things that are here:' in self.agent.popup or \
+                        re.search('There are (several|many) objects here\.', self.agent.message):
+                    # LOOK is necessary even when 'Things that are here' popup is present for some very rare cases
+                    self.agent.step(A.Command.LOOK)
 
-                if 'Things that are here:' not in self.agent.popup and not re.search('There are (several|many) objects here\.', self.agent.message):
+                if 'Things that are here:' not in self.agent.popup:
                     if 'You see no objects here.' in self.agent.message:
                         items = []
                         letters = []

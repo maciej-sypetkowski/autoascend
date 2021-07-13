@@ -72,6 +72,9 @@ class ExplorationLogic:
                              {(Level.DUNGEONS_OF_DOOM, i) for i in range(6, 11)
                               if (Level.DUNGEONS_OF_DOOM, i) in achievable_levels})
 
+        if all((dun == Level.GNOMISH_MINES for dun, lev in achievable_levels)):
+            return self.levels_to_explore_to_get_to(Level.GNOMISH_MINES, 1)
+
         # TODO: more dungeons
 
         assert 0, ((dungeon_number, level_number), achievable_levels)
