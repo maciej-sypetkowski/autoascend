@@ -99,6 +99,8 @@ class GlobalLogic:
                                  .condition(lambda: self.milestone != Milestone.SOLVE_SOKOBAN),
                 self.agent.eat_from_inventory().condition(lambda: self.milestone != Milestone.SOLVE_SOKOBAN),
             ]).preempt(self.agent, [
+                self.agent.fight2() if self.agent.character.role in (self.agent.character.ROGUE,
+                                                                     self.agent.character.RANGER,) else
                 self.agent.fight1(),
             ]).preempt(self.agent, [
                 self.agent.emergency_strategy(),

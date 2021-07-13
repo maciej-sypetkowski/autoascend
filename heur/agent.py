@@ -12,8 +12,8 @@ from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
-from glyph import SS, MON, C, Hunger, G
-from item import Item, Inventory
+from glyph import MON, C, Hunger, G
+from item import Inventory
 from level import Level
 from strategy import Strategy
 
@@ -532,10 +532,10 @@ class Agent:
                 self.direction(dir)
                 assert self.current_level().key() != level.key(), self.message
                 level.stair_destination[expected_y, expected_x] = \
-                        (self.current_level().key(), (self.blstats.y, self.blstats.x))
+                    (self.current_level().key(), (self.blstats.y, self.blstats.x))
                 # TODO: one way portals (elemental and astral planes)
                 self.current_level().stair_destination[
-                        (self.blstats.y, self.blstats.x)] = (level.key(), (expected_y, expected_x))
+                    (self.blstats.y, self.blstats.x)] = (level.key(), (expected_y, expected_x))
 
         else:
             self.direction(dir)
@@ -660,14 +660,7 @@ class Agent:
     @utils.debug_log('ranged_stance1')
     def ranged_stance1(self):
         while True:
-            launchers = [i for i in self.inventory.items if i.is_launcher()]
-            ammo_list = [i for i in self.inventory.items if i.is_fired_projectile()]
-
-            valid_combinations = []
-            for launcher in launchers:
-                for ammo in ammo_list:
-                    if ammo.is_fired_projectile(launcher):
-                        valid_combinations.append((launcher, ammo))
+            valid_combinations = self.get_ranged_combinations(throwing=False)
 
             # TODO: select best combination
             if not valid_combinations:
@@ -690,6 +683,21 @@ class Agent:
                         break
             else:
                 return False
+
+    def get_ranged_combinations(self, throwing=True):
+        launchers = [i for i in self.inventory.items if i.is_launcher()]
+        ammo_list = [i for i in self.inventory.items if i.is_fired_projectile()]
+        valid_combinations = []
+        for launcher in launchers:
+            for ammo in ammo_list:
+                if ammo.is_fired_projectile(launcher):
+                    valid_combinations.append((launcher, ammo))
+
+        best_melee_weapon = self.inventory.get_best_weapon()
+        if throwing:
+            valid_combinations.extend([(None, i) for i in self.inventory.items
+                                       if i.is_thrown_projectile() and not i == best_melee_weapon])
+        return valid_combinations
 
     def get_visible_monsters(self):
         """ Returns list of tuples (distance, y, x, monster)
@@ -738,6 +746,91 @@ class Agent:
 
         return False
 
+    @utils.debug_log('fight2')
+    @Strategy.wrap
+    def fight2(self):
+        import fight_heur
+        yielded = False
+        wait_counter = 0
+        while 1:
+            monsters = self.get_visible_monsters()
+            # if len(monsters) > 1:
+            #     self.env.visualizer.frame_skipping = 1
+            #     self.env.render()
+            #     input('MMMMM')
+
+            if not monsters or all(dis > 7 for dis, *_ in monsters):
+                if wait_counter:
+                    self.search()
+                    wait_counter -= 1
+                    continue
+                if not yielded:
+                    yield False
+                return
+
+            if not yielded:
+                yielded = True
+                yield True
+                self.character.parse_enhance_view()
+
+            priority, actions = fight_heur.build_priority_map(self)
+            mask = ~np.isnan(priority)
+            assert mask.any()
+            priority[~mask] = np.min(priority[mask]) - 1
+
+            dis = self.bfs()
+            adjacent = dis == 1
+
+            priority[~adjacent] -= 2 ** 16
+            possible_move_to = list(zip(*np.nonzero((priority == np.max(priority)))))
+            priority[~adjacent] += 2 ** 16
+
+            best_y, best_x = possible_move_to[self.rng.randint(0, len(possible_move_to))]
+
+            best_move_score = priority[best_y, best_x]
+            best_action = max(actions) if actions else None
+
+            priority[~mask] = float('nan')
+            with self.env.debug_tiles(priority, color='turbo', is_heatmap=True):
+                if best_action is None or best_move_score > best_action[0]:
+                    with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
+                                               [best_y, best_x]], color=(0, 255, 0), is_path=True):
+                        self.move(best_y, best_x)
+                        wait_counter = 5
+                        continue
+                else:
+                    _, action_name, target_y, target_x = best_action
+                    if action_name == 'melee':
+                        if self.wield_best_weapon():
+                            continue
+                        with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
+                                                   [target_y, target_x]], color=(255, 0, 255), is_path=True):
+                            self.fight(target_y, target_x)
+                            wait_counter = 0
+                            continue
+                    elif action_name == 'ranged':
+                        valid_combinations = self.get_ranged_combinations()
+
+                        # TODO: select best combination
+                        if not valid_combinations:
+                            self.wield_best_weapon()
+                            continue
+
+                        # TODO: consider using monster information to select the best combination
+                        launcher, ammo = valid_combinations[0]
+
+                        if launcher is not None and not launcher.equipped:
+                            self.inventory.wield(launcher)
+                            continue
+
+                        with self.env.debug_tiles([[target_y, target_x]], (0, 0, 255, 255), mode='frame'):
+                            dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
+                                                      allow_nonunit_distance=True)
+                            self.fire(ammo, dir)
+                            continue
+                    else:
+                        raise NotImplementedError()
+
     @utils.debug_log('fight1')
     @Strategy.wrap
     def fight1(self):
@@ -748,7 +841,7 @@ class Agent:
             # get only monsters with path to them
             monsters = [m for m in monsters if m[0] != -1]
 
-            if not monsters:
+            if not monsters or all(dis > 7 for dis, *_ in monsters):
                 if not yielded:
                     yield False
                 return
@@ -905,7 +998,7 @@ class Agent:
     def main(self):
         self.update({k: v.copy() for k, v in self.env.reset().items()})
         self.current_level().stair_destination[self.blstats.y, self.blstats.x] = \
-                ((Level.PLANE, 1), (None, None)) # TODO: check level num
+            ((Level.PLANE, 1), (None, None))  # TODO: check level num
         self.character.parse()
         self.character.parse_enhance_view()
 
