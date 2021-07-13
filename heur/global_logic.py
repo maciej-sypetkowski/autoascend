@@ -26,7 +26,7 @@ class GlobalLogic:
     @Strategy.wrap
     def solve_sokoban_strategy(self):
         # TODO: refactor
-        if not utils.isin(self.agent.last_observation['chars'], [ord('^')]).any():
+        if not utils.isin(self.agent.current_level().objects, G.TRAPS).any():
             yield False
         yield True
 
@@ -53,6 +53,9 @@ class GlobalLogic:
                     self.agent.glyphs[ty + dy, tx + dx] in G.BOULDER:
                 self.agent.go_to(ty, tx, debug_tiles_args=dict(color=(255, 255, 255), is_path=True))
                 self.agent.move(ty + dy, tx + dx)
+
+                if not utils.isin(self.agent.current_level().objects, G.TRAPS).any():
+                    return
 
             sokomap.move(y, x, dy, dx)
 
