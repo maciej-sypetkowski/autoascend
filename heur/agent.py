@@ -10,6 +10,7 @@ from nle.nethack import actions as A
 import utils
 from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
+from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
 from glyph import SS, MON, C, Hunger, G
 from item import Item, Inventory
@@ -37,6 +38,7 @@ class Agent:
 
         self.inventory = Inventory(self)
         self.character = Character(self)
+        self.exploration = ExplorationLogic(self)
         self.global_logic = GlobalLogic(self)
 
         self.last_bfs_dis = None
@@ -141,7 +143,8 @@ class Agent:
                 raise
             outcome = ids.index(i)
         finally:
-            self.on_update = list(filter(lambda f: f not in id2fun.values(), self.on_update))
+            for f in id2fun.values():
+                self.on_update.pop(self.on_update.index(f))
 
         # check if less nested ChangeStategy is present
         self.call_update_functions()
@@ -149,14 +152,15 @@ class Agent:
     def preempt(self, strategies, default, continue_after_preemption=True):
         id2fun = {}
         for strategy in strategies:
-            def f(iden, strategy=strategy):
+            def f(iden, strategy):
                 it = strategy.strategy()
                 if next(it):
                     raise AgentChangeStrategy(iden, it)
 
-            fun = partial(f, id(f))
-            assert id(f) not in id2fun
-            id2fun[id(f)] = fun
+            iden = (id(f), id(strategy))
+            fun = partial(f, iden, strategy)
+            assert iden not in id2fun
+            id2fun[iden] = fun
 
         inactivity_counter = 0
         last_step = 0
@@ -394,10 +398,7 @@ class Agent:
     ######## TRIVIAL HELPERS
 
     def current_level(self):
-        return self.get_level(self.blstats.dungeon_number, self.blstats.level_number)
-
-    def get_level(self, dungeon_number, level_number):
-        key = (dungeon_number, level_number)
+        key = (self.blstats.dungeon_number, self.blstats.level_number)
         if key not in self.levels:
             self.levels[key] = Level(*key)
         return self.levels[key]
@@ -519,6 +520,7 @@ class Agent:
                 assert self.current_level().key() != level.key(), self.message
                 level.stair_destination[expected_y, expected_x] = \
                         (self.current_level().key(), (self.blstats.y, self.blstats.x))
+                # TODO: one way portals (elemental and astral planes)
                 self.current_level().stair_destination[
                         (self.blstats.y, self.blstats.x)] = (level.key(), (expected_y, expected_x))
 
@@ -824,140 +826,6 @@ class Agent:
         if not self.current_level().shop[self.blstats.y, self.blstats.x]:
             self.eat()  # TODO: what
 
-    @utils.debug_log('explore1')
-    def explore1(self, search_prio_limit=0):
-        # TODO: refactor entire function
-
-        def open_neighbor_doors():
-            for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False):
-                if self.glyphs[py, px] in G.DOOR_CLOSED:
-                    with self.panic_if_position_changes():
-                        if not self.open_door(py, px):
-                            if not 'locked' in self.message:
-                                for _ in range(6):
-                                    if self.open_door(py, px):
-                                        break
-                                else:
-                                    while self.glyphs[py, px] in G.DOOR_CLOSED:
-                                        self.kick(py, px)
-                            else:
-                                while self.glyphs[py, px] in G.DOOR_CLOSED:
-                                    self.kick(py, px)
-                    break
-
-        def to_visit_func():
-            level = self.current_level()
-            to_visit = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
-            for dy in [-1, 0, 1]:
-                for dx in [-1, 0, 1]:
-                    if dy != 0 or dx != 0:
-                        to_visit |= utils.translate(~level.seen & utils.isin(self.glyphs, G.STONE), dy, dx)
-                        if dx == 0 or dy == 0:
-                            to_visit |= utils.translate(utils.isin(self.glyphs, G.DOOR_CLOSED), dy, dx)
-            return to_visit
-
-        def to_search_func(prio_limit=0, return_prio=False):
-            level = self.current_level()
-            dis = self.bfs()
-
-            prio = np.zeros((C.SIZE_Y, C.SIZE_X), np.float32)
-            prio[:] = -1
-            prio -= level.search_count ** 2 * 2
-            # is_on_corridor = utils.isin(level.objects, G.CORRIDOR)
-            is_on_door = utils.isin(level.objects, G.DOORS)
-
-            stones = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
-            walls = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
-
-            for dy in [-1, 0, 1]:
-                for dx in [-1, 0, 1]:
-                    if dy != 0 or dx != 0:
-                        stones += utils.isin(utils.translate(level.objects, dy, dx), G.STONE)
-                        walls += utils.isin(utils.translate(level.objects, dy, dx), G.WALL)
-
-            prio += (is_on_door & (stones > 3)) * 250
-            prio += (np.stack([utils.translate(level.walkable, y, x).astype(np.int32)
-                               for y, x in [(1, 0), (-1, 0), (0, 1), (0, -1)]]).sum(0) <= 1) * 250
-            prio[(stones == 0) & (walls == 0)] = -np.inf
-
-            prio[~level.walkable | (dis == -1)] = -np.inf
-
-            if return_prio:
-                return prio
-            return prio >= prio_limit
-
-        @Strategy.wrap
-        def open_visit_search(search_prio_limit):
-            yielded = False
-            while 1:
-                for py, px in self.neighbors(self.blstats.y, self.blstats.x, diagonal=False, shuffle=False):
-                    if self.glyphs[py, px] in G.DOOR_CLOSED:
-                        if not yielded:
-                            yielded = True
-                            yield True
-                        open_neighbor_doors()
-                        break
-
-                to_visit = to_visit_func()
-                to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)
-
-                # consider exploring tile only when there is a path to it
-                dis = self.bfs()
-                to_explore = (to_visit | to_search) & (dis != -1)
-
-                dynamic_search_fallback = False
-                if not to_explore.any():
-                    dynamic_search_fallback = True
-                else:
-                    # find all closest to_explore tiles
-                    nonzero_y, nonzero_x = ((dis == dis[to_explore].min()) & to_explore).nonzero()
-                    if len(nonzero_y) == 0:
-                        dynamic_search_fallback = True
-
-                if dynamic_search_fallback:
-                    if search_prio_limit is not None and search_prio_limit >= 0:
-                        if not yielded:
-                            yield False
-                        return
-
-                    search_prio = to_search_func(return_prio=True)
-                    if search_prio_limit is not None:
-                        search_prio[search_prio < search_prio_limit] = -np.inf
-                        search_prio[search_prio < search_prio_limit] = -np.inf
-                        search_prio -= dis * np.isfinite(search_prio) * 100
-                    else:
-                        search_prio -= dis * 4
-
-                    to_search = np.isfinite(search_prio)
-                    to_explore = (to_visit | to_search) & (dis != -1)
-                    if not to_explore.any():
-                        if not yielded:
-                            yield False
-                        return
-                    nonzero_y, nonzero_x = ((search_prio == search_prio[to_explore].max()) & to_explore).nonzero()
-
-                if not yielded:
-                    yielded = True
-                    yield True
-
-                # select random closest to_explore tile
-                i = self.rng.randint(len(nonzero_y))
-                target_y, target_x = nonzero_y[i], nonzero_x[i]
-
-                with self.env.debug_tiles(to_explore, color=(0, 0, 255, 64)):
-                    self.go_to(target_y, target_x, debug_tiles_args=dict(
-                        color=(255 * bool(to_visit[target_y, target_x]),
-                               255, 255 * bool(to_search[target_y, target_x])),
-                        is_path=True))
-                    if to_search[target_y, target_x] and not to_visit[target_y, target_x]:
-                        self.search()
-
-            assert search_prio_limit is not None
-
-        return open_visit_search(search_prio_limit).preempt(self, [
-            self.inventory.gather_items(),
-        ])
-
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
     def emergency_strategy(self):
@@ -1019,6 +887,8 @@ class Agent:
 
     def main(self):
         self.update({k: v.copy() for k, v in self.env.reset().items()})
+        self.current_level().stair_destination[self.blstats.y, self.blstats.x] = \
+                ((Level.PLANE, 1), (None, None)) # TODO: check level num
         self.character.parse()
         self.character.parse_enhance_view()
 

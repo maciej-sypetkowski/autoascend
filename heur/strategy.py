@@ -1,4 +1,4 @@
-from functools import wraps
+from functools import wraps, partial
 
 
 class Strategy:
@@ -6,8 +6,12 @@ class Strategy:
     def wrap(cls, func):
         return lambda *a, **k: Strategy(wraps(func)(lambda: func(*a, **k)))
 
-    def __init__(self, strategy):
+    def __init__(self, strategy, config=None):
         self.strategy = strategy
+        if config is None:
+            self.config = str(self.strategy)
+        else:
+            self.config = config
 
     def run(self, return_condition=False):
         gen = self.strategy()
@@ -40,7 +44,7 @@ class Strategy:
             except StopIteration as e:
                 return e.value
 
-        return Strategy(f)
+        return Strategy(f, {'strategy': self.config, 'condition': str(condition)})
 
     def until(self, agent, condition):
         def f():
@@ -49,7 +53,10 @@ class Strategy:
                 assert 0
             yield True
 
-        return self.preempt(agent, [Strategy(f)], continue_after_preemption=False)
+        strategy = self.condition(lambda: not condition()) \
+                       .preempt(agent, [Strategy(f)], continue_after_preemption=False)
+        strategy.config = {'strategy': self.config, 'until': str(condition)}
+        return strategy
 
     def before(self, strategy):
         def f(self=self, strategy=strategy):
@@ -83,7 +90,7 @@ class Strategy:
 
             return (r1, r2)
 
-        return Strategy(f)
+        return Strategy(f, {'1': self.config, '2': strategy.config})
 
     def preempt(self, agent, strategies, continue_after_preemption=True):
         def f(self=self, agent=agent, strategies=strategies):
@@ -100,7 +107,7 @@ class Strategy:
 
             return agent.preempt(strategies, self, continue_after_preemption=continue_after_preemption)
 
-        return Strategy(f)
+        return Strategy(f, {'strategy': self.config, 'preempt': [s.config for s in strategies]})
 
     def repeat(self):
         def f(self=self):
@@ -124,4 +131,7 @@ class Strategy:
                     val = e.value
             return val
 
-        return Strategy(f)
+        return Strategy(f, {'repeat': self.config})
+
+    def __repr__(self):
+        return str(self.config)

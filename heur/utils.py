@@ -98,3 +98,9 @@ def adjacent(p1, p2):
 
 def calc_dps(to_hit, damage):
     return damage * np.clip((to_hit - 1), 0, 20) / 20
+
+
+@Strategy.wrap
+def assert_strategy(error=None):
+    yield True
+    assert 0, error

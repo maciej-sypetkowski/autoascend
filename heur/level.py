@@ -10,6 +10,11 @@ class Level:
     QUEST = 3
     SOKOBAN = 4
 
+    PLANE = 1000 # TODO: fill with actual value
+
+    dungeon_names = {v: k for k, v in locals().items() if not k.startswith('_')}
+
+
     def __init__(self, dungeon_number, level_number):
         self.dungeon_number = dungeon_number
         self.level_number = level_number
@@ -28,8 +33,11 @@ class Level:
     def key(self):
         return (self.dungeon_number, self.level_number)
 
-    def get_stairs(self, down=False, up=False, portal=False):
-        assert down or up
+    def get_stairs(self, down=False, up=False, portal=False, all=False):
+        # TODO: add portal
+        if all:
+            down = up = portal = True
+        assert down or up or portal
         elems = []
         if down:
             elems.append(G.STAIR_DOWN)
