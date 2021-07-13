@@ -1,6 +1,6 @@
 import contextlib
+import multiprocessing
 import json
-import multiprocessing.pool
 import os
 import subprocess
 import sys
@@ -11,6 +11,9 @@ import tty
 import warnings
 from argparse import ArgumentParser
 from collections import Counter
+from functools import partial
+from multiprocessing import Process, Queue
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from pprint import pprint
 
@@ -20,8 +23,8 @@ import numpy as np
 import pandas as pd
 
 import visualize
-from agent import Agent, BLStats, G
-from glyph import ALL
+from agent import Agent, BLStats
+from glyph import ALL, G
 
 
 class EnvWrapper:
@@ -264,6 +267,7 @@ def prepare_env(args, seed, step_limit=None):
             if nh.permonst(nh.glyph_to_mon(character_glyph)).mname.startswith(args.role):
                 break
             seed += 10 ** 9
+            env.close()
 
     env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=200),
                      to_skip=args.skip_to, visualizer=args.mode == 'run')
@@ -271,14 +275,14 @@ def prepare_env(args, seed, step_limit=None):
     return env
 
 
-def single_simulation(args, seed, timeout=180):
+def single_simulation(args, seed_offset, timeout=180):
     start_time = time.time()
-    env = prepare_env(args, seed)
+    env = prepare_env(args, seed_offset)
     agent = Agent(env, verbose=False, panic_on_errors=args.panic_on_errors)
     env.set_agent(agent)
 
     if timeout is not None:
-        pool = multiprocessing.pool.ThreadPool(processes=1)
+        pool = ThreadPool(processes=1)
     try:
         if timeout is not None:
             pool.apply_async(agent.main).get(timeout)
@@ -293,6 +297,8 @@ def single_simulation(args, seed, timeout=180):
     end_time = time.time()
     summary = env.get_summary()
     summary['duration'] = end_time - start_time
+
+    env.env.close()
     return summary
 
 
@@ -334,21 +340,19 @@ def run_profiling(args):
 
 
 def run_simulations(args):
-    from multiprocessing import Process, Queue
-    from matplotlib import pyplot as plt
-    import seaborn as sns
-    sns.set()
-    result_queue = Queue()
-
-    def single_simulation_add_result_to_queue(seed):
-        r = single_simulation(args, seed)
-        result_queue.put(r)
+    import ray
+    ray.init(address='auto')
 
     start_time = time.time()
     plot_queue = Queue()
 
     def plot_thread_func():
+        from matplotlib import pyplot as plt
+        import seaborn as sns
+
         warnings.filterwarnings('ignore')
+        sns.set()
+
         fig = plt.figure()
         plt.show(block=False)
         while 1:
@@ -406,26 +410,17 @@ def run_simulations(args):
 
     plt_process = Process(target=plot_thread_func)
     plt_process.start()
+
     all_res = {}
-    last_seed = 0
-    simulation_processes = []
-    remaining_episodes = args.episodes
-    for _ in range(min(16, remaining_episodes)):
-        simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
-        simulation_processes[-1].start()
-        last_seed += 1
-        remaining_episodes -= 1
+    refs = []
+    remote_simulation = ray.remote(single_simulation)
+    for seed_offset in range(args.episodes):
+        refs.append(remote_simulation.remote(args, seed_offset))
 
     count = 0
-    while count < args.episodes:
-        simulation_processes = [p for p in simulation_processes if p.is_alive() or (p.close() and False)]
-        single_res = result_queue.get()
-
-        if remaining_episodes:
-            simulation_processes.append(Process(target=single_simulation_add_result_to_queue, args=(last_seed,)))
-            simulation_processes[-1].start()
-            last_seed += 1
-            remaining_episodes -= 1
+    for handle in refs:
+        ref, refs = ray.wait(refs, num_returns=1, timeout=None)
+        single_res = ray.get(ref[0])
 
         if not all_res:
             all_res = {key: [] for key in single_res}
@@ -435,9 +430,6 @@ def run_simulations(args):
         for k, v in single_res.items():
             all_res[k].append(v if not hasattr(v, 'item') else v.item())
 
-        if not result_queue.empty():
-            continue
-
         plot_queue.put(all_res)
 
         total_duration = time.time() - start_time
@@ -446,9 +438,10 @@ def run_simulations(args):
         text.append(f'count                         : {count}')
         text.append(f'time_per_simulation           : {np.mean(all_res["duration"])}')
         text.append(f'simulations_per_hour          : {3600 / np.mean(all_res["duration"])}')
+        text.append(f'simulations_per_hour(multi)   : {3600 * count / total_duration}')
         text.append(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
         text.append(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
-        text.append(f'turns_per_second(multithread) : {np.sum(all_res["turns"]) / total_duration}')
+        text.append(f'turns_per_second(multi)       : {np.sum(all_res["turns"]) / total_duration}')
         text.append(f'panic_num_per_game(median)    : {np.median(all_res["panic_num"])}')
         text.append(f'panic_num_per_game(mean)      : {np.sum(all_res["panic_num"]) / count}')
         text.append(f'score_median                  : {np.median(all_res["score"]):.1f} +/- '
@@ -467,11 +460,8 @@ def run_simulations(args):
         with Path('/tmp/nh_sim.json').open('w') as f:
             json.dump(all_res, f)
 
-    for p in simulation_processes:
-        p.join()
-        p.close()
-
     print('DONE!')
+    ray.shutdown()
 
 
 def parse_args():
