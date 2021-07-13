@@ -68,9 +68,6 @@ class Item:
 
         return to_hit
 
-    def get_dps(self, large_monster):
-        return self.get_dmg(large_monster) * self.get_to_hit()
-
     def is_launcher(self):
         if not self.is_weapon():
             return False
@@ -746,8 +743,8 @@ class Inventory:
                     continue
 
                 if isinstance(obj, O.Weapon): # TODO: WepTool
-                    dps = item.get_dps(large_monster=False)
-                    if dps > best_weapon_dps:
+                    dps = utils.calc_dps(*self.agent.character.get_weapon_bonus(item, large_monster=False))
+                    if dps > best_weapon_dps or obj.sub in [O.P_DAGGER, O.P_KNIFE]:
                         self._interesting_item_glyphs.add(glyph)
                         self._interesting_items.add(obj)
                 elif isinstance(obj, O.Armor):
