@@ -73,7 +73,7 @@ class GlobalLogic:
         yield from \
             (self.agent.exploration.go_to_level_strategy(
                 Level.GNOMISH_MINES if self.milestone == Milestone.FIND_GNOMISH_MINES else Level.SOKOBAN, 1,
-                lambda y, x: (self.agent.exploration.explore1(None, True)
+                lambda y, x: (self.agent.exploration.explore1(None)
                               .preempt(self.agent, [self.agent.exploration.go_to_strategy(y, x)])
                               .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
                               ),

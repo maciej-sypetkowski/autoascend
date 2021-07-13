@@ -124,13 +124,13 @@ class ExplorationLogic:
                 yield True
                 if not levels_to_search:
                     return
-                random_level = list(levels_to_search)[self.agent.rng.randint(0, len(levels_to_search))]
+                random_level = sorted(levels_to_search)[self.agent.rng.randint(0, len(levels_to_search))]
                 path = self.get_path_to_level(*random_level)
                 assert path is not None
                 self.follow_level_path_strategy(path, go_to_strategy).run()
                 assert self.agent.current_level().key() == random_level
 
-            for level in levels_to_search:  # TODO: iteration order
+            for level in sorted(levels_to_search):  # TODO: iteration order
                 if len(self.get_unexplored_stairs(*level, all=True)) > 0:
                     path = self.get_path_to_level(*level)
                     self.follow_level_path_strategy(path, go_to_strategy).run()
@@ -163,7 +163,7 @@ class ExplorationLogic:
         return self.agent.go_to(y, x, *args, **kwargs)
 
     @utils.debug_log('explore1')
-    def explore1(self, search_prio_limit=0, asd=False):
+    def explore1(self, search_prio_limit=0):
         # TODO: refactor entire function
 
 

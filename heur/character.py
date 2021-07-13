@@ -429,6 +429,7 @@ class Character:
         roll_offset += skill_hit_bonus
 
         if item is not None:
+            roll_offset += item.get_to_hit()
             dmg_bonus += item.get_dmg(large_monster)
         return roll_offset, dmg_bonus
 

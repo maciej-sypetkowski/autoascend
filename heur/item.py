@@ -61,18 +61,12 @@ class Item:
 
         weapon = self.object()
 
-        # TODO: take into account things from:
-        # https://github.com/facebookresearch/nle/blob/master/src/weapon.c : hitval
-        # https://github.com/facebookresearch/nle/blob/master/src/weapon.c : dmgval
-        # https://github.com/facebookresearch/nle/blob/master/src/uhitm.c : find_roll_to_hit
-
         to_hit = 1
-        to_hit += 6 # compensation, TODO: abon, etc
         to_hit += weapon.hitbon
         if self.modifier is not None:
             to_hit += self.modifier
 
-        return np.array([to_hit > i for i in range(1, 21)]).astype(np.float32).mean().item()
+        return to_hit
 
     def get_dps(self, large_monster):
         return self.get_dmg(large_monster) * self.get_to_hit()
@@ -466,8 +460,8 @@ class Inventory:
         self._stop_updating = False
         self.items_below_me = None
         self.letters_below_me = None
-        self._interesting_item_glyphs = []
-        self._interesting_items = []
+        self._interesting_item_glyphs = set()
+        self._interesting_items = set()
         self._last_interesting_item_update_turn = None
 
     def on_panic(self):
@@ -499,6 +493,8 @@ class Inventory:
                 self._stop_updating = False
 
         assert self.items_below_me is not None and self.letters_below_me is not None
+
+        self.update_interesting_items()
 
     @contextlib.contextmanager
     def panic_if_items_below_me_change(self):
@@ -721,11 +717,15 @@ class Inventory:
         self._last_interesting_item_update_turn = self.agent.blstats.time
 
         # TODO
-        self._interesting_items = set()
         if self.agent.character.role == Character.RANGER:
-            self._interesting_item_glyphs = list(range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + 6))
+            self._interesting_item_glyphs = set(range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + 6))
+            self._interesting_items = set()
+            for g in self._interesting_item_glyphs:
+                for i in O.possibilities_from_glyph(g):
+                    self._interesting_items.add(i)
         else:
-            self._interesting_item_glyphs = []
+            self._interesting_item_glyphs = set()
+            self._interesting_items = set()
 
         if self.agent.character.role != Character.MONK:
             best_weapon, best_weapon_dps = self.get_best_weapon(return_dps=True)
@@ -744,13 +744,13 @@ class Inventory:
                 if isinstance(obj, O.Weapon): # TODO: WepTool
                     dps = item.get_dps(large_monster=False)
                     if dps > best_weapon_dps:
-                        self._interesting_item_glyphs.append(glyph)
+                        self._interesting_item_glyphs.add(glyph)
                         self._interesting_items.add(obj)
                 elif isinstance(obj, O.Armor):
                     ac = item.get_ac()
                     my_ac = best_armorset_ac[item.object().sub]
                     if my_ac is None or my_ac < ac:
-                        self._interesting_item_glyphs.append(glyph)
+                        self._interesting_item_glyphs.add(glyph)
                         self._interesting_items.add(obj)
 
 
@@ -842,8 +842,6 @@ class Inventory:
 
         if len(self.items_below_me) > 1:
             self.agent.current_level().checked_item_pile[self.agent.blstats.y, self.agent.blstats.x] = True
-
-        self.update_interesting_items() # TODO: optimize (do it less frequently)
 
         to_pickup = []
         for item in self.items_below_me:
