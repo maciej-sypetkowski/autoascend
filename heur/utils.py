@@ -9,7 +9,7 @@ from strategy import Strategy
 
 
 @nb.njit(cache=True)
-def bfs(y, x, *, walkable, walkable_diagonally):
+def bfs(y, x, *, walkable, walkable_diagonally, can_squeeze):
     dis = np.zeros(walkable.shape, dtype=np.int32)
     dis[:] = -1
     dis[y, x] = 0
@@ -22,17 +22,14 @@ def bfs(y, x, *, walkable, walkable_diagonally):
         y, x = buf[index]
         index += 1
 
-        # TODO: handle situations
-        # dir: SE
-        # @|
-        # -.
         for dy in [-1, 0, 1]:
             for dx in [-1, 0, 1]:
                 py, px = y + dy, x + dx
                 if 0 <= py < walkable.shape[0] and 0 <= px < walkable.shape[1] and (dy != 0 or dx != 0):
                     if (walkable[py, px] and
-                            (abs(dy) + abs(dx) <= 1 or (walkable_diagonally[py, px] and walkable_diagonally[y, x] and
-                                                        (walkable[py, x] or walkable[y, px])))):
+                            (abs(dy) + abs(dx) <= 1 or
+                             (walkable_diagonally[py, px] and walkable_diagonally[y, x] and
+                              (can_squeeze or walkable[py, x] or walkable[y, px])))):
                         if dis[py, px] == -1:
                             dis[py, px] = dis[y, x] + 1
                             buf[size] = (py, px)

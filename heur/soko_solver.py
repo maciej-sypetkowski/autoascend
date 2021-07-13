@@ -152,7 +152,8 @@ class SokoMap:
         assert self.sokomap[boulder_y, boulder_x] == BOULDER
         assert self.sokomap[boulder_y - dy, boulder_x - dx] == EMPTY
         assert utils.bfs(*self.pos, walkable=self.sokomap == EMPTY,
-                         walkable_diagonally=np.zeros_like(self.sokomap, dtype=bool)
+                         walkable_diagonally=np.zeros_like(self.sokomap, dtype=bool),
+                         can_squeeze=False,
                          )[boulder_y - dy, boulder_x - dx] != -1
         assert self.sokomap[boulder_y + dy, boulder_x + dx] in [EMPTY, TARGET]
 
@@ -235,7 +236,9 @@ if __name__ == '__main__':
                     print('you cannot stand to push in this direction!')
                     continue
                 if utils.bfs(*sokomap.pos, walkable=sokomap.sokomap == EMPTY,
-                             walkable_diagonally=np.zeros_like(sokomap.sokomap, dtype=bool))[y - dy, x - dx] == -1:
+                             walkable_diagonally=np.zeros_like(sokomap.sokomap, dtype=bool),
+                             can_squeeze=False,
+                            )[y - dy, x - dx] == -1:
                     print('you cannot get there!')
                     continue
                 if sokomap.sokomap[y + dy, x + dx] not in [EMPTY, TARGET]:

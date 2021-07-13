@@ -567,7 +567,10 @@ class Agent:
 
         dis = utils.bfs(y, x,
                         walkable=walkable,
-                        walkable_diagonally=walkable & ~utils.isin(level.objects, G.DOORS) & (level.objects != -1))
+                        walkable_diagonally=walkable & ~utils.isin(level.objects, G.DOORS) & (level.objects != -1),
+                        can_squeeze=False,
+                        # carrying_weight <= 600 and self.current_level().dungeon_number != Level.SOKOBAN
+                        )
 
         if y == self.blstats.y and x == self.blstats.x:
             self.last_bfs_dis = dis
