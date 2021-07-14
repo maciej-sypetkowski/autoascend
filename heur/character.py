@@ -346,7 +346,7 @@ class Character:
             # TODO:
             return self.weapon_bonus[self.skill_levels[sub]]
 
-    def get_weapon_bonus(self, item, monster=None, large_monster=False):
+    def get_melee_bonus(self, item, monster=None, large_monster=False):
         """ Returns a pair (to_hit, damaga)
         https://github.com/facebookresearch/nle/blob/master/src/uhitm.c : find_roll_to_hit
          """
@@ -431,7 +431,7 @@ class Character:
         if item is not None:
             roll_offset += item.get_to_hit()
             dmg_bonus += item.get_dmg(large_monster)
-        return roll_offset, dmg_bonus
+        return roll_offset, max(0, dmg_bonus)
 
     def __str__(self):
         inv_skill_type = {v: k for k, v in self.name_to_skill_type.items()}

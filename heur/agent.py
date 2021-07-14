@@ -440,9 +440,7 @@ class Agent:
     def wield_best_weapon(self):
         # TODO: move to inventory
         item = self.inventory.get_best_weapon()
-        if item is None:
-            return False
-        if not item.equipped:
+        if item != self.inventory.items.main_hand:
             self.inventory.wield(item)
             return True
         return False

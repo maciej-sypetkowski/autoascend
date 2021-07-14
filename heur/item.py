@@ -49,8 +49,16 @@ class Item:
     def is_weapon(self):
         return self.category == nh.WEAPON_CLASS
 
+    # TODO: refactor: merge get_to_hit and get_dmg to one function, add argument for melee, thrown
+
     def get_dmg(self, large_monster):
+        assert self.is_weapon()
+
+        if self.is_fired_projectile() or self.is_launcher():
+            return 1.5  # 1d2
+
         weapon = self.object()
+
         dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
         if self.modifier is not None and self.modifier > 0:
             dmg += self.modifier
@@ -682,13 +690,13 @@ class Inventory:
     def get_best_weapon(self, return_dps=False):
         # select the best
         best_item = None
-        best_dps = None
+        best_dps = utils.calc_dps(*self.agent.character.get_melee_bonus(None, large_monster=False))
         for item in self.items:
             if item.is_weapon():
-                to_hit, dmg = self.agent.character.get_weapon_bonus(item, large_monster=False)
+                to_hit, dmg = self.agent.character.get_melee_bonus(item, large_monster=False)
                 dps = utils.calc_dps(to_hit, dmg)
                 # dps = item.get_dps(large_monster=False)  # TODO: what about monster size
-                if best_dps is None or best_dps < dps:
+                if best_dps < dps:
                     best_dps = dps
                     best_item = item
         if return_dps:
@@ -728,31 +736,32 @@ class Inventory:
             self._interesting_item_glyphs = set()
             self._interesting_items = set()
 
-        if self.agent.character.role != Character.MONK:
-            best_weapon, best_weapon_dps = self.get_best_weapon(return_dps=True)
-            if best_weapon_dps is None:
-                best_weapon_dps = 0
-            best_weapon_dps *= 1.15  # take only relatively better items than yours
+        best_weapon, best_weapon_dps = self.get_best_weapon(return_dps=True)
+        best_weapon_dps *= 1.15  # take only relatively better items than yours
 
-            best_armorset, best_armorset_ac = self.get_best_armorset(return_ac=True)
+        best_armorset, best_armorset_ac = self.get_best_armorset(return_ac=True)
 
-            for glyph in range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + nh.NUM_OBJECTS - 6):
-                obj = O.objects[glyph - nh.GLYPH_OBJ_OFF]
-                item = Item(self.item_manager.possible_objects_from_glyph(glyph))
-                if not item.is_ambiguous():
-                    continue
+        for glyph in range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + nh.NUM_OBJECTS - 6):
+            obj = O.objects[glyph - nh.GLYPH_OBJ_OFF]
+            item = Item(self.item_manager.possible_objects_from_glyph(glyph))
+            if not item.is_ambiguous():
+                continue
 
-                if isinstance(obj, O.Weapon): # TODO: WepTool
-                    dps = utils.calc_dps(*self.agent.character.get_weapon_bonus(item, large_monster=False))
-                    if dps > best_weapon_dps or obj.sub in [O.P_DAGGER, O.P_KNIFE]:
-                        self._interesting_item_glyphs.add(glyph)
-                        self._interesting_items.add(obj)
-                elif isinstance(obj, O.Armor):
-                    ac = item.get_ac()
-                    my_ac = best_armorset_ac[item.object().sub]
-                    if my_ac is None or my_ac < ac:
-                        self._interesting_item_glyphs.add(glyph)
-                        self._interesting_items.add(obj)
+            if self.agent.character.role == Character.MONK and \
+                    (isinstance(obj, O.Weapon) or (isinstance(obj, O.Armor) and obj.sub in [O.ARM_SHIELD, O.ARM_SUIT])):
+                continue
+
+            if isinstance(obj, O.Weapon): # TODO: WepTool
+                dps = utils.calc_dps(*self.agent.character.get_melee_bonus(item, large_monster=False))
+                if dps > best_weapon_dps or obj.sub in [O.P_DAGGER, O.P_KNIFE]:
+                    self._interesting_item_glyphs.add(glyph)
+                    self._interesting_items.add(obj)
+            elif isinstance(obj, O.Armor):
+                ac = item.get_ac()
+                my_ac = best_armorset_ac[item.object().sub]
+                if my_ac is None or my_ac < ac:
+                    self._interesting_item_glyphs.add(glyph)
+                    self._interesting_items.add(obj)
 
 
     ######## LOW-LEVEL STRATEGIES
