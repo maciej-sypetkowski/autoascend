@@ -30,9 +30,10 @@ from glyph import ALL, G
 
 def fork_with_nethack_env(env):
     pid = os.fork()
-    env.env._tempdir = tempfile.TemporaryDirectory(prefix='nlefork_')
-    env.env._vardir = env.env._tempdir.name
-    os.chdir(env.env._vardir)
+    if pid == 0:
+        env.env._tempdir = tempfile.TemporaryDirectory(prefix='nlefork_')
+        env.env._vardir = env.env._tempdir.name
+        os.chdir(env.env._vardir)
     return pid
 
 
@@ -455,7 +456,19 @@ def run_simulations(args):
 
     all_res = {}
     refs = []
-    remote_simulation = ray.remote(single_simulation)
+
+    @ray.remote
+    def remote_simulation(args, seed_offset):
+        # I think there is some nondeterminism in nle environment when playing
+        # multiple episodes (maybe bones?). That should do the trick
+        q = Queue()
+        def sim():
+            q.put(single_simulation(args, seed_offset))
+        p = Process(target=sim)
+        p.start()
+        p.join()
+        return q.get()
+
     for seed_offset in range(args.episodes):
         refs.append(remote_simulation.remote(args, seed_offset))
 
