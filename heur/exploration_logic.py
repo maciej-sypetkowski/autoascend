@@ -122,17 +122,29 @@ class ExplorationLogic:
                 break
 
             @Strategy.wrap
-            def go_to_random_level_to_explore():
+            def go_to_least_explored_level():
                 # TODO: change from random to least explored
                 levels_to_search = self.levels_to_explore_to_get_to(dungeon_number, level_number)
-                yield True
                 if not levels_to_search:
-                    return
-                random_level = sorted(levels_to_search)[self.agent.rng.randint(0, len(levels_to_search))]
-                path = self.get_path_to_level(*random_level)
+                    yield False
+
+                exploration_levels = {level: self.agent.levels[level].search_count.sum() for level in levels_to_search}
+                min_exploration_level = min(exploration_levels.values())
+                if self.agent.current_level().key() in levels_to_search and \
+                        exploration_levels[self.agent.current_level().key()] < min_exploration_level + 150:
+                    yield False
+                yield True
+
+                for level in levels_to_search:
+                    if exploration_levels[level] == min_exploration_level:
+                        target_level = level
+                        break
+                else:
+                    assert 0
+                path = self.get_path_to_level(*target_level)
                 assert path is not None
                 self.follow_level_path_strategy(path, go_to_strategy).run()
-                assert self.agent.current_level().key() == random_level
+                assert self.agent.current_level().key() == target_level
 
             for level in sorted(levels_to_search):  # TODO: iteration order
                 if len(self.get_unexplored_stairs(*level, all=True)) > 0:
@@ -142,14 +154,14 @@ class ExplorationLogic:
                     continue
 
             if self.agent.current_level().key() not in levels_to_search:
-                go_to_random_level_to_explore().run()
+                go_to_least_explored_level().run()
                 assert self.agent.current_level().key() in levels_to_search
                 continue
 
             explore_strategy.preempt(self.agent, [
                 self.explore_stairs(go_to_strategy, all=True) \
                         .condition(lambda: self.agent.current_level().key() in levels_to_search),
-                go_to_random_level_to_explore().condition(lambda: self.agent.rng.random() < 1 / 500),
+                go_to_least_explored_level(),
             ], continue_after_preemption=False).run()
 
         path = self.get_path_to_level(dungeon_number, level_number)
