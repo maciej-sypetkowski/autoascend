@@ -21,10 +21,19 @@ import gym
 import nle.nethack as nh
 import numpy as np
 import pandas as pd
+import tempfile
 
 import visualize
 from agent import Agent, BLStats
 from glyph import ALL, G
+
+
+def fork_with_nethack_env(env):
+    pid = os.fork()
+    env.env._tempdir = tempfile.TemporaryDirectory(prefix='nlefork_')
+    env.env._vardir = env.env._tempdir.name
+    os.chdir(env.env._vardir)
+    return pid
 
 
 class EnvWrapper:
@@ -133,7 +142,7 @@ class EnvWrapper:
 
     def get_action(self):
         while 1:
-            key = os.read(sys.stdin.fileno(), 3)
+            key = os.read(sys.stdin.fileno(), 5)
 
             if key == b'\x1bOP':  # F1
                 self.draw_walkable = not self.draw_walkable
@@ -144,6 +153,42 @@ class EnvWrapper:
                 self.render()
                 continue
 
+            if key == b'\x1b[15~':  # F5
+                #self.visualizer.close_window()
+                fork_again = True
+                while fork_again:
+                    if (pid := fork_with_nethack_env(self.env)) != 0:
+                        # parent
+                        print('freezing parent')
+                        while 1:
+                            try:
+                                os.waitpid(pid, 0)
+                                break
+                            except KeyboardInterrupt:
+                                pass
+                        self.visualizer.render()
+                        while 1:
+                            try:
+                                fork_again = input('fork again [yn]: ' )
+                                if fork_again == 'y':
+                                    fork_again = True
+                                    break
+                                elif fork_again == 'n':
+                                    fork_again = False
+                                    break
+                            except KeyboardInterrupt:
+                                pass
+
+                        termios.tcgetattr(sys.stdin)
+                        tty.setcbreak(sys.stdin.fileno())
+                    else:
+                        # child
+                        break
+                continue
+
+            elif key == b'\x1b[3~':  # Delete
+                self.to_skip = 16
+                return None
 
             if len(key) != 1:
                 print('wrong key', key)
@@ -156,9 +201,6 @@ class EnvWrapper:
                 self.print_help()
                 continue
             elif key == 127:  # Backspace
-                return None
-            elif key == 126:  # Delete
-                self.to_skip = 16
                 return None
             else:
                 actions = [a for a in self.env._actions if int(a) == key]

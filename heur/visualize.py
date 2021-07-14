@@ -98,9 +98,11 @@ class DebugLogScope():
 
 class Visualizer:
 
-    def __init__(self, env, tileset_path='/workspace/heur/tilesets/3.6.1tiles32.png', tile_size=32):
+    def __init__(self, env, tileset_path='/workspace/heur/tilesets/3.6.1tiles32.png', tile_size=32,
+                 window_name='NetHackVis'):
         self.env = env
         self.tile_size = tile_size
+        self._window_name = window_name
 
         self.tileset = cv2.imread(tileset_path)[..., ::-1]
         if self.tileset is None:
@@ -123,7 +125,7 @@ class Visualizer:
 
         print('Read tileset of size:', self.tileset.shape)
 
-        cv2.namedWindow('NetHackVis', cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+        self.create_window()
 
         self.message_history = list()
         self.popup_history = list()
@@ -134,6 +136,12 @@ class Visualizer:
 
         self.frame_skipping = 1
         self.frame_counter = -1
+
+    def create_window(self):
+        cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+
+    def close_window(self):
+        cv2.destroyWindow(self._window_name)
 
     def debug_tiles(self, *args, **kwargs):
         return DrawTilesScope(self, *args, **kwargs)
@@ -169,7 +177,7 @@ class Visualizer:
         inventory = self._draw_inventory(rendered.shape[0])
         rendered = np.concatenate([rendered, inventory], axis=1)
 
-        cv2.imshow('NetHackVis', rendered[..., ::-1])
+        cv2.imshow(self._window_name, rendered[..., ::-1])
         cv2.waitKey(1)
 
     def _draw_topbar(self, obs, width):
