@@ -83,13 +83,10 @@ class GlobalLogic:
                 sokomap.move(y, x, dy, dx)
 
             # sokoban configuration is not in the list. Check for mimics
-            print('mimics', possible_mimics)
             with self.agent.env.debug_log('mimics'):
                 with self.agent.env.debug_tiles(possible_mimics, color=(255, 0, 0, 128)):
                     for mim_y, mim_x in sorted(possible_mimics):
-                        print(self.agent.bfs()[max(0, mim_y - 1) : mim_y + 2, max(0, mim_x - 1) : mim_x + 2])
                         if (self.agent.bfs()[max(0, mim_y - 1) : mim_y + 2, max(0, mim_x - 1) : mim_x + 2] != -1).any():
-                            print(mim_y, mim_x)
                             self.agent.go_to(mim_y, mim_x, stop_one_before=True,
                                              debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
                             for _ in range(3):

@@ -4,8 +4,8 @@ from enum import Enum
 
 Weapon = namedtuple('Weapon', 'name,desc,kn,mg,bi,prob,wt,cost,sdam,ldam,hitbon,typ,sub,metal,color,damage_small,damage_large'.split(','))
 Armor = namedtuple('Armor', 'name,desc,kn,mgc,blk,power,prob,delay,wt,cost,ac,can,sub,metal,c'.split(',')) # ac is always <= 0, i.e. ac = original_ac - 10
-Ring = namedtuple('Ring', 'name,desc,power,cost,mgc,spec,mohs,metal,color'.split(','))
-Amulet = namedtuple('Amulet', 'name,desc,power,prob'.split(',')) # Amulet of Yendor(s) not included
+Ring = namedtuple('Ring', 'name,desc,power,cost,mgc,spec,mohs,metal,color,wt'.split(','))
+Amulet = namedtuple('Amulet', 'name,desc,power,prob,wt'.split(',')) # Amulet of Yendor(s) not included
 
 # Containers and weptools are TOOL_CLASS
 Tool = namedtuple('Tool', 'name,desc,kn,mrg,mgc,chg,prob,wt,cost,mat,color'.split(','))
@@ -14,25 +14,25 @@ WepTool = namedtuple('WepTool', 'name,desc,kn,mgc,bi,prob,wt,cost,sdam,ldam,hitb
 
 Food = namedtuple('Food', 'name,desc,prob,delay,wt,unk,tin,nutrition,color'.split(','))
 
-Potion = namedtuple('Potion', 'name,desc,mgc,power,prob,cost,color'.split(','))
+Potion = namedtuple('Potion', 'name,desc,mgc,power,prob,cost,color,wt'.split(','))
 
 # blank paper not included, i.e. all are proper scrolls
-Scroll = namedtuple('Scroll', 'name,desc,mgc,prob,cost'.split(','))
+Scroll = namedtuple('Scroll', 'name,desc,mgc,prob,cost,wt'.split(','))
 
 # blank paper, novel not included, i.e. all are proper spellbooks)
-Spell = namedtuple('Spell', 'name,desc,sub,prob,delay,level,mgc,dir,color,mat'.split(','))
+Spell = namedtuple('Spell', 'name,desc,sub,prob,delay,level,mgc,dir,color,mat,wt'.split(','))
 
-Wand = namedtuple('Wand', 'name,desc,prob,cost,mgc,dir,metal,color'.split(','))
+Wand = namedtuple('Wand', 'name,desc,prob,cost,mgc,dir,metal,color,wt'.split(','))
 
-Coin = namedtuple('Coin', 'name,desc,prob,metal,worth'.split(','))
+Coin = namedtuple('Coin', 'name,desc,prob,metal,worth,wt'.split(','))
 
 # Rocks are GEM_CLASS
 Gem = namedtuple('Gem', 'name,desc,prob,wt,gval,nutr,mohs,glass,color'.split(','))
 Rock = namedtuple('Rock', 'name,desc,kn,prob,wt,gval,sdam,ldam,mgc,nutr,mohs,glass,color'.split(','))
 
-Misc = namedtuple('Misc', 'name,desc'.split(','))
+Misc = namedtuple('Misc', 'name,desc,wt'.split(','))
 
-QuestItem = namedtuple('QuestItem', 'name,desc'.split(','))
+QuestItem = namedtuple('QuestItem', 'name,desc,wt'.split(','))
 
 #################### https://github.com/facebookresearch/nle/blob/master/include/skills.h
 
@@ -327,13 +327,15 @@ def DRGN_ARMR(name,mgc,power,cost,ac,color):
 #           BITS(0, 0, spec, 0, mgc, spec, 0, 0, 0,                    \
 #                HARDGEM(mohs), 0, P_NONE, metal),                     \
 #           power, RING_CLASS, 0, 0, 3, cost, 0, 0, 0, 0, 15, color)
-RING = Ring
+def RING(*args):
+    return Ring(*args, wt=3)
 
 ##define AMULET(name,desc,power,prob) \
 #    OBJECT(OBJ(name, desc),                                            \
 #           BITS(0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, P_NONE, IRON),        \
 #           power, AMULET_CLASS, prob, 0, 20, 150, 0, 0, 0, 0, 20, HI_METAL)
-AMULET = Amulet
+def AMULET(*args):
+    return Amulet(*args, wt=20)
 
 ##define TOOL(name,desc,kn,mrg,mgc,chg,prob,wt,cost,mat,color) \
 #    OBJECT(OBJ(name, desc),                                             \
@@ -365,13 +367,15 @@ def FOOD(*args):
 #    OBJECT(OBJ(name, desc),                                             \
 #           BITS(0, 1, 0, 0, mgc, 0, 0, 0, 0, 0, 0, P_NONE, GLASS),      \
 #           power, POTION_CLASS, prob, 0, 20, cost, 0, 0, 0, 0, 10, color)
-POTION = Potion
+def POTION(*args):
+    return Potion(*args, wt=20)
 
 ##define SCROLL(name,text,mgc,prob,cost) \
 #    OBJECT(OBJ(name, text),                                           \
 #           BITS(0, 1, 0, 0, mgc, 0, 0, 0, 0, 0, 0, P_NONE, PAPER),    \
 #           0, SCROLL_CLASS, prob, 0, 5, cost, 0, 0, 0, 0, 6, HI_PAPER)
-SCROLL = Scroll
+def SCROLL(*args):
+    return Scroll(*args, wt=5)
 
 ##define SPELL(name,desc,sub,prob,delay,level,mgc,dir,color)  \
 #    OBJECT(OBJ(name, desc),                                             \
@@ -379,22 +383,23 @@ SCROLL = Scroll
 #           0, SPBOOK_CLASS, prob, delay, 50, level * 100,               \
 #           0, 0, 0, level, 20, color)
 def SPELL(*args):
-    return Spell(*args, PAPER)
+    return Spell(*args, PAPER, wt=50)
 def SPELL_LEATHER(*args):
-    return Spell(*args, LEATHER)
+    return Spell(*args, LEATHER, wt=50)
 
 ##define WAND(name,typ,prob,cost,mgc,dir,metal,color) \
 #    OBJECT(OBJ(name, typ),                                              \
 #           BITS(0, 0, 1, 0, mgc, 1, 0, 0, 0, 0, dir, P_NONE, metal),    \
 #           0, WAND_CLASS, prob, 0, 7, cost, 0, 0, 0, 0, 30, color)
-WAND = Wand
+def WAND(*args):
+    return Wand(*args, wt=7)
 
 ##define COIN(name,prob,metal,worth) \
 #    OBJECT(OBJ(name, None),                                        \
 #           BITS(0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, P_NONE, metal),    \
 #           0, COIN_CLASS, prob, 0, 1, worth, 0, 0, 0, 0, 0, HI_GOLD)
 def COIN(*args):
-    return Coin(args[0], None, *args[1:])
+    return Coin(args[0], None, *args[1:], wt=0.01000001)
 
 ##define GEM(name,desc,prob,wt,gval,nutr,mohs,glass,color) \
 #    OBJECT(OBJ(name, desc),                                             \
@@ -882,12 +887,12 @@ AMULET("amulet of magical breathing", "octagonal", MAGICAL_BREATHING, 65),
 #           "Amulet of Yendor"),
 #       BITS(0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, PLASTIC),
 #       0, AMULET_CLASS, 0, 0, 20, 0, 0, 0, 0, 0, 1, HI_METAL),
-Misc("cheap plastic imitation of the Amulet of Yendor", "Amulet of Yendor"),
+Misc("cheap plastic imitation of the Amulet of Yendor", "Amulet of Yendor", wt=20),
 #OBJECT(OBJ("Amulet of Yendor", /* note: description == name */
 #           "Amulet of Yendor"),
 #       BITS(0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, MITHRIL),
 #       0, AMULET_CLASS, 0, 0, 20, 30000, 0, 0, 0, 0, 20, HI_METAL),
-QuestItem("Amulet of Yendor", "Amulet of Yendor"),
+QuestItem("Amulet of Yendor", "Amulet of Yendor", wt=20),
 
 #/* tools ... */
 #/* tools with weapon characteristics come last */
@@ -962,11 +967,11 @@ WEPTOOL("unicorn horn", None,
 ##OBJECT(OBJ("Candelabrum of Invocation", "candelabrum"),
 ##       BITS(0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, P_NONE, GOLD),
 ##       0, TOOL_CLASS, 0, 0, 10, 5000, 0, 0, 0, 0, 200, HI_GOLD),
-QuestItem("Candelabrum of Invocation", "candelabrum"),
+QuestItem("Candelabrum of Invocation", "candelabrum", wt=10),
 ##OBJECT(OBJ("Bell of Opening", "silver bell"),
 ##       BITS(0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, P_NONE, SILVER),
 ##       0, TOOL_CLASS, 0, 0, 10, 5000, 0, 0, 0, 0, 50, HI_SILVER),
-QuestItem("Bell of Opening", "silver bell"),
+QuestItem("Bell of Opening", "silver bell", wt=10),
 #undef TOOL
 #undef WEPTOOL
 
@@ -983,7 +988,7 @@ QuestItem("Bell of Opening", "silver bell"),
 # */
 #/* meat */
 FOOD("tripe ration",        140,  2, 10, 0, FLESH, 200, CLR_BROWN),
-FOOD("corpse",                0,  1,  0, 0, FLESH,   0, CLR_BROWN),
+FOOD("corpse",                0,  1,  None, 0, FLESH,   0, CLR_BROWN), # weight changed to None
 FOOD("egg",                  85,  1,  1, 1, FLESH,  80, CLR_WHITE),
 FOOD("meatball",              0,  1,  1, 0, FLESH,   5, CLR_BROWN),
 FOOD("meat stick",            0,  1,  1, 0, FLESH,   5, CLR_BROWN),
@@ -1122,7 +1127,7 @@ SCROLL(None, "STRC PRST SKRZ KRK",  1,   0, 100),# /* Czech and Slovak
 #SCROLL("mail",          "stamped",  0,   0,   0),
 ##endif
 #SCROLL("blank paper", "unlabeled",  0,  28,  60),
-Misc("blank paper", "unlabeled"),
+Misc("blank paper", "unlabeled", wt=5),
 #undef SCROLL
 
 
@@ -1238,17 +1243,17 @@ SPELL("stone to flesh",  "thick",
 #/* books with fixed descriptions
 # */
 #SPELL("blank paper", "plain", P_NONE, 18, 0, 0, 0, 0, HI_PAPER),
-Misc("blank paper", "plain"),
+Misc("blank paper", "plain", wt=50),
 #/* tribute book for 3.6 */
 #OBJECT(OBJ("novel", "paperback"),
 #       BITS(0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, P_NONE, PAPER),
 #       0, SPBOOK_CLASS, 0, 0, 0, 20, 0, 0, 0, 1, 20, CLR_BRIGHT_BLUE),
 ##/* a special, one of a kind, spellbook */
-Misc("novel", "paperback"),
+Misc("novel", "paperback", wt=50),
 #OBJECT(OBJ("Book of the Dead", "papyrus"),
 #       BITS(0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, P_NONE, PAPER),
 #       0, SPBOOK_CLASS, 0, 0, 20, 10000, 0, 0, 0, 7, 20, HI_PAPER),
-QuestItem("Book of the Dead", "papyrus"),
+QuestItem("Book of the Dead", "papyrus", wt=20),
 #undef SPELL
 
 
@@ -1353,22 +1358,22 @@ ROCK("rock", None,         1, 100,  10,  0, 3, 3, 0, 10, 7, MINERAL, CLR_GRAY),
 #OBJECT(OBJ("boulder", None),
 #       BITS(1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, P_NONE, MINERAL), 0,
 #       ROCK_CLASS, 100, 0, 6000, 0, 20, 20, 0, 0, 2000, HI_MINERAL),
-Misc("boulder", None),
+Misc("boulder", None, wt=6000),
 #OBJECT(OBJ("statue", None),
 #       BITS(1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, P_NONE, MINERAL), 0,
 #       ROCK_CLASS, 900, 0, 2500, 0, 20, 20, 0, 0, 2500, CLR_WHITE),
-Misc("statue", None),
+Misc("statue", None, wt=10000), # weight varies but we don't want to pick them up anyway
 
 #OBJECT(OBJ("heavy iron ball", None),
 #       BITS(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, WHACK, P_NONE, IRON), 0,
 #       BALL_CLASS, 1000, 0, 480, 10, 25, 25, 0, 0, 200, HI_METAL),
 #        /* +d4 when "very heavy" */
-Misc("heavy iron ball", None),
+Misc("heavy iron ball", None, wt=480),
 #OBJECT(OBJ("iron chain", None),
 #       BITS(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, WHACK, P_NONE, IRON), 0,
 #       CHAIN_CLASS, 1000, 0, 120, 0, 4, 4, 0, 0, 200, HI_METAL),
 #        /* +1 both l & s */
-Misc("iron chain", None),
+Misc("iron chain", None, wt=120),
 
 #/* Venom is normally a transitory missile (spit by various creatures)
 # * but can be wished for in wizard mode so could occur in bones data.
@@ -1530,7 +1535,8 @@ def possibilities_from_glyph(i):
         return ret
 
     if cat in [nh.TOOL_CLASS, nh.FOOD_CLASS]:
-        return [o for o in objects if o is not None and (o.desc or o.name) == desc]
+        return [o for i, o in enumerate(objects) if o is not None and ord(nh.objclass(i).oc_class) == cat and \
+                                                    (o.desc or o.name) == desc]
 
     if cat == nh.GEM_CLASS:
         # https://nethackwiki.com/wiki/Gem
@@ -1588,8 +1594,10 @@ def possibilities_from_glyph(i):
     if cat == nh.WAND_CLASS:
         return [o for o in objects if isinstance(o, Wand) and o.name is not None]
 
+    if cat in [nh.ROCK_CLASS, nh.BALL_CLASS, 16]:
+        return [o for o in objects if o is not None and (o.desc or o.name) == desc]
 
-    assert 0, (obj_id, objects[obj_id])
+    assert 0, (obj_id, objects[obj_id], cat)
 
 
 @functools.lru_cache(len(objects) * 100)

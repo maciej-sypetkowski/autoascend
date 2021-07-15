@@ -185,6 +185,11 @@ class Character:
         self.skill_levels = np.zeros(max(self.name_to_skill_type.values()) + 1, dtype=int)
         self.upgradable_skills = dict()
 
+    @property
+    def carrying_capacity(self):
+        # TODO: levitation, etc
+        return min(1000, (self.agent.blstats.strength_percentage + self.agent.blstats.constitution) * 25 + 50)
+
     def parse(self):
         with self.agent.atom_operation():
             self.agent.step(A.Command.ATTRIBUTES)

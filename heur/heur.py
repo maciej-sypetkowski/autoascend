@@ -141,8 +141,9 @@ class EnvWrapper:
                 print('Message:', self.agent.message)
                 print('Pop-up :', self.agent.popup)
             print()
-            print(agent_lib.BLStats(*self.last_observation['blstats']))
-            if self.agent is not None:
+            if self.agent is not None and hasattr(self.agent, 'blstats'):
+                print(agent_lib.BLStats(*self.last_observation['blstats']))
+                print(f'Carrying: {self.agent.inventory.items.total_weight} / {self.agent.character.carrying_capacity}')
                 print('Character:', self.agent.character)
             print('Misc :', self.last_observation['misc'])
             print('Score:', self.score)
@@ -375,7 +376,7 @@ def prepare_env(args, seed, step_limit=None):
     return env
 
 
-def single_simulation(args, seed_offset, timeout=180):
+def single_simulation(args, seed_offset, timeout=360):
     start_time = time.time()
     env = prepare_env(args, seed_offset)
 

@@ -170,7 +170,7 @@ class Agent:
 
         val = None
         while 1:
-            assert inactivity_counter < 100
+            assert inactivity_counter < 10
             if last_turn != self.blstats.time:
                 last_turn = self.blstats.time
                 inactivity_counter = 0
@@ -582,8 +582,8 @@ class Agent:
         dis = utils.bfs(y, x,
                         walkable=walkable,
                         walkable_diagonally=walkable & ~utils.isin(level.objects, G.DOORS) & (level.objects != -1),
-                        can_squeeze=False,
-                        # carrying_weight <= 600 and self.current_level().dungeon_number != Level.SOKOBAN
+                        can_squeeze=self.inventory.items.total_weight <= 600 and \
+                                    self.current_level().dungeon_number != Level.SOKOBAN,
                         )
 
         if y == self.blstats.y and x == self.blstats.x:
@@ -929,7 +929,7 @@ class Agent:
             inactivity_counter = 0
             last_turn = 0
             while 1:
-                assert inactivity_counter < 100
+                assert inactivity_counter < 10
                 if last_turn != self.blstats.time:
                     last_turn = self.blstats.time
                     inactivity_counter = 0

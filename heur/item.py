@@ -44,6 +44,22 @@ class Item:
         assert self.is_ambiguous()
         return self.objs[0]
 
+    def weight(self):
+        if self.objs[0] == O.from_name('corpse'):
+            assert self.is_ambiguous()
+            return 10000  # TODO: take weight from monster
+        if self.objs[0] in [
+            O.from_name("glob of gray ooze"),
+            O.from_name("glob of brown pudding"),
+            O.from_name("glob of green slime"),
+            O.from_name("glob of black pudding"),
+        ]:
+            assert self.is_ambiguous()
+            return 10000  # weight is unknown
+
+        weight = max((obj.wt for obj in self.objs))
+        return self.count * weight
+
     ######## WEAPON
 
     def is_weapon(self):
@@ -394,6 +410,8 @@ class InventoryItems:
         self.cloak = None
         self.shirt = None
 
+        self.total_weight = 0
+
         self.all_items = []
         self.all_letters = []
 
@@ -428,6 +446,13 @@ class InventoryItems:
                 if not item_name:
                     continue
                 item = self.agent.inventory.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
+
+                self.total_weight += item.weight()
+                # weight is sometimes unambiguous for unidentified items. All exceptions:
+                # {'helmet': 30, 'helm of brilliance': 50, 'helm of opposite alignment': 50, 'helm of telepathy': 50}
+                # {'leather gloves': 10, 'gauntlets of fumbling': 10, 'gauntlets of power': 30, 'gauntlets of dexterity': 10}
+                # {'speed boots': 20, 'water walking boots': 15, 'jumping boots': 20, 'elven boots': 15, 'fumble boots': 20, 'levitation boots': 15}
+                # {'luckstone': 10, 'loadstone': 500, 'touchstone': 10, 'flint': 10}
 
                 self.all_items.append(item)
                 self.all_letters.append(letter)
@@ -751,9 +776,13 @@ class Inventory:
                     (isinstance(obj, O.Weapon) or (isinstance(obj, O.Armor) and obj.sub in [O.ARM_SHIELD, O.ARM_SUIT])):
                 continue
 
+            if self.items.total_weight + item.weight() > self.agent.character.carrying_capacity - 100:
+                continue
+
             if isinstance(obj, O.Weapon): # TODO: WepTool
                 dps = utils.calc_dps(*self.agent.character.get_melee_bonus(item, large_monster=False))
                 if dps > best_weapon_dps or obj.sub in [O.P_DAGGER, O.P_KNIFE]:
+
                     self._interesting_item_glyphs.add(glyph)
                     self._interesting_items.add(obj)
             elif isinstance(obj, O.Armor):
@@ -853,12 +882,16 @@ class Inventory:
         if len(self.items_below_me) > 1:
             self.agent.current_level().checked_item_pile[self.agent.blstats.y, self.agent.blstats.x] = True
 
+        my_total_weight = self.agent.inventory.items.total_weight
+
         to_pickup = []
         for item in self.items_below_me:
-            if item.glyph is not None and item.glyph in self._interesting_item_glyphs:
-                to_pickup.append(item)
-            elif len(set(item.objs).intersection(self._interesting_items)) == len(item.objs):
-                to_pickup.append(item)
+            if (item.glyph is not None and item.glyph in self._interesting_item_glyphs) or \
+                    len(set(item.objs).intersection(self._interesting_items)) == len(item.objs):
+                if my_total_weight + item.weight() / item.count <= self.agent.character.carrying_capacity - 50:
+                    my_total_weight += item.weight()
+                    to_pickup.append(item)
 
         yield bool(to_pickup)
         self.pickup(to_pickup)
+        self.update_interesting_items(force=True)
