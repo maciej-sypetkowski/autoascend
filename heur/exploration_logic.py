@@ -202,6 +202,7 @@ class ExplorationLogic:
 
 
         def open_neighbor_doors():
+            # TODO: polymorphed into a handless creature, too heavy load to kick, using lockpicks
             for py, px in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, diagonal=False):
                 if self.agent.glyphs[py, px] in G.DOOR_CLOSED:
                     with self.agent.panic_if_position_changes():
