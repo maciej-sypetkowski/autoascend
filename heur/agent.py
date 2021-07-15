@@ -903,7 +903,7 @@ class Agent:
     ####### MAIN
 
     def main(self):
-        self.update({k: v.copy() for k, v in self.env.reset().items()})
+        self.step(A.Command.ESC)
         self.current_level().stair_destination[self.blstats.y, self.blstats.x] = \
                 ((Level.PLANE, 1), (None, None)) # TODO: check level num
         self.character.parse()

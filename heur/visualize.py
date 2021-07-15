@@ -1,8 +1,7 @@
 import cv2
 import numpy as np
-from item import Item
 
-from glyph import C
+# avoid importing agent modules here, because it makes agent reloading less reliable
 
 MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
@@ -40,6 +39,8 @@ def _draw_grid(imgs, ncol):
 class DrawTilesScope():
 
     def __init__(self, visualizer, tiles, color, is_path=False):
+        from glyph import C
+
         self.visualizer = visualizer
         if isinstance(tiles, np.ndarray) and tiles.shape == (C.SIZE_Y, C.SIZE_X):
             self.tiles = list(zip(*tiles.nonzero()))
@@ -257,6 +258,8 @@ class Visualizer:
         return vis
 
     def _draw_item(self, letter, item, width, height):
+        from item import Item
+
         vis = np.zeros((height, width, 3)).astype(np.uint8)
         _draw_frame(vis, color=(50, 50, 50), thickness=2)
         _put_text(vis, str(letter), (0, 0))
@@ -272,7 +275,7 @@ class Visualizer:
             _put_text(vis, str(item.modifier), (FONT_SIZE * 2, 0))
 
         if item.is_weapon():
-            _put_text(vis, str(self.env.agent.character.get_weapon_bonus(item)), (FONT_SIZE * 4, 0))
+            _put_text(vis, str(self.env.agent.character.get_melee_bonus(item)), (FONT_SIZE * 4, 0))
 
         _put_text(vis, str(item), (FONT_SIZE * 8, 0))
         if item.equipped:
