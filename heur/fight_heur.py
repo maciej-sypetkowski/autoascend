@@ -27,7 +27,8 @@ def _draw_ranged(priority, y, x, value, radius=1):
                 for i in range(radius):
                     y1 = y + direction_y * i
                     x1 = x + direction_x * i
-                    priority[y1, x1] += value
+                    if 0 <= y1 < priority.shape[0] and 0 <= x1 < priority.shape[1]:
+                        priority[y1, x1] += value
 
 
 def draw_monster_priority(agent, monster, priority, walkable):
@@ -154,7 +155,7 @@ def get_available_actions(agent, monsters):
         ranged_pr = ranged_monster_priority(agent, y, x, mon)
         if ranged_pr is not None:
             actions.append((ranged_pr, 'ranged', y, x))
-        return actions
+    return actions
 
 
 def build_priority_map(agent):

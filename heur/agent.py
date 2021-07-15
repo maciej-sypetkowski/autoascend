@@ -804,44 +804,50 @@ class Agent:
 
             priority[~mask] = float('nan')
             with self.env.debug_tiles(priority, color='turbo', is_heatmap=True):
-                if best_action is None or best_move_score > best_action[0]:
-                    with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
-                                               [best_y, best_x]], color=(0, 255, 0), is_path=True):
-                        self.move(best_y, best_x)
-                        wait_counter = 5
-                        continue
-                else:
-                    _, action_name, target_y, target_x = best_action
-                    if action_name == 'melee':
-                        if self.wield_best_weapon():
-                            continue
-                        with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
-                                                   [target_y, target_x]], color=(255, 0, 255), is_path=True):
-                            self.fight(target_y, target_x)
-                            wait_counter = 0
-                            continue
-                    elif action_name == 'ranged':
-                        valid_combinations = self.get_ranged_combinations()
+                with self.env.debug_log('|'.join(map(str, sorted(actions) + possible_move_to))):
+                    wait_counter = self._fight2_perform_action(best_action, best_move_score, best_x, best_y,
+                                                               wait_counter)
 
-                        # TODO: select best combination
-                        if not valid_combinations:
-                            self.wield_best_weapon()
-                            continue
+    def _fight2_perform_action(self, best_action, best_move_score, best_x, best_y, wait_counter):
+        if best_action is None or best_move_score > best_action[0]:
+            with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
+                                       [best_y, best_x]], color=(0, 255, 0), is_path=True):
+                self.move(best_y, best_x)
+                wait_counter = 5
+                return wait_counter
+        else:
+            _, action_name, target_y, target_x = best_action
+            if action_name == 'melee':
+                if self.wield_best_weapon():
+                    return wait_counter
+                with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
+                                           [target_y, target_x]], color=(255, 0, 255), is_path=True):
+                    self.fight(target_y, target_x)
+                    wait_counter = 0
+                    return wait_counter
+            elif action_name == 'ranged':
+                valid_combinations = self.get_ranged_combinations()
 
-                        # TODO: consider using monster information to select the best combination
-                        launcher, ammo = valid_combinations[0]
+                # TODO: select best combination
+                if not valid_combinations:
+                    self.wield_best_weapon()
+                    return wait_counter
 
-                        if launcher is not None and not launcher.equipped:
-                            self.inventory.wield(launcher)
-                            continue
+                # TODO: consider using monster information to select the best combination
+                launcher, ammo = valid_combinations[0]
 
-                        with self.env.debug_tiles([[target_y, target_x]], (0, 0, 255, 255), mode='frame'):
-                            dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
-                                                      allow_nonunit_distance=True)
-                            self.fire(ammo, dir)
-                            continue
-                    else:
-                        raise NotImplementedError()
+                if launcher is not None and not launcher.equipped:
+                    self.inventory.wield(launcher)
+                    return wait_counter
+
+                with self.env.debug_tiles([[target_y, target_x]], (0, 0, 255, 255), mode='frame'):
+                    dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
+                                              allow_nonunit_distance=True)
+                    self.fire(ammo, dir)
+                    return wait_counter
+            else:
+                raise NotImplementedError()
+        return wait_counter
 
     @utils.debug_log('fight1')
     @Strategy.wrap
