@@ -3,6 +3,7 @@ import numpy as np
 
 from glyph import C
 from item import Item
+# avoid importing agent modules here, because it makes agent reloading less reliable
 
 MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
@@ -40,6 +41,7 @@ def _draw_grid(imgs, ncol):
 class DrawTilesScope():
 
     def __init__(self, visualizer, tiles, color, is_path=False, is_heatmap=False, mode='fill'):
+        from glyph import C
         self.visualizer = visualizer
         self.is_heatmap = is_heatmap
         self.color = color
@@ -291,6 +293,8 @@ class Visualizer:
         return vis
 
     def _draw_item(self, letter, item, width, height):
+        from item import Item
+
         vis = np.zeros((height, width, 3)).astype(np.uint8)
         _draw_frame(vis, color=(50, 50, 50), thickness=2)
         _put_text(vis, str(letter), (0, 0))

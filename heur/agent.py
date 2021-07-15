@@ -625,6 +625,18 @@ class Agent:
 
     def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_tiles_args=None):
         assert not stop_one_before or (self.blstats.y != y or self.blstats.x != x)
+
+        if stop_one_before and self.bfs()[y, x] == -1:
+            dis = self.bfs()
+            best_p = None
+            for ny, nx in self.neighbors(y, x):
+                if dis[ny, nx] != -1 and (best_p is None or dis[best_p] > dis[ny, nx]):
+                    best_p = ny, nx
+            if best_p is None:
+                assert 0, 'no achievable neighbor'
+            y, x = best_p
+            stop_one_before = False
+
         assert self.bfs()[y, x] != -1
 
         steps_taken = 0
@@ -996,14 +1008,16 @@ class Agent:
     ####### MAIN
 
     def main(self):
-        self.update({k: v.copy() for k, v in self.env.reset().items()})
+        self.step(A.Command.ESC)
         self.current_level().stair_destination[self.blstats.y, self.blstats.x] = \
             ((Level.PLANE, 1), (None, None))  # TODO: check level num
         self.character.parse()
         self.character.parse_enhance_view()
+        self.step(A.Command.AUTOPICKUP)
+        if 'Autopickup: ON.' in self.message:
+            self.step(A.Command.AUTOPICKUP)
 
         try:
-            self.step(A.Command.AUTOPICKUP)
 
             inactivity_counter = 0
             last_turn = 0

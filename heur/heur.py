@@ -1,7 +1,9 @@
 import contextlib
-import multiprocessing
+import gc
 import json
+import multiprocessing
 import os
+import shutil
 import subprocess
 import sys
 import termios
@@ -15,6 +17,7 @@ from functools import partial
 from multiprocessing import Process, Queue
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
+from pathlib import Path
 from pprint import pprint
 
 import gym
@@ -23,23 +26,60 @@ import numpy as np
 import pandas as pd
 import tempfile
 
+import agent as agent_lib
 import visualize
-from agent import Agent, BLStats
-from glyph import ALL, G
 
 
 def fork_with_nethack_env(env):
+    tmpdir = tempfile.mkdtemp(prefix='nlecopy_')
+    shutil.copytree(env.env._vardir, tmpdir, dirs_exist_ok=True)
+    env.env._tempdir = None  # it has to be done before the fork to avoid removing the same directory two times
+    gc.collect()
+
     pid = os.fork()
-    if pid == 0:
-        env.env._tempdir = tempfile.TemporaryDirectory(prefix='nlefork_')
-        env.env._vardir = env.env._tempdir.name
-        os.chdir(env.env._vardir)
+
+    env.env._tempdir = tempfile.TemporaryDirectory(prefix='nlefork_')
+    shutil.copytree(tmpdir, env.env._tempdir.name, dirs_exist_ok=True)
+    env.env._vardir = env.env._tempdir.name
+    os.chdir(env.env._vardir)
     return pid
 
 
+def reload_agent(base_path=str(Path(__file__).parent.absolute())):
+    global visualize, agent_lib
+    visualize = agent_lib = None
+    modules_to_remove = []
+    for k, m in sys.modules.items():
+        if hasattr(m, '__file__') and m.__file__ and m.__file__.startswith(base_path):
+            modules_to_remove.append(k)
+    del m
+
+    gc.collect()
+    while modules_to_remove:
+        for k in modules_to_remove:
+            assert sys.getrefcount(sys.modules[k]) >= 2
+            if sys.getrefcount(sys.modules[k]) == 2:
+                sys.modules.pop(k)
+                modules_to_remove.remove(k)
+                gc.collect()
+                break
+        else:
+            assert 0, ('cannot unload agent library',
+                       {k: sys.getrefcount(sys.modules[k]) for k in modules_to_remove})
+
+    import agent as agent_lib
+    import visualize
+
+
+class ReloadAgent(KeyboardInterrupt):
+    # it inherits from KeyboardInterrupt as the agent doesn't catch that exception
+    pass
+
+
 class EnvWrapper:
-    def __init__(self, env, to_skip=0, visualizer=False, step_limit=None):
+    def __init__(self, env, to_skip=0, visualizer=False, step_limit=None, agent_args={}):
         self.env = env
+        self.agent_args = agent_args
         self.to_skip = to_skip
         self.step_limit = step_limit
         self.visualizer = None
@@ -51,6 +91,19 @@ class EnvWrapper:
         self.draw_walkable = False
         self.draw_seen = False
 
+    def main(self):
+        self.reset()
+        while 1:
+            try:
+                self.agent = agent_lib.Agent(self, **self.agent_args)
+                self.agent.main()
+                break
+            except ReloadAgent:
+                pass
+
+            self.agent = None
+            reload_agent()
+
     def set_agent(self, agent):
         self.agent = agent
 
@@ -60,13 +113,14 @@ class EnvWrapper:
         self.step_count = 0
         self.end_reason = ''
         self.last_observation = obs
-        self.render()
 
-        G.assert_map(obs['glyphs'], obs['chars'])
+        if self.agent is not None:
+            self.render()
 
-        blstats = BLStats(*obs['blstats'])
+        agent_lib.G.assert_map(obs['glyphs'], obs['chars'])
+
+        blstats = agent_lib.BLStats(*obs['blstats'])
         assert obs['chars'][blstats.y, blstats.x] == ord('@')
-
 
         return obs
 
@@ -87,7 +141,7 @@ class EnvWrapper:
                 print('Message:', self.agent.message)
                 print('Pop-up :', self.agent.popup)
             print()
-            print(BLStats(*self.last_observation['blstats']))
+            print(agent_lib.BLStats(*self.last_observation['blstats']))
             if self.agent is not None:
                 print('Character:', self.agent.character)
             print('Misc :', self.last_observation['misc'])
@@ -125,18 +179,18 @@ class EnvWrapper:
                 desc = f': {obj_classes[oclass]}: "{appearance}"'
 
             desc2 = 'Labels: '
-            if i in G.INV_DICT:
-                desc2 += ','.join(G.INV_DICT[i])
+            if i in agent_lib.G.INV_DICT:
+                desc2 += ','.join(agent_lib.G.INV_DICT[i])
 
             if i in scene_glyphs:
                 pos = (self.env.last_observation[0].reshape(-1) == i).nonzero()[0]
                 count = len(pos)
                 pos = pos[0]
                 char = bytes([self.env.last_observation[1].reshape(-1)[pos]])
-                texts.append((-count, f'{" " if i in G.INV_DICT else "U"} Glyph {i:4d} -> '
+                texts.append((-count, f'{" " if i in agent_lib.G.INV_DICT else "U"} Glyph {i:4d} -> '
                                       f'Char: {char} Count: {count:4d} '
                                       f'Type: {cls.replace("_OFF", ""):11s} {desc:30s} '
-                                      f'{ALL.find(i) if ALL.find(i) is not None else "":20} '
+                                      f'{agent_lib.ALL.find(i) if agent_lib.ALL.find(i) is not None else "":20} '
                                       f'{desc2}'))
         for _, t in sorted(texts):
             print(t)
@@ -154,8 +208,10 @@ class EnvWrapper:
                 self.render()
                 continue
 
+            if key == b'\x1bOS':  # F4
+                raise ReloadAgent()
+
             if key == b'\x1b[15~':  # F5
-                #self.visualizer.close_window()
                 fork_again = True
                 while fork_again:
                     if (pid := fork_with_nethack_env(self.env)) != 0:
@@ -244,7 +300,7 @@ class EnvWrapper:
         self.score += reward
         self.step_count += 1
         # if not done:
-        #     G.assert_map(obs['glyphs'], obs['chars'])
+        #     agent_lib.G.assert_map(obs['glyphs'], obs['chars'])
 
         if done:
             end_reason = bytes(obs['tty_chars'].reshape(-1)).decode().replace('You made the top ten list!', '').split()
@@ -305,7 +361,7 @@ def prepare_env(args, seed, step_limit=None):
             env = gym.make('NetHackChallenge-v0')
             env.seed(seed, seed)
             obs = env.reset()
-            blstats = BLStats(*obs['blstats'])
+            blstats = agent_lib.BLStats(*obs['blstats'])
             character_glyph = obs['glyphs'][blstats.y, blstats.x]
             if nh.permonst(nh.glyph_to_mon(character_glyph)).mname.startswith(args.role):
                 break
@@ -313,7 +369,8 @@ def prepare_env(args, seed, step_limit=None):
             env.close()
 
     env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=200),
-                     to_skip=args.skip_to, visualizer=args.mode == 'run')
+                     to_skip=args.skip_to, visualizer=args.mode == 'run',
+                     agent_args=dict(panic_on_errors=args.panic_on_errors))
     env.env.seed(seed, seed)
     return env
 
@@ -321,16 +378,14 @@ def prepare_env(args, seed, step_limit=None):
 def single_simulation(args, seed_offset, timeout=180):
     start_time = time.time()
     env = prepare_env(args, seed_offset)
-    agent = Agent(env, verbose=False, panic_on_errors=args.panic_on_errors)
-    env.set_agent(agent)
 
     if timeout is not None:
         pool = ThreadPool(processes=1)
     try:
         if timeout is not None:
-            pool.apply_async(agent.main).get(timeout)
+            pool.apply_async(env.main).get(timeout)
         else:
-            agent.main()
+            env.main()
     except multiprocessing.context.TimeoutError:
         env.end_reason = f'timeout'
     except BaseException as e:
