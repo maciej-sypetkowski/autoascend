@@ -124,7 +124,7 @@ class Item:
         # TODO: boomerang
         # TODO: aklys, Mjollnir
         return self.object().name in \
-               ['orcish dagger', 'dagger silver', 'athame dagger', 'elven dagger',
+               ['dagger', 'orcish dagger', 'dagger silver', 'athame dagger', 'elven dagger',
                 'worm tooth', 'knife', 'stiletto', 'scalpel', 'crysknife',
                 'dart', 'shuriken']
 

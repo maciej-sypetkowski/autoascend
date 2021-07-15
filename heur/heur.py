@@ -441,6 +441,7 @@ def run_profiling(args):
 def run_simulations(args):
     import ray
     ray.init(address='auto')
+    # ray.init(address='192.168.100.129:6379', _redis_password='5241590000000000')
 
     start_time = time.time()
     plot_queue = Queue()
