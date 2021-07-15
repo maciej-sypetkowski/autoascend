@@ -129,6 +129,11 @@ class ExplorationLogic:
                     yield False
 
                 exploration_levels = {level: self.agent.levels[level].search_count.sum() for level in levels_to_search}
+
+                for level in sorted(levels_to_search):
+                    if len(self.get_unexplored_stairs(*level, all=True)) > 0:
+                        exploration_levels[level] -= 10000
+
                 min_exploration_level = min(exploration_levels.values())
                 if self.agent.current_level().key() in levels_to_search and \
                         exploration_levels[self.agent.current_level().key()] < min_exploration_level + 150:
@@ -145,13 +150,6 @@ class ExplorationLogic:
                 assert path is not None
                 self.follow_level_path_strategy(path, go_to_strategy).run()
                 assert self.agent.current_level().key() == target_level
-
-            for level in sorted(levels_to_search):  # TODO: iteration order
-                if len(self.get_unexplored_stairs(*level, all=True)) > 0:
-                    path = self.get_path_to_level(*level)
-                    self.follow_level_path_strategy(path, go_to_strategy).run()
-                    assert self.agent.current_level().key() == level
-                    continue
 
             if self.agent.current_level().key() not in levels_to_search:
                 go_to_least_explored_level().run()

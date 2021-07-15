@@ -1,8 +1,6 @@
 import cv2
 import numpy as np
 
-from glyph import C
-from item import Item
 # avoid importing agent modules here, because it makes agent reloading less reliable
 
 MSG_HISTORY_COUNT = 10

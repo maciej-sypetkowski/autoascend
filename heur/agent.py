@@ -540,9 +540,9 @@ class Agent:
         else:
             self.direction(dir)
 
-        if self.blstats.y != expected_y or self.blstats.x != expected_x:
-            raise AgentPanic(f'agent position do not match after "move": '
-                             f'expected ({expected_y}, {expected_x}), got ({self.blstats.y}, {self.blstats.x})')
+            if self.blstats.y != expected_y or self.blstats.x != expected_x:
+                raise AgentPanic(f'agent position do not match after "move": '
+                                 f'expected ({expected_y}, {expected_x}), got ({self.blstats.y}, {self.blstats.x})')
 
     ######## NON-TRIVIAL HELPERS
 
@@ -1014,7 +1014,7 @@ class Agent:
         self.character.parse()
         self.character.parse_enhance_view()
         self.step(A.Command.AUTOPICKUP)
-        if 'Autopickup: ON.' in self.message:
+        if 'Autopickup: ON' in self.message:
             self.step(A.Command.AUTOPICKUP)
 
         try:
