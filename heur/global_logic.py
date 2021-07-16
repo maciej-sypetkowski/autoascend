@@ -124,6 +124,24 @@ class GlobalLogic:
                 self.agent.exploration.explore1(None)) \
             .before(utils.assert_strategy('end'))).strategy()
 
+    @Strategy.wrap
+    def wait_out_unexpected_state_strategy(self):
+        yielded = False
+        while (
+                self.agent.character.prop.blind or
+                self.agent.character.prop.confusion or
+                self.agent.character.prop.stun or
+                self.agent.character.prop.hallu or
+                self.agent.character.prop.polymorph):
+            if not yielded:
+                yield True
+                yielded = True
+
+            self.agent.direction('.')
+
+        if not yielded:
+            yield False
+
     def global_strategy(self):
         return (
             self.current_strategy()
@@ -133,7 +151,12 @@ class GlobalLogic:
                     .until(self.agent, lambda: self.agent.blstats.score >= 950 and
                                                self.agent.blstats.hitpoints >= 0.9 * self.agent.blstats.max_hitpoints)
             ])
-            .preempt(self.agent, [self.solve_sokoban_strategy().condition(lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN)])
+            .preempt(self.agent, [
+                self.solve_sokoban_strategy().condition(lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN)
+            ])
+            .preempt(self.agent, [
+                self.wait_out_unexpected_state_strategy(),
+            ])
             .preempt(self.agent, [
                 self.agent.eat1().condition(lambda: self.agent.blstats.time % 3 == 0 and
                                                     self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),

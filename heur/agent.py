@@ -35,6 +35,7 @@ class Agent:
         self.step_count = 0
         self.message = ''
         self.popup = []
+        self._message_history = []
 
         self.inventory = Inventory(self)
         self.character = Character(self)
@@ -45,6 +46,8 @@ class Agent:
         self.last_bfs_step = None
         self.last_prayer_turn = None
         self._previous_glyphs = None
+        self._last_turn = -1
+        self._inactivity_counter = 0
 
         self._no_step_calls = False
 
@@ -163,19 +166,20 @@ class Agent:
             assert iden not in id2fun
             id2fun[iden] = fun
 
-        inactivity_counter = 0
         last_turn = 0
 
         call_update = True
 
         val = None
+
+        last_step = self.step_count
+        inactivity_counter = 0
         while 1:
-            assert inactivity_counter < 10
-            if last_turn != self.blstats.time:
-                last_turn = self.blstats.time
+            inactivity_counter += 1
+            if self.step_count != last_step:
+                last_step = self.step_count
                 inactivity_counter = 0
-            else:
-                inactivity_counter += 1
+            assert inactivity_counter < 5, 'cyclic preempt'
 
             iterator = None
             try:
@@ -328,7 +332,9 @@ class Agent:
             self._is_reading_message_or_popup = True
             self.step(A.TextCharacters.SPACE)
             return
+
         self._is_reading_message_or_popup = False
+        self._message_history.append(self.message)
 
         if observation['misc'][1]:  # entering text
             self.step(A.Command.ESC)
@@ -351,6 +357,12 @@ class Agent:
 
         self.blstats = BLStats(*self.last_observation['blstats'])
         self.glyphs = self.last_observation['glyphs']
+
+        self._inactivity_counter += 1
+        if self._last_turn != self.blstats.time:
+            self._last_turn = self.blstats.time
+            self._inactivity_counter = 0
+        assert self._inactivity_counter < 100, ('turn inactivity', sorted(set(self._message_history[-50:])))
 
         if should_update:
             self.update_state()
@@ -389,8 +401,7 @@ class Agent:
 
             mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS)
             level.seen[mask] = True
-            level.objects[mask & ~level.walkable] = -1
-            level.walkable[mask] = True
+            level.walkable[mask & ~utils.isin(level.objects, G.STONE)] = True
 
         level.was_on[self.blstats.y, self.blstats.x] = True
 
@@ -441,8 +452,7 @@ class Agent:
         # TODO: move to inventory
         item = self.inventory.get_best_weapon()
         if item != self.inventory.items.main_hand:
-            self.inventory.wield(item)
-            return True
+            return self.inventory.wield(item)
         return False
 
     def type_text(self, text):
@@ -453,6 +463,8 @@ class Agent:
     def eat(self):  # TODO: eat what
         with self.atom_operation():
             self.step(A.Command.EAT)
+            if ' eat it? [ynq]'  in self.message:
+                self.type_text('y')
             if "You don't have anything to eat." in self.message:
                 return False
             self.type_text('y')
@@ -682,7 +694,8 @@ class Agent:
             # TODO: consider using monster information to select the best combination
             launcher, ammo = valid_combinations[0]
             if not launcher.equipped:
-                self.inventory.wield(launcher)
+                if not self.inventory.wield(launcher):
+                    return False
                 continue
 
             for _, y, x, _, _ in self.get_visible_monsters():
@@ -1002,7 +1015,7 @@ class Agent:
         yield True
         with self.atom_operation():
             self.step(A.Command.EAT)
-            while re.search('There is[a-zA-z ]* corpse here', self.message):
+            while re.search('There (is|are)[a-zA-z ]* here; eat it?', self.message):
                 self.type_text('n')
             for item in self.inventory.items:
                 if item.category == nh.FOOD_CLASS:
@@ -1024,16 +1037,13 @@ class Agent:
             self.step(A.Command.AUTOPICKUP)
 
         try:
-
+            last_step = self.step_count
             inactivity_counter = 0
-            last_turn = 0
             while 1:
-                assert inactivity_counter < 10
-                if last_turn != self.blstats.time:
-                    last_turn = self.blstats.time
+                inactivity_counter += 1
+                if self.step_count != last_step:
                     inactivity_counter = 0
-                else:
-                    inactivity_counter += 1
+                assert inactivity_counter < 5, ('cyclic panic', sorted({p.args[0] for p in self.all_panics[-5:]}))
 
                 try:
                     self.on_panic()
@@ -1041,6 +1051,8 @@ class Agent:
                     self.step(A.Command.ESC)
                     self.step(A.Command.ESC)
                     self.check_terrain()
+
+                    last_step = self.step_count
 
                     self.global_logic.global_strategy().run()
                     assert 0

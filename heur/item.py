@@ -193,7 +193,8 @@ class ItemManager:
         count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, _, shop_price = matches[0]
         # TODO: effects, uses
 
-        if info in {'being worn', 'being worn; slippery', 'wielded'} or info.startswith('weapon in '):
+        if info in {'being worn', 'being worn; slippery', 'wielded'} or info.startswith('weapon in ') or \
+                info.startswith('tethered weapon in '):
             equipped = True
             at_ready = False
         elif info in {'at the ready', 'in quiver', 'in quiver pouch', 'lit'}:
@@ -559,6 +560,14 @@ class Inventory:
         if item is not None and item.equipped:
             return True
 
+        if self.agent.character.prop.polymorph:
+            # TODO: depends on kind of a monster
+            return False
+
+        if self.items.main_hand is None or self.items.main_hand.status == Item.CURSED or \
+                (item.objs[0].bi and self.items.off_hand is not None):
+            return False
+
         with self.agent.atom_operation():
             self.agent.step(A.Command.WIELD)
             if "Don't be ridiculous" in self.agent.message:
@@ -568,10 +577,9 @@ class Inventory:
             if 'You cannot wield a two-handed sword while wearing a shield.' in self.agent.message or \
                     'You cannot wield a two-handed weapon while wearing a shield.' in self.agent.message or \
                     ' welded to your hand' in self.agent.message:
-                # TODO: handle it better
                 return False
-            assert re.search(r'(You secure the tether\.  )?(^[a-zA-z] - |welds?( itself| themselves| ) to|You are already wielding that|'
-                             r'You are already empty handed)', \
+            assert re.search(r'(You secure the tether\.  )?([a-zA-z] - |welds?( itself| themselves| ) to|'
+                             r'You are already wielding that|You are empty handed|You are already empty handed)', \
                              self.agent.message), self.agent.message
 
         return True
@@ -588,6 +596,8 @@ class Inventory:
 
         with self.agent.atom_operation():
             self.agent.step(A.Command.WEAR)
+            if "Don't even bother." in self.agent.message:
+                return False
             assert 'What do you want to wear?' in self.agent.message, self.agent.message
             self.agent.type_text(letter)
             assert 'You finish your dressing maneuver.' in self.agent.message or \
@@ -767,10 +777,11 @@ class Inventory:
         best_armorset, best_armorset_ac = self.get_best_armorset(return_ac=True)
 
         for glyph in range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + nh.NUM_OBJECTS - 6):
-            obj = O.objects[glyph - nh.GLYPH_OBJ_OFF]
             item = Item(self.item_manager.possible_objects_from_glyph(glyph))
             if not item.is_ambiguous():
                 continue
+
+            obj = O.objects[glyph - nh.GLYPH_OBJ_OFF]
 
             if self.agent.character.role == Character.MONK and \
                     (isinstance(obj, O.Weapon) or (isinstance(obj, O.Armor) and obj.sub in [O.ARM_SHIELD, O.ARM_SUIT])):
@@ -782,7 +793,6 @@ class Inventory:
             if isinstance(obj, O.Weapon): # TODO: WepTool
                 dps = utils.calc_dps(*self.agent.character.get_melee_bonus(item, large_monster=False))
                 if dps > best_weapon_dps or obj.sub in [O.P_DAGGER, O.P_KNIFE]:
-
                     self._interesting_item_glyphs.add(glyph)
                     self._interesting_items.add(obj)
             elif isinstance(obj, O.Armor):

@@ -1,9 +1,37 @@
 import re
 
 import numpy as np
+import nle.nethack as nh
 from nle.nethack import actions as A
 
 import objects as O
+
+
+class Property:
+    def __init__(self, agent):
+        self.agent = agent
+
+    @property
+    def confusion(self):
+        return 'Conf' in bytes(self.agent.last_observation['tty_chars'][-1]).decode()
+
+    @property
+    def stun(self):
+        return 'Stun' in bytes(self.agent.last_observation['tty_chars'][-1]).decode()
+
+    @property
+    def hallu(self):
+        return 'Hallu' in bytes(self.agent.last_observation['tty_chars'][-1]).decode()
+
+    @property
+    def blind(self):
+        return 'Blind' in bytes(self.agent.last_observation['tty_chars'][-1]).decode()
+
+    @property
+    def polymorph(self):
+        if not nh.glyph_is_monster(self.agent.glyphs[self.agent.blstats.y, self.agent.blstats.x]):
+            return False
+        return self.agent.character.self_glyph != self.agent.glyphs[self.agent.blstats.y, self.agent.blstats.x]
 
 
 class Character:
@@ -178,10 +206,12 @@ class Character:
 
     def __init__(self, agent):
         self.agent = agent
+        self.prop = Property(agent)
         self.role = None
         self.alignment = None
         self.race = None
         self.gender = None
+        self.self_glyph = None
         self.skill_levels = np.zeros(max(self.name_to_skill_type.values()) + 1, dtype=int)
         self.upgradable_skills = dict()
 
@@ -195,6 +225,7 @@ class Character:
             self.agent.step(A.Command.ATTRIBUTES)
             text = ' '.join(self.agent.popup)
             self._parse(text)
+            self.self_glyph = self.agent.glyphs[self.agent.blstats.y, self.agent.blstats.x]
 
     def _parse(self, text):
         matches = re.findall('You are a ([a-z]+) (([a-z]+) )?([a-z]+) ([A-Z][a-z]+).', text)
