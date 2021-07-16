@@ -463,7 +463,7 @@ class Agent:
     def eat(self):  # TODO: eat what
         with self.atom_operation():
             self.step(A.Command.EAT)
-            if ' eat it? [ynq]'  in self.message:
+            if ' eat it? [ynq]' in self.message:
                 self.type_text('y')
             if "You don't have anything to eat." in self.message:
                 return False
@@ -537,6 +537,11 @@ class Agent:
         expected_y = self.blstats.y + ('s' in dir) - ('n' in dir)
         expected_x = self.blstats.x + ('e' in dir) - ('w' in dir)
 
+        if (expected_y != self.blstats.y or expected_x != self.blstats.x) \
+                and self.glyphs[expected_y, expected_x] in MON.ALL_MONS:
+            # TODO: consider handling it in different way, since this situation is sometimes expected
+            raise AgentPanic(f'Monster on a next tile when moving: ({expected_y},{expected_x})')
+
         # TODO: portals
         if dir in ['<', '>']:
             level = self.current_level()
@@ -590,6 +595,12 @@ class Agent:
 
         walkable = level.walkable & ~utils.isin(self.glyphs, G.PEACEFUL_MONS, G.BOULDER) & \
                    ~utils.isin(level.objects, G.TRAPS)
+
+        for my, mx in list(zip(*np.nonzero(utils.isin(self.glyphs, G.MONS)))):
+            mon = MON.permonst(self.glyphs[my][mx])
+            import fight_heur
+            if mon.mname in fight_heur.ONLY_RANGED_SLOW_MONSTERS:
+                walkable[my, mx] = False
 
         dis = utils.bfs(y, x,
                         walkable=walkable,
@@ -730,10 +741,11 @@ class Agent:
         dis = self.bfs()
         mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
         mask[self.blstats.y, self.blstats.x] = 0
-        mask &= dis != -1
+        # mask &= dis != -1
         ret = []
         for y, x in zip(*mask.nonzero()):
-            ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))
+            if (dis[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2] != -1).any():
+                ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))
         ret.sort()
         return ret
 
@@ -779,12 +791,14 @@ class Agent:
         wait_counter = 0
         while 1:
             monsters = self.get_visible_monsters()
-            # if len(monsters) > 1:
-            #     self.env.visualizer.frame_skipping = 1
-            #     self.env.render()
-            #     input('MMMMM')
 
-            if not monsters or all(dis > 7 for dis, *_ in monsters):
+            only_ranged_slow_monsters = all([mon.mname in fight_heur.ONLY_RANGED_SLOW_MONSTERS
+                                             for _, _, _, mon, _ in monsters])
+
+            dis = self.bfs()
+
+            if not monsters or all(dis > 7 for dis, *_ in monsters) or \
+                    (only_ranged_slow_monsters and not self.get_ranged_combinations() and np.sum(dis != -1) > 1):
                 if wait_counter:
                     self.search()
                     wait_counter -= 1
@@ -803,17 +817,30 @@ class Agent:
             assert mask.any()
             priority[~mask] = np.min(priority[mask]) - 1
 
-            dis = self.bfs()
             adjacent = dis == 1
 
-            priority[~adjacent] -= 2 ** 16
-            possible_move_to = list(zip(*np.nonzero((priority == np.max(priority)))))
-            priority[~adjacent] += 2 ** 16
+            assert np.sum(adjacent) <= 8, np.sum(adjacent)
+            possible_move_to = []
+            if adjacent.any():
+                possible_move_to = list(zip(*np.nonzero((priority == np.max(priority[adjacent])) & adjacent)))
+            assert len(possible_move_to) <= 8
 
-            best_y, best_x = possible_move_to[self.rng.randint(0, len(possible_move_to))]
+            best_y, best_x = None, None
+            if possible_move_to:
+                best_y, best_x = possible_move_to[self.rng.randint(0, len(possible_move_to))]
+                if priority[best_y, best_x] < -2**15:
+                    best_y, best_x = None, None
 
-            best_move_score = priority[best_y, best_x]
+            best_move_score = None
+            if best_y is not None:
+                best_move_score = priority[best_y, best_x]
             best_action = max(actions) if actions else None
+
+            if best_y is None and best_action is None:
+                self.env.visualizer.frame_skipping = 1
+                self.env.render()
+                input()
+                assert 0, 'No possible action available during fight2'
 
             priority[~mask] = float('nan')
             with self.env.debug_tiles(priority, color='turbo', is_heatmap=True):
@@ -822,7 +849,7 @@ class Agent:
                                                                wait_counter)
 
     def _fight2_perform_action(self, best_action, best_move_score, best_x, best_y, wait_counter):
-        if best_action is None or best_move_score > best_action[0]:
+        if best_action is None or (best_y is not None and best_move_score > best_action[0]):
             with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
                                        [best_y, best_x]], color=(0, 255, 0), is_path=True):
                 self.move(best_y, best_x)
