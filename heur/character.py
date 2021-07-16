@@ -281,7 +281,9 @@ class Character:
         for line in self.agent.popup[1:]:
             if line.strip() in self.possible_skill_types or \
                     line.strip() == '(Skill flagged by "#" cannot be enhanced any further.)' or \
-                    line.strip() == '(Skill flagged by "*" may be enhanced when you\'re more experienced.)':
+                    line.strip() == '(Skills flagged by "#" cannot be enhanced any further.)' or \
+                    line.strip() == '(Skill flagged by "*" may be enhanced when you\'re more experienced.)' or \
+                    line.strip() == '(Skills flagged by "*" may be enhanced when you\'re more experienced.)':
                 continue
             matches = re.findall(r'^([a-zA-Z] -)?#?\*? *' +
                                  r'(' + '|'.join(self.name_to_skill_type.keys()) + ') *' +

@@ -237,6 +237,9 @@ class Agent:
                     j = line.find(res[0])
                     result, marker_type = (i, j), res[0]
                     break
+
+            if result is not None and result[1] == 1:
+                result = (result[0], 0)  # e.g. for known items view
             return result, marker_type
 
         message = bytes(obs['message']).decode().replace('\0', ' ').replace('\n', '').strip()
@@ -463,7 +466,8 @@ class Agent:
     def eat(self):  # TODO: eat what
         with self.atom_operation():
             self.step(A.Command.EAT)
-            if ' eat it? [ynq]'  in self.message:
+            if ' eat it? [ynq]'  in self.message or \
+                    ' eat one? [ynq]'  in self.message:
                 self.type_text('y')
             if "You don't have anything to eat." in self.message:
                 return False
@@ -1015,7 +1019,7 @@ class Agent:
         yield True
         with self.atom_operation():
             self.step(A.Command.EAT)
-            while re.search('There (is|are)[a-zA-z ]* here; eat it?', self.message):
+            while re.search('There (is|are)[a-zA-z0-9 ]* here; eat (it|one)\?', self.message):
                 self.type_text('n')
             for item in self.inventory.items:
                 if item.category == nh.FOOD_CLASS:
