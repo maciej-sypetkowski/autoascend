@@ -186,7 +186,7 @@ class Agent:
                 with self.add_on_update(list(id2fun.values())):
                     if call_update:
                         call_update = False
-                        self.call_update_functions()
+                        self.call_update_functions(list(id2fun.values()))
 
                     if isinstance(default, Strategy):
                         val = default.run()
@@ -371,15 +371,23 @@ class Agent:
             self.update_state()
 
     def update_state(self):
+        step = self.step_count
         self.inventory.update()
+        if self.step_count != step:
+            return
+
         if self._last_terrain_check is None or self.blstats.time - self._last_terrain_check > 50:
             self.check_terrain()
         self.update_level()
         self.call_update_functions()
 
-    def call_update_functions(self):
+    def call_update_functions(self, funcs=None):
+        if funcs is None:
+            funcs = self.on_update
+        assert all((func in self.on_update for func in funcs))
+
         with self.disallow_step_calling():
-            for func in self.on_update:
+            for func in funcs:
                 func()
 
     def update_level(self):

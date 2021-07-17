@@ -183,15 +183,15 @@ class GlobalLogic:
                                                self.agent.blstats.hitpoints >= 0.9 * self.agent.blstats.max_hitpoints)
             ])
             .preempt(self.agent, [
-                self.solve_sokoban_strategy().condition(lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN)
+                self.solve_sokoban_strategy()
+                .condition(lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN)
             ])
             .preempt(self.agent, [
                 self.wait_out_unexpected_state_strategy(),
             ])
             .preempt(self.agent, [
-                self.agent.eat1().condition(lambda: self.agent.blstats.time % 3 == 0 and
-                                                    self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
-                self.agent.eat_from_inventory(),
+                self.agent.eat1().every(5).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
+                self.agent.eat_from_inventory().every(5),
             ]).preempt(self.agent, [
                 self.agent.fight2() if self.agent.character.role in (self.agent.character.TOURIST,
                                                                      self.agent.character.ROGUE,

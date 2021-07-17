@@ -973,7 +973,7 @@ class Inventory:
             self.pickup_and_drop_items()
             .before(self.wear_best_stuff())
             .before(self.go_to_item_to_pickup()
-                    .before(self.check_items())
+                    .before(self.check_items()).every(10)
                     .preempt(self.agent, [
                         self.pickup_and_drop_items()
                     ])).repeat()
@@ -1034,12 +1034,12 @@ class Inventory:
             yield False
 
         dis = self.agent.bfs()
-        mask &= dis != -1
+        mask &= dis > 0
         if not mask.any():
             yield False
         yield True
 
-        nonzero_y, nonzero_x = (mask & (dis == dis[mask].min()) & (dis != 0)).nonzero()
+        nonzero_y, nonzero_x = (mask & (dis == dis[mask].min())).nonzero()
         i = self.agent.rng.randint(len(nonzero_y))
         target_y, target_x = nonzero_y[i], nonzero_x[i]
 
@@ -1052,8 +1052,8 @@ class Inventory:
         level = self.agent.current_level()
         dis = self.agent.bfs()
 
-        mask = np.vectorize(len)(self.agent.current_level().items) != 0
-        mask &= dis != -1
+        mask = dis > 0
+        mask[mask] = np.vectorize(len)(self.agent.current_level().items[mask]) != 0
 
         items = {}
         for y, x in sorted(zip(*mask.nonzero()), key=lambda p: dis[p]):

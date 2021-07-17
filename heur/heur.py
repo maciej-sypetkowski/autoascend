@@ -436,6 +436,7 @@ def run_profiling(args):
     start_time = time.time()
     res = []
     for i in range(args.episodes):
+        print(f'starting {i + 1} game...')
         res.append(single_simulation(args, i, timeout=None))
     duration = time.time() - start_time
 
@@ -447,9 +448,11 @@ def run_profiling(args):
     else:
         assert 0
 
+    print()
     print('turns_per_second :', sum([r['turns'] for r in res]) / duration)
     print('steps_per_second :', sum([r['steps'] for r in res]) / duration)
     print('episodes_per_hour:', len(res) / duration * 3600)
+    print()
 
     if args.profiler == 'cProfile':
         stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
@@ -461,8 +464,10 @@ def run_profiling(args):
         subprocess.run('gprof2dot -f pstats /tmp/nethack_stats.profile -o /tmp/calling_graph.dot'.split())
         subprocess.run('xdot /tmp/calling_graph.dot'.split())
     elif args.profiler == 'pyinstrument':
+        frame_records = session.frame_records
+
         new_records = []
-        for record in session.frame_records:
+        for record in frame_records:
             ret_frames = []
             for frame in record[0][1:][::-1]:
                 func, module, line = frame.split('\0')
@@ -474,9 +479,22 @@ def run_profiling(args):
             ret_frames.append(record[0][0])
             new_records.append((ret_frames[::-1], record[1] / session.duration * 100))
         session.frame_records = new_records
-        profiler.last_session = session
+        session.start_call_stack = [session.start_call_stack[0]]
 
+        print('Cumulative time:')
+        profiler.last_session = session
         print(profiler.output_text(unicode=True, color=True))
+
+        new_records = []
+        for record in frame_records:
+            new_records.append([record[0][1:][-1:], record[1] / session.duration * 100])
+            new_records[-1][0] = record[0][:1] + new_records[-1][0]
+        session.frame_records = new_records
+        session.start_call_stack = [session.start_call_stack[0]]
+
+        print('Total time:')
+        profiler.last_session = session
+        print(profiler.output_text(unicode=True, color=True, show_all=True))
     else:
         assert 0
 

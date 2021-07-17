@@ -133,5 +133,23 @@ class Strategy:
 
         return Strategy(f, {'repeat': self.config})
 
+    def every(self, num_of_iterations):
+        current_num = -1
+        def f():
+            nonlocal current_num
+            current_num += 1
+            if current_num % num_of_iterations != 0:
+                yield False
+                assert 0
+            it = self.strategy()
+            yield next(it)
+            try:
+                next(it)
+                assert 0
+            except StopIteration as e:
+                return e.value
+
+        return Strategy(f, {'strategy': self.config, 'every': num_of_iterations})
+
     def __repr__(self):
         return str(self.config)
