@@ -1063,6 +1063,9 @@ class Inventory:
         dis = self.agent.bfs()
 
         mask = dis > 0
+        if not mask.any():
+            yield False
+
         mask[mask] = np.vectorize(len)(self.agent.current_level().items[mask]) != 0
 
         items = {}
