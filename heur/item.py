@@ -171,6 +171,16 @@ class Item:
 
     ######## FOOD
 
+    def is_food(self):
+        if isinstance(self.objs[0], O.Food):
+            assert self.is_ambiguous()
+            return True
+
+    def nutrition_per_weight(self):
+        # TODO: corpses/tins
+        assert self.is_food()
+        return self.object.nutrition / max(self.weight() / self.count, 1)
+
     def is_corpse(self):
         if self.objs[0] == O.from_name('corpse'):
             assert self.is_ambiguous()

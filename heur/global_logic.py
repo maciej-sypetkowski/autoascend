@@ -1,13 +1,16 @@
 from enum import IntEnum, auto
 
+import nle.nethack as nh
 import numpy as np
 
-import utils
-from glyph import Hunger, G
-from level import Level
-from item import ItemPriorityBase
-from strategy import Strategy
+import objects as O
 import soko_solver
+import utils
+from character import Character
+from glyph import Hunger, G
+from item import Item, ItemPriorityBase
+from level import Level
+from strategy import Strategy
 
 
 class ItemPriority(ItemPriorityBase):
@@ -34,6 +37,32 @@ class ItemPriority(ItemPriorityBase):
                 if item not in ret:
                     remaining_weight -= item.weight()
                     ret[item] = item.count
+
+        for item in items:
+            if item not in ret and remaining_weight >= item.weight() and item.is_ambiguous():
+                if item.object in [
+                        O.from_name('healing', nh.POTION_CLASS),
+                        O.from_name('extra healing', nh.POTION_CLASS),
+                        O.from_name('full healing', nh.POTION_CLASS)]:
+                    remaining_weight -= item.weight()
+                    ret[item] = item.count
+
+                if self.agent.character.role in [Character.RANGER, Character.ROGUE,
+                                                 Character.SAMURAI, Character.TOURIST] and \
+                        (item.is_launcher() or item.is_fired_projectile()):
+                    remaining_weight -= item.weight()
+                    ret[item] = item.count
+
+        for item in sorted(filter(Item.is_thrown_projectile, items),
+                           key=lambda i: -utils.calc_dps(*self.agent.character.get_melee_bonus(i))):
+            if item not in ret and remaining_weight >= item.weight():
+                remaining_weight -= item.weight()
+                ret[item] = item.count
+
+        for item in sorted(filter(Item.is_food, items), key=lambda x: -x.nutrition_per_weight()):
+            if item not in ret and remaining_weight >= item.weight():
+                remaining_weight -= item.weight()
+                ret[item] = item.count
 
         return [ret.get(item, 0) for item in items]
 
