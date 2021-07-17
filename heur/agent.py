@@ -841,9 +841,6 @@ class Agent:
             best_action = max(actions) if actions else None
 
             if best_y is None and best_action is None:
-                self.env.visualizer.frame_skipping = 1
-                self.env.render()
-                input()
                 assert 0, 'No possible action available during fight2'
 
             priority[~mask] = float('nan')

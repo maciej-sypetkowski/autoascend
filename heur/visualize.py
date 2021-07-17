@@ -1,3 +1,4 @@
+import queue
 import cv2
 import numpy as np
 
@@ -6,6 +7,7 @@ import numpy as np
 MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
 FAST_FRAME_SKIPPING = 16
+RENDERS_HISTORY_SIZE = 64
 
 
 def _put_text(img, text, pos, scale=FONT_SIZE / 35, thickness=1, color=(255, 255, 0), console=False):
@@ -133,10 +135,13 @@ class DebugLogScope():
 class Visualizer:
 
     def __init__(self, env, tileset_path='/workspace/heur/tilesets/3.6.1tiles32.png', tile_size=32,
-                 window_name='NetHackVis'):
+                 start_visualize=None, show=False, output_dir=None):
         self.env = env
         self.tile_size = tile_size
-        self._window_name = window_name
+        self._window_name = 'NetHackVis'
+        self.show = show
+        self.start_visualize = start_visualize
+        self.output_dir = output_dir
 
         self.tileset = cv2.imread(tileset_path)[..., ::-1]
         if self.tileset is None:
@@ -157,7 +162,8 @@ class Visualizer:
         from glyph2tile import glyph2tile
         self.glyph2tile = np.array(glyph2tile)
 
-        print('Read tileset of size:', self.tileset.shape)
+        if self.show:
+            print('Read tileset of size:', self.tileset.shape)
 
         self.create_window()
 
@@ -171,11 +177,20 @@ class Visualizer:
         self.frame_skipping = 1
         self.frame_counter = -1
 
+        self.renders_history = None
+        if not self.show:
+            assert output_dir is not None
+            self.renders_history = queue.deque(maxlen=RENDERS_HISTORY_SIZE)
+            self.output_dir = output_dir
+            self.output_dir.mkdir(exist_ok=True, parents=True)
+
     def create_window(self):
-        cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+        if self.show:
+            cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
 
     def close_window(self):
-        cv2.destroyWindow(self._window_name)
+        if self.show:
+            cv2.destroyWindow(self._window_name)
 
     def debug_tiles(self, *args, **kwargs):
         return DrawTilesScope(self, *args, **kwargs)
@@ -191,11 +206,16 @@ class Visualizer:
 
     def render(self):
         self.frame_counter += 1
+
         if self.frame_counter % self.frame_skipping != 0:
             return
 
         if self.last_obs is None:
             return
+
+        if self.start_visualize is not None:
+            if self.env.step_count < self.start_visualize:
+                return
 
         glyphs = self.last_obs['glyphs']
         tiles_idx = self.glyph2tile[glyphs]
@@ -211,8 +231,12 @@ class Visualizer:
         inventory = self._draw_inventory(rendered.shape[0])
         rendered = np.concatenate([rendered, inventory], axis=1)
 
-        cv2.imshow(self._window_name, rendered[..., ::-1])
-        cv2.waitKey(1)
+        if self.show:
+            cv2.imshow(self._window_name, rendered[..., ::-1])
+            cv2.waitKey(1)
+
+        if self.renders_history is not None:
+            self.renders_history.append(rendered)
 
     def _draw_topbar(self, obs, width):
         messages_vis = self._draw_message_history(width // 3)
@@ -320,8 +344,14 @@ class Visualizer:
         vis = np.zeros((height, width, 3)).astype(np.uint8)
         if self.env.agent:
             item_h = FONT_SIZE
-            for i, (letter, item) in enumerate(zip(self.env.agent.inventory.items.all_letters, \
+            for i, (letter, item) in enumerate(zip(self.env.agent.inventory.items.all_letters,
                                                    self.env.agent.inventory.items.all_items)):
                 vis[i * item_h:(i + 1) * item_h] = self._draw_item(letter, item, width, item_h)
         _draw_frame(vis)
         return vis
+
+    def save_end_history(self):
+        for i, render in enumerate(list(self.renders_history)):
+            render = render[..., ::-1]
+            out_path = self.output_dir / (str(i).rjust(5, '0') + '.jpg')
+            cv2.imwrite(str(out_path), render)
