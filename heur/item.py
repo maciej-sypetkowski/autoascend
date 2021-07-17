@@ -940,6 +940,9 @@ class Inventory:
     ######## STRATEGIES helpers
 
     def get_best_weapon(self, return_dps=False, items=None):
+        if self.agent.character.role == Character.MONK:
+            return None
+
         if items is None:
             items = self.items
         # select the best
@@ -968,9 +971,14 @@ class Inventory:
             if item.is_armor() and item.is_ambiguous():
                 slot = item.object.sub
                 ac = item.get_ac()
+
+                if self.agent.character.role == Character.MONK and slot == O.ARM_SUIT:
+                    continue
+
                 if best_ac[slot] is None or best_ac[slot] > ac:
                     best_ac[slot] = ac
                     best_items[slot] = item
+
         if return_ac:
             return best_items, best_ac
         return best_items
