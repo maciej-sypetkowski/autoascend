@@ -240,8 +240,8 @@ class Visualizer:
 
     def _draw_topbar(self, obs, width):
         messages_vis = self._draw_message_history(width // 3)
-        popup_vis = self._draw_popup_history(width // 3)
-        log_messages_vis = self._draw_debug_message_log(width - 2 * (width // 3))
+        popup_vis = self._draw_popup_history(width // 4)
+        log_messages_vis = self._draw_debug_message_log(width - width // 3 - width // 4)
         ret = np.concatenate([messages_vis, popup_vis, log_messages_vis], axis=1)
         assert ret.shape[1] == width
         return ret

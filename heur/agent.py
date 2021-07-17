@@ -467,7 +467,7 @@ class Agent:
         with self.atom_operation():
             self.step(A.Command.EAT)
             if ' eat it? [ynq]' in self.message or \
-                    ' eat one? [ynq]'  in self.message:
+                    ' eat one? [ynq]' in self.message:
                 self.type_text('y')
             if "You don't have anything to eat." in self.message:
                 return False
@@ -832,7 +832,7 @@ class Agent:
             best_y, best_x = None, None
             if possible_move_to:
                 best_y, best_x = possible_move_to[self.rng.randint(0, len(possible_move_to))]
-                if priority[best_y, best_x] < -2**15:
+                if priority[best_y, best_x] < -2 ** 15:
                     best_y, best_x = None, None
 
             best_move_score = None
@@ -845,7 +845,8 @@ class Agent:
 
             priority[~mask] = float('nan')
             with self.env.debug_tiles(priority, color='turbo', is_heatmap=True):
-                with self.env.debug_log('|'.join(map(str, sorted(actions) + possible_move_to))):
+                actions_str = '|'.join([f'{a[0]}-{a[1][0]}-{a[2]},{a[3]}' for a in sorted(actions)])
+                with self.env.debug_log(actions_str + f'|{best_move_score}|' + '|'.join(map(str, possible_move_to))):
                     wait_counter = self._fight2_perform_action(best_action, best_move_score, best_x, best_y,
                                                                wait_counter)
 

@@ -166,7 +166,7 @@ class GlobalLogic:
                                                                      self.agent.character.ROGUE,
                                                                      self.agent.character.RANGER,
                                                                      self.agent.character.BARBARIAN,) else
-                self.agent.fight1(),
+                self.agent.fight2(),
             ]).preempt(self.agent, [
                 self.agent.emergency_strategy(),
             ])

@@ -532,8 +532,9 @@ def run_simulations(args):
             fig.tight_layout()
             plt.show(block=False)
 
-    plt_process = Process(target=plot_thread_func)
-    plt_process.start()
+    if not args.no_plot:
+        plt_process = Process(target=plot_thread_func)
+        plt_process.start()
 
     all_res = {}
     refs = []
@@ -621,6 +622,7 @@ def parse_args():
                                            'mon', 'pri', 'ran', 'rog', 'sam',
                                            'tou', 'val', 'wiz'))
     parser.add_argument('--panic-on-errors', action='store_true')
+    parser.add_argument('--no-plot', action='store_true')
     parser.add_argument('--visualize-ends', type=Path, default=None,
                         help='Path to json file with dict: seed -> visualization_start_step')
 

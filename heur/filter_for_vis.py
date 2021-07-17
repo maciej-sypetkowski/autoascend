@@ -8,7 +8,9 @@ def interesting_reason(txt):
             and 'shop' not in txt
             and 'falling rock' not in txt
             and 'Error' not in txt
-            and 'starved' not in txt)
+            and 'starved' not in txt
+            and 'timeout' not in txt
+            and 'sleeping' not in txt)
 
 
 def process(path='/tmp/nh_sim.json'):
