@@ -96,8 +96,18 @@ def adjacent(p1, p2):
 def calc_dps(to_hit, damage):
     return damage * np.clip((to_hit - 1), 0, 20) / 20
 
-
 @Strategy.wrap
 def assert_strategy(error=None):
     yield True
     assert 0, error
+
+def copy_result(func):
+    @wraps(func)
+    def f(*args, **kwargs):
+        ret = func(*args, **kwargs)
+        if isinstance(ret, list):
+            return ret.copy()
+        if isinstance(ret, tuple):
+            return tuple((x.copy() if isinstance(x, list) else x for x in ret))
+        return ret.copy()
+    return f

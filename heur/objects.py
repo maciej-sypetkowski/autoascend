@@ -2,6 +2,9 @@ import functools
 from collections import namedtuple
 from enum import Enum
 
+import utils
+
+
 Weapon = namedtuple('Weapon', 'name,desc,kn,mg,bi,prob,wt,cost,sdam,ldam,hitbon,typ,sub,metal,color,damage_small,damage_large'.split(','))
 Armor = namedtuple('Armor', 'name,desc,kn,mgc,blk,power,prob,delay,wt,cost,ac,can,sub,metal,c'.split(',')) # ac is always <= 0, i.e. ac = original_ac - 10
 Ring = namedtuple('Ring', 'name,desc,power,cost,mgc,spec,mohs,metal,color,wt'.split(','))
@@ -1500,6 +1503,7 @@ for i in range(nh.NUM_OBJECTS):
 assert len(objects) == nh.NUM_OBJECTS, (len(objects), nh.NUM_OBJECTS)
 
 
+@utils.copy_result
 @functools.lru_cache(len(objects))
 def possibilities_from_glyph(i):
     assert nh.glyph_is_object(i)
@@ -1522,7 +1526,7 @@ def possibilities_from_glyph(i):
             ('piece of cloth', 'opera cloak', 'ornamental cope', 'tattered cape'),
             ('plumed helmet', 'etched helmet', 'crested helmet', 'visored helmet'),
             ('old gloves', 'padded gloves', 'riding gloves', 'fencing gloves'),
-            ('mud boots', 'buckled boot', 'riding boots', 'snow boots', 'hiking boots', 'combat boots', 'jungle boots'),
+            ('mud boots', 'buckled boots', 'riding boots', 'snow boots', 'hiking boots', 'combat boots', 'jungle boots'),
         ]
         for group in ambiguous_groups:
             if desc in group:
@@ -1599,6 +1603,15 @@ def possibilities_from_glyph(i):
 
     assert 0, (obj_id, objects[obj_id], cat)
 
+
+@utils.copy_result
+@functools.lru_cache(len(objects) * 20)
+def desc_to_glyphs(desc, category=None):
+    assert desc is not None
+    ret = [i + nh.GLYPH_OBJ_OFF for i, o in enumerate(objects)
+           if o is not None and ord(nh.objclass(i).oc_class) == category and o.desc == desc]
+    assert ret
+    return ret
 
 @functools.lru_cache(len(objects) * 100)
 def from_name(name, category=None):

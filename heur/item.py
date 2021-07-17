@@ -21,12 +21,12 @@ class Item:
     UNCURSED = 2
     BLESSED = 3
 
-    def __init__(self, objs, glyph=None, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False, text=None):
+    def __init__(self, objs, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False, text=None):
         assert isinstance(objs, list) and len(objs) >= 1
-        assert glyph is None or nh.glyph_is_object(glyph)
+        assert isinstance(glyphs, list) and len(glyphs) >= 1 and all((nh.glyph_is_object(g) for g in glyphs))
 
         self.objs = objs
-        self.glyph = glyph
+        self.glyphs = glyphs
         self.count = count
         self.status = status
         self.modifier = modifier
@@ -35,7 +35,7 @@ class Item:
         self.text = text
 
         self.category = O.get_category(self.objs[0])
-        assert glyph is None or ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class) == self.category
+        assert all((ord(nh.objclass(nh.glyph_to_obj(g)).oc_class) == self.category for g in self.glyphs))
 
     def is_ambiguous(self):
         return len(self.objs) == 1, self.objs
@@ -153,18 +153,79 @@ class Item:
 class ItemManager:
     def __init__(self, agent):
         self.agent = agent
+        self.object_to_glyph = {}
+        self.glyph_to_object = {}
+        self._last_object_glyph_mapping_update_step = None
+
+    def on_panic(self):
+        self.update_object_glyph_mapping()
+
+    def update(self):
+        if self._last_object_glyph_mapping_update_step is None or \
+                self._last_object_glyph_mapping_update_step + 200 < self.agent.step_count:
+            self.update_object_glyph_mapping()
+
+    def update_object_glyph_mapping(self):
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.KNOWN)
+            for line in self.agent.popup:
+                if line.startswith('*'):
+                    assert line[1] == ' ' and line[-1] == ')' and line.count('(') == 1 and line.count(')') == 1, line
+                    name = line[1 : line.find('(')].strip()
+                    desc = line[line.find('(') + 1 : -1].strip()
+
+                    n_objs, n_glyphs = ItemManager.parse_name(name)
+                    d_glyphs = O.desc_to_glyphs(desc, O.get_category(n_objs[0]))
+                    assert d_glyphs
+                    if len(n_objs) == 1 and len(d_glyphs) == 1:
+                        obj, glyph = n_objs[0], d_glyphs[0]
+
+                        assert glyph not in self.glyph_to_object or self.glyph_to_object[glyph] == obj
+                        self.glyph_to_object[glyph] = obj
+                        assert obj not in self.object_to_glyph or self.object_to_glyph[obj] == glyph
+                        self.object_to_glyph[obj] = glyph
+
+            self._last_object_glyph_mapping_update_step = self.agent.step_count
+
 
     def get_item_from_text(self, text, category=None, glyph=None):
-        # TODO: pass glyph if not on hallu
         # TODO: when blind, it may not work as expected, e.g. "a shield", "a gem", "a potion", etc
-        return Item(*self.parse_text(text, category, None))
+
+        if self.agent.character.prop.hallu:
+            glyph = None
+
+        objs, glyphs, *args = self.parse_text(text, category, glyph)
+        old_objs = None
+        old_glyphs = None
+        while old_objs != objs or old_glyphs != glyphs:
+            old_objs = objs
+            old_glyphs = glyphs
+
+            objs = [o for o in objs if o not in self.object_to_glyph or self.object_to_glyph[o] in glyphs]
+            glyphs = [g for g in glyphs if g not in self.glyph_to_object or self.glyph_to_object[g] in objs]
+            if len(objs) == 1 and len(glyphs) == 1:
+                assert glyphs[0] not in self.glyph_to_object or self.glyph_to_object[glyphs[0]] == objs[0]
+                self.glyph_to_object[glyphs[0]] = objs[0]
+                assert objs[0] not in self.object_to_glyph or self.object_to_glyph[objs[0]] == glyphs[0]
+                self.object_to_glyph[objs[0]] = glyphs[0]
+            elif len(objs) == 1 and objs[0] in self.object_to_glyph:
+                glyphs = [self.object_to_glyph[objs[0]]]
+            elif len(glyphs) == 1 and glyphs[0] in self.glyph_to_object:
+                objs = [self.glyph_to_object[glyphs[0]]]
+
+        return Item(objs, glyphs, *args)
 
     def possible_objects_from_glyph(self, glyph):
         # TODO: take into account identified objects
         assert nh.glyph_is_object(glyph)
-        return O.possibilities_from_glyph(glyph)
+        if glyph in self.glyph_to_object:
+            return [self.glyph_to_object[glyph]]
+        objs = [obj for obj in O.possibilities_from_glyph(glyph) if obj not in self.object_to_glyph]
+        assert len(objs)
+        return objs
 
     @staticmethod
+    @utils.copy_result
     @functools.lru_cache(1024 * 1024)
     def parse_text(text, category=None, glyph=None):
         assert glyph is None or nh.glyph_is_normal_object(glyph)
@@ -210,45 +271,12 @@ class ItemManager:
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
 
-        if name == 'wakizashi':
-            name = 'short sword'
-        elif name == 'ninja-to':
-            name = 'broadsword'
-        elif name == 'nunchaku':
-            name = 'flail'
-        elif name == 'shito':
-            name = 'knife'
-        elif name == 'naginata':
-            name = 'glaive'
-        elif name == 'gunyoki':
-            name = 'food ration'
-        elif name == 'osaku':
-            name = 'lock pick'
-        elif name == 'tanko':
-            name = 'plate mail'
-        elif name == 'pair of yugake':
-            name = 'pair of leather gloves'
-        elif name == 'kabuto':
-            name = 'helmet'
-        elif name in ['potion of holy water', 'potions of holy water']:
+        if name in ['potion of holy water', 'potions of holy water']:
             name = 'potion of water'
             status = Item.BLESSED
         elif name in ['potion of unholy water', 'potions of unholy water']:
             name = 'potion of water'
             status = Item.CURSED
-        elif name in ['flint stone', 'flint stones']:
-            name = 'flint'
-        elif name in ['unlabeled scroll', 'unlabeled scrolls', 'blank paper']:
-            name = 'scroll of blank paper'
-        elif name == 'eucalyptus leaves':
-            name = 'eucalyptus leaf'
-        elif name == 'pair of lenses':
-            name = 'lenses'
-        elif name.startswith('small glob'):
-            name = name[len('small '):]
-        elif name == 'knives':
-            name = 'knife'
-
 
         # TODO: pass to Item class instance
         if name.startswith('tin of ') or name.startswith('tins of '):
@@ -268,21 +296,57 @@ class ItemManager:
             # TODO: many of these are artifacts
             name = name[:name.index(' named ')]
 
-        objs, ret_glyph = ItemManager.parse_name(name)
+        objs, ret_glyphs = ItemManager.parse_name(name)
         assert category is None or category == O.get_category(objs[0]), (text, category, O.get_category(objs[0]))
 
-        if glyph is not None and ret_glyph is None:
+        if glyph is not None:
+            assert glyph in ret_glyphs
             pos = O.possibilities_from_glyph(glyph)
-            assert all(map(lambda o: o in pos)), (objs, pos)
-            ret_glyph = glyph
-        elif glyph is not None and ret_glyph is not None:
-            assert glyph == ret_glyph
-        return objs, ret_glyph, count, status, modifier, equipped, at_ready, text
+            assert all(map(lambda o: o in pos, objs)), (objs, pos)
+            ret_glyphs = [glyph]
+            objs = sorted(set(objs).intersection(O.possibilities_from_glyph(glyph)))
+
+        # TODO: Item should be returned here, but I don't want to memoize them
+        return objs, ret_glyphs, count, status, modifier, equipped, at_ready, text
 
 
     @staticmethod
+    @utils.copy_result
     @functools.lru_cache(1024 * 256)
     def parse_name(name):
+        if name == 'wakizashi':
+            name = 'short sword'
+        elif name == 'ninja-to':
+            name = 'broadsword'
+        elif name == 'nunchaku':
+            name = 'flail'
+        elif name == 'shito':
+            name = 'knife'
+        elif name == 'naginata':
+            name = 'glaive'
+        elif name == 'gunyoki':
+            name = 'food ration'
+        elif name == 'osaku':
+            name = 'lock pick'
+        elif name == 'tanko':
+            name = 'plate mail'
+        elif name in ['pair of yugake', 'yugake']:
+            name = 'pair of leather gloves'
+        elif name == 'kabuto':
+            name = 'helmet'
+        elif name in ['flint stone', 'flint stones']:
+            name = 'flint'
+        elif name in ['unlabeled scroll', 'unlabeled scrolls', 'blank paper']:
+            name = 'scroll of blank paper'
+        elif name == 'eucalyptus leaves':
+            name = 'eucalyptus leaf'
+        elif name == 'pair of lenses':
+            name = 'lenses'
+        elif name.startswith('small glob'):
+            name = name[len('small '):]
+        elif name == 'knives':
+            name = 'knife'
+
         # object identified (look on names)
         obj_ids = set()
         prefixes = [
@@ -379,19 +443,20 @@ class ItemManager:
 
         assert (len(obj_ids) > 0) ^ (len(appearance_ids) > 0), (name, obj_ids, appearance_ids)
 
-        glyph = None
         if obj_ids:
             assert len(obj_ids) == 1, name
             obj_id = list(obj_ids)[0]
             objs = [O.objects[obj_id]]
+            glyphs = [i for i in range(nh.GLYPH_OBJ_OFF, nh.NUM_OBJECTS + nh.GLYPH_OBJ_OFF)
+                      if O.objects[i - nh.GLYPH_OBJ_OFF] is not None and objs[0] in O.possibilities_from_glyph(i)]
         else:
+            glyphs = [obj_id + nh.GLYPH_OBJ_OFF for obj_id in appearance_ids]
             obj_id = list(appearance_ids)[0]
-            if len(appearance_ids) == 1:
-                glyph = obj_id + nh.GLYPH_OBJ_OFF
+            glyph = obj_id + nh.GLYPH_OBJ_OFF
             objs = O.possibilities_from_glyph(obj_id + nh.GLYPH_OBJ_OFF)
             assert all(map(lambda i: O.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF) == objs, appearance_ids)), name
 
-        return objs, glyph
+        return objs, glyphs
 
 
 class InventoryItems:
@@ -484,7 +549,7 @@ class InventoryItems:
 class Inventory:
     def __init__(self, agent):
         self.agent = agent
-        self.item_manager = ItemManager(self)
+        self.item_manager = ItemManager(self.agent)
         self.items = InventoryItems(self.agent)
 
         self._previous_blstats = None
@@ -500,7 +565,10 @@ class Inventory:
         self.letters_below_me = None
         self._previous_blstats = None
 
+        self.item_manager.on_panic()
+
     def update(self):
+        self.item_manager.update()
         self.items.update()
         if self._stop_updating:
             return
@@ -777,7 +845,7 @@ class Inventory:
         best_armorset, best_armorset_ac = self.get_best_armorset(return_ac=True)
 
         for glyph in range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + nh.NUM_OBJECTS - 6):
-            item = Item(self.item_manager.possible_objects_from_glyph(glyph))
+            item = Item(self.item_manager.possible_objects_from_glyph(glyph), [glyph])
             if not item.is_ambiguous():
                 continue
 
@@ -896,7 +964,7 @@ class Inventory:
 
         to_pickup = []
         for item in self.items_below_me:
-            if (item.glyph is not None and item.glyph in self._interesting_item_glyphs) or \
+            if (len(item.glyphs) == 1 and item.glyphs[0] in self._interesting_item_glyphs) or \
                     len(set(item.objs).intersection(self._interesting_items)) == len(item.objs):
                 if my_total_weight + item.weight() / item.count <= self.agent.character.carrying_capacity - 50:
                     my_total_weight += item.weight()
