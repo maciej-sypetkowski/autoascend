@@ -33,3 +33,4 @@ RUN python3 -m pip install gprof2dot
 # TODO: cleanup docerfile
 RUN pip install opencv-python
 RUN pip install toolz
+RUN pip install pyinstrument

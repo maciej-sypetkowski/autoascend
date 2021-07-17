@@ -412,36 +412,78 @@ def run_single_interactive_game(args):
 
 
 def run_profiling(args):
-    import cProfile, pstats
-    pr = cProfile.Profile()
+    if args.profiler == 'cProfile':
+        import cProfile, pstats
+    elif args.profiler == 'pyinstrument':
+        from pyinstrument import Profiler
+    else:
+        assert 0
+
+    if args.profiler == 'cProfile':
+        pr = cProfile.Profile()
+    elif args.profiler == 'pyinstrument':
+        profiler = Profiler()
+    else:
+        assert 0
+
+    if args.profiler == 'cProfile':
+        pr.enable()
+    elif args.profiler == 'pyinstrument':
+        profiler.start()
+    else:
+        assert 0
 
     start_time = time.time()
-    pr.enable()
     res = []
     for i in range(args.episodes):
         res.append(single_simulation(args, i, timeout=None))
-    pr.disable()
-
     duration = time.time() - start_time
 
-    stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
-    stats.print_stats(30)
-    stats = pstats.Stats(pr).sort_stats(pstats.SortKey.TIME)
-    stats.print_stats(20)
-    stats.dump_stats('/tmp/nethack_stats.profile')
+
+    if args.profiler == 'cProfile':
+        pr.disable()
+    elif args.profiler == 'pyinstrument':
+        session = profiler.stop()
+    else:
+        assert 0
 
     print('turns_per_second :', sum([r['turns'] for r in res]) / duration)
     print('steps_per_second :', sum([r['steps'] for r in res]) / duration)
     print('episodes_per_hour:', len(res) / duration * 3600)
 
-    subprocess.run('gprof2dot -f pstats /tmp/nethack_stats.profile -o /tmp/calling_graph.dot'.split())
-    subprocess.run('xdot /tmp/calling_graph.dot'.split())
+    if args.profiler == 'cProfile':
+        stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
+        stats.print_stats(30)
+        stats = pstats.Stats(pr).sort_stats(pstats.SortKey.TIME)
+        stats.print_stats(30)
+        stats.dump_stats('/tmp/nethack_stats.profile')
+
+        subprocess.run('gprof2dot -f pstats /tmp/nethack_stats.profile -o /tmp/calling_graph.dot'.split())
+        subprocess.run('xdot /tmp/calling_graph.dot'.split())
+    elif args.profiler == 'pyinstrument':
+        new_records = []
+        for record in session.frame_records:
+            ret_frames = []
+            for frame in record[0][1:][::-1]:
+                func, module, line = frame.split('\0')
+                if func in ['f', 'run']:
+                    continue
+                ret_frames.append(frame)
+                if module.endswith('agent.py') and func in ['step', 'preempt', 'call_update_functions']:
+                    break
+            ret_frames.append(record[0][0])
+            new_records.append((ret_frames[::-1], record[1] / session.duration * 100))
+        session.frame_records = new_records
+        profiler.last_session = session
+
+        print(profiler.output_text(unicode=True, color=True))
+    else:
+        assert 0
 
 
 def run_simulations(args):
     import ray
     ray.init(address='auto')
-    # ray.init(address='192.168.100.129:6379', _redis_password='5241590000000000')
 
     start_time = time.time()
     plot_queue = Queue()
@@ -586,6 +628,7 @@ def parse_args():
                                            'mon', 'pri', 'ran', 'rog', 'sam',
                                            'tou', 'val', 'wiz'))
     parser.add_argument('--panic-on-errors', action='store_true')
+    parser.add_argument('--profiler', choices=('cProfile', 'pyinstrument'), default='pyinstrument')
 
     args = parser.parse_args()
     if args.seed is None:
