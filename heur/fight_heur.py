@@ -3,6 +3,8 @@ import numpy as np
 import utils
 from glyph import G
 
+ONLY_RANGED_SLOW_MONSTERS = ['floating eye']
+
 
 def _draw_around(priority, y, x, value, radius=1, operation='add'):
     # TODO: optimize
@@ -61,14 +63,17 @@ def draw_monster_priority(agent, monster, priority, walkable):
 
         # prioritize staying in ranged weapons line of fire
         _draw_ranged(priority, y, x, 6, radius=3)
-    elif mon.mname in ('floating eye',) and agent.get_ranged_combinations():
-        # stay away
-        _draw_around(priority, y, x, -20, radius=1)
-        _draw_around(priority, y, x, -5, radius=2)
-        # _draw_around(priority, y, x, 5, radius=2, operation='max')
+    elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.get_ranged_combinations():
+        # ignore
+        pass
 
-        # prioritize staying in ranged weapons line of fire
-        _draw_ranged(priority, y, x, 6, radius=3)
+        # # stay away
+        # _draw_around(priority, y, x, -20, radius=1)
+        # _draw_around(priority, y, x, -5, radius=2)
+        # # _draw_around(priority, y, x, 5, radius=2, operation='max')
+
+        # # prioritize staying in ranged weapons line of fire
+        # _draw_ranged(priority, y, x, 6, radius=3)
     else:
         # engage, but ensure striking first if possible
         _draw_around(priority, y, x, -5, radius=1)
@@ -99,10 +104,11 @@ def melee_monster_priority(agent, monsters, mon):
         ret -= 6
     if not wielding_melee_weapon(agent):
         ret -= 5
-    if mon.mname in ('floating eye',):
-        ret -= 1
-        if agent.get_ranged_combinations():
-            ret -= 19
+    if mon.mname in ONLY_RANGED_SLOW_MONSTERS:
+        # ret -= 1
+        # if agent.get_ranged_combinations():
+        #     ret -= 19
+        ret -= 100
     return ret
 
 

@@ -225,7 +225,7 @@ class GlobalLogic:
                 self.agent.fight2() if self.agent.character.role in (self.agent.character.TOURIST,
                                                                      self.agent.character.ROGUE,
                                                                      self.agent.character.RANGER,
-                                                                     self.agent.character.BARBARIAN) else
+                                                                     self.agent.character.BARBARIAN,) else
                 self.agent.fight1(),
             ]).preempt(self.agent, [
                 self.agent.emergency_strategy(),

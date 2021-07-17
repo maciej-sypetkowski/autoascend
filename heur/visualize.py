@@ -312,7 +312,7 @@ class Visualizer:
 
         _put_text(vis, str(item), (FONT_SIZE * 8, 0))
         if item.equipped:
-            _draw_frame(vis, color=(0, 255, 255), thickness=10)
+            cv2.rectangle(vis, (0, 0), (int(FONT_SIZE * 1.5), vis.shape[0] - 1), (0, 255, 255), 6)
         return vis
 
     def _draw_inventory(self, height):
