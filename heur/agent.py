@@ -406,6 +406,22 @@ class Agent:
             level.seen[mask] = True
             level.walkable[mask & ~utils.isin(level.objects, G.STONE)] = True
 
+            mask = (np.vectorize(len)(level.items) != 0) & ~utils.isin(self.glyphs, G.MONS, G.PETS)  # TODO: effects, etc
+            level.item_disagreement_counter[~mask] = 0
+            for y, x in zip(*mask.nonzero()):
+                if (len(level.items[y, x]) >= 2) == ((self.last_observation['specials'][y, x] & nh.MG_OBJPILE) > 0):
+                    glyphs = np.unique([item.display_glyphs() for item in level.items[y, x]])
+                    if self.glyphs[y, x] in glyphs:
+                        level.item_disagreement_counter[y, x] = 0
+                        continue
+
+                level.item_disagreement_counter[y, x] += 1
+                if level.item_disagreement_counter[y, x] > 3:
+                    level.item_disagreement_counter[y, x] = 0
+                    level.items[y, x] = ()
+
+        level.items[self.blstats.y, self.blstats.x] = self.inventory.items_below_me
+
         level.was_on[self.blstats.y, self.blstats.x] = True
 
         for y, x in self.neighbors(self.blstats.y, self.blstats.x, shuffle=False):

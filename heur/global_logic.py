@@ -5,8 +5,37 @@ import numpy as np
 import utils
 from glyph import Hunger, G
 from level import Level
+from item import ItemPriorityBase
 from strategy import Strategy
 import soko_solver
+
+
+class ItemPriority(ItemPriorityBase):
+    def __init__(self, agent):
+        self.agent = agent
+
+    def split(self, items, forced_items, weight_capacity):
+        remaining_weight = weight_capacity
+        ret = {}
+
+        for item in forced_items:
+            if item not in ret:
+                remaining_weight -= item.weight()
+                ret[item] = item.count
+
+        item = self.agent.inventory.get_best_weapon(items=forced_items + items)
+        if item is not None:
+            if item not in ret:
+                remaining_weight -= item.weight()
+                ret[item] = item.count
+
+        for item in self.agent.inventory.get_best_armorset(items=forced_items + items):
+            if item is not None:
+                if item not in ret:
+                    remaining_weight -= item.weight()
+                    ret[item] = item.count
+
+        return [ret.get(item, 0) for item in items]
 
 
 class Milestone(IntEnum):
@@ -21,6 +50,8 @@ class GlobalLogic:
         self.agent = agent
         self.milestone = Milestone(1)
         self.step_completion_log = {}  # Milestone -> (step, turn)
+
+        self.item_priority = ItemPriority(self.agent)
 
     @utils.debug_log('solving sokoban')
     @Strategy.wrap

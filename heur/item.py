@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import re
+from collections import namedtuple
 from functools import partial
 
 import nle.nethack as nh
@@ -11,7 +12,7 @@ import objects as O
 import utils
 from character import Character
 from exceptions import AgentPanic
-from glyph import WEA
+from glyph import WEA, G, C, MON
 from strategy import Strategy
 
 
@@ -21,7 +22,8 @@ class Item:
     UNCURSED = 2
     BLESSED = 3
 
-    def __init__(self, objs, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False, text=None):
+    def __init__(self, objs, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False,
+                 monster_id=None, text=None):
         assert isinstance(objs, list) and len(objs) >= 1
         assert isinstance(glyphs, list) and len(glyphs) >= 1 and all((nh.glyph_is_object(g) for g in glyphs))
 
@@ -32,17 +34,30 @@ class Item:
         self.modifier = modifier
         self.equipped = equipped
         self.at_ready = at_ready
+        self.monster_id = monster_id
         self.text = text
 
         self.category = O.get_category(self.objs[0])
         assert all((ord(nh.objclass(nh.glyph_to_obj(g)).oc_class) == self.category for g in self.glyphs))
 
+    def display_glyphs(self):
+        if self.is_corpse():
+            assert self.monster_id is not None
+            return [nh.GLYPH_BODY_OFF + self.monster_id]
+        if self.is_statue():
+            assert self.monster_id is not None
+            return [nh.GLYPH_STATUE_OFF + self.monster_id]
+        return self.glyphs
+
     def is_ambiguous(self):
         return len(self.objs) == 1, self.objs
 
-    def object(self):
-        assert self.is_ambiguous()
-        return self.objs[0]
+    def can_drop_from_inventory(self):
+        return not (
+            (isinstance(self.objs[0], (O.Weapon, O.WepTool)) and self.status == Item.CURSED and self.equipped) or
+            (isinstance(self.objs[0], O.Armor) and self.equipped) or
+            (self.is_ambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED)
+        )
 
     def weight(self):
         if self.objs[0] == O.from_name('corpse'):
@@ -60,6 +75,11 @@ class Item:
         weight = max((obj.wt for obj in self.objs))
         return self.count * weight
 
+    @property
+    def object(self):
+        assert self.is_ambiguous()
+        return self.objs[0]
+
     ######## WEAPON
 
     def is_weapon(self):
@@ -73,7 +93,7 @@ class Item:
         if self.is_fired_projectile() or self.is_launcher():
             return 1.5  # 1d2
 
-        weapon = self.object()
+        weapon = self.object
 
         dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
         if self.modifier is not None and self.modifier > 0:
@@ -83,7 +103,7 @@ class Item:
     def get_to_hit(self):
         assert self.is_weapon()
 
-        weapon = self.object()
+        weapon = self.object
 
         to_hit = 1
         to_hit += weapon.hitbon
@@ -96,7 +116,7 @@ class Item:
         if not self.is_weapon():
             return False
 
-        return self.object().name in ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
+        return self.object.name in ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
 
     def is_fired_projectile(self, launcher=None):
         if not self.is_weapon():
@@ -105,17 +125,17 @@ class Item:
         arrows = ['arrow', 'elven arrow', 'orcish arrow', 'silver arrow', 'ya']
 
         if launcher is None:
-            return self.object().name in (arrows + ['crossbow bolt']) # TODO: sling ammo
+            return self.object.name in (arrows + ['crossbow bolt']) # TODO: sling ammo
         else:
-            launcher_name = launcher.object().name
+            launcher_name = launcher.object.name
             if launcher_name == 'crossbow':
-                return self.object().name == 'crossbow bolt'
+                return self.object.name == 'crossbow bolt'
             elif launcher_name == 'sling':
                 # TODO: sling ammo
                 return False
             else:  # any bow
                 assert launcher_name in ['bow', 'elven bow', 'orcish bow', 'yumi'], launcher_name
-                return self.object().name in arrows
+                return self.object.name in arrows
 
     def is_thrown_projectile(self):
         if not self.is_weapon():
@@ -123,7 +143,7 @@ class Item:
 
         # TODO: boomerang
         # TODO: aklys, Mjollnir
-        return self.object().name in \
+        return self.object.name in \
                ['dagger', 'orcish dagger', 'dagger silver', 'athame dagger', 'elven dagger',
                 'worm tooth', 'knife', 'stiletto', 'scalpel', 'crysknife',
                 'dart', 'shuriken']
@@ -141,13 +161,29 @@ class Item:
         return str(self)
 
     ######## ARMOR
+
     def is_armor(self):
         return self.category == nh.ARMOR_CLASS
 
     def get_ac(self):
         assert self.is_armor()
-        return self.object().ac - (self.modifier if self.modifier is not None else 0)
+        return self.object.ac - (self.modifier if self.modifier is not None else 0)
 
+    ######## FOOD
+
+    def is_corpse(self):
+        if self.objs[0] == O.from_name('corpse'):
+            assert self.is_ambiguous()
+            return True
+        return False
+
+    ######## STATUE
+
+    def is_statue(self):
+        if self.objs[0] == O.from_name('statue'):
+            assert self.is_ambiguous()
+            return True
+        return False
 
 
 class ItemManager:
@@ -228,7 +264,7 @@ class ItemManager:
     @utils.copy_result
     @functools.lru_cache(1024 * 1024)
     def parse_text(text, category=None, glyph=None):
-        assert glyph is None or nh.glyph_is_normal_object(glyph)
+        assert glyph is None or nh.glyph_is_normal_object(glyph), glyph
 
         if category is None and glyph is not None:
             category = ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class)
@@ -270,6 +306,7 @@ class ItemManager:
         count = int({'a': 1, 'an': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
+        monster_id = None
 
         if name in ['potion of holy water', 'potions of holy water']:
             name = 'potion of water'
@@ -277,19 +314,51 @@ class ItemManager:
         elif name in ['potion of unholy water', 'potions of unholy water']:
             name = 'potion of water'
             status = Item.CURSED
+        elif name in ['gold piece', 'gold pieces']:
+            status = Item.UNCURSED
 
         # TODO: pass to Item class instance
         if name.startswith('tin of ') or name.startswith('tins of '):
+            mon_name = name[len('tin of '):].strip()
+            if mon_name.endswith(' meat'):
+                mon_name = mon_name[:-len(' meat')]
+            if mon_name.startswith('a '):
+                mon_name = mon_name[2:]
+            if mon_name.startswith('an '):
+                mon_name = mon_name[3:]
+            if mon_name == 'spinach':
+                monster_id = None
+            else:
+                monster_id = nh.glyph_to_mon(MON.from_name(mon_name))
             name = 'tin'
         elif name.endswith(' corpse') or name.endswith(' corpses') or ' corpse named ' in name:
+            mon_name = name[:name.index('corpse')].strip()
+            if mon_name.startswith('a '):
+                mon_name = mon_name[2:]
+            if mon_name.startswith('an '):
+                mon_name = mon_name[3:]
+            monster_id = nh.glyph_to_mon(MON.from_name(mon_name))
             name = 'corpse'
         elif name.startswith('statue of ') or name.startswith('statues of '):
+            mon_name = name[len('statue of '):].strip()
+            if mon_name.startswith('a '):
+                mon_name = mon_name[2:]
+            if mon_name.startswith('an '):
+                mon_name = mon_name[3:]
+            monster_id = nh.glyph_to_mon(MON.from_name(mon_name))
             name = 'statue'
         elif name.startswith('figurine of ') or name.startswith('figurines of '):
+            mon_name = name[len('figurine of '):].strip()
+            if mon_name.startswith('a '):
+                mon_name = mon_name[2:]
+            if mon_name.startswith('an '):
+                mon_name = mon_name[3:]
+            monster_id = nh.glyph_to_mon(MON.from_name(mon_name))
             name = 'figurine'
         elif name.startswith('paperback book named ') or name.startswith('paperback books named ') or name in ['novel', 'paperback']:
             name = 'spellbook of novel'
         elif name.endswith(' egg') or name.endswith(' eggs'):
+            monster_id = nh.glyph_to_mon(MON.from_name(name[:-len(' egg')].strip()))
             name = 'egg'
 
         if ' named ' in name:
@@ -307,7 +376,7 @@ class ItemManager:
             objs = sorted(set(objs).intersection(O.possibilities_from_glyph(glyph)))
 
         # TODO: Item should be returned here, but I don't want to memoize them
-        return objs, ret_glyphs, count, status, modifier, equipped, at_ready, text
+        return objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, text
 
 
     @staticmethod
@@ -453,8 +522,10 @@ class ItemManager:
             glyphs = [obj_id + nh.GLYPH_OBJ_OFF for obj_id in appearance_ids]
             obj_id = list(appearance_ids)[0]
             glyph = obj_id + nh.GLYPH_OBJ_OFF
-            objs = O.possibilities_from_glyph(obj_id + nh.GLYPH_OBJ_OFF)
-            assert all(map(lambda i: O.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF) == objs, appearance_ids)), name
+            objs = sorted(set.union(*[set(O.possibilities_from_glyph(i)) for i in glyphs]))
+            assert name == 'runed broadsword' or \
+                   all(map(lambda i: sorted(O.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF)) == objs, appearance_ids)), \
+                   name
 
         return objs, glyphs
 
@@ -511,7 +582,8 @@ class InventoryItems:
                 letter = chr(letter)
                 if not item_name:
                     continue
-                item = self.agent.inventory.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
+                item = self.agent.inventory.item_manager.get_item_from_text(item_name, category=category,
+                        glyph=glyph if not nh.glyph_is_body(glyph) and not nh.glyph_is_statue(glyph) else None)
 
                 self.total_weight += item.weight()
                 # weight is sometimes unambiguous for unidentified items. All exceptions:
@@ -546,6 +618,21 @@ class InventoryItems:
         return self.all_letters[self.all_items.index(item)]
 
 
+class ItemPriorityBase:
+    def split(self, items, forced_items, weight_capacity):
+        '''
+        returns a list of counts to take corresponding to `items`
+
+        Order of `items` matter. First items are more important.
+        Otherwise the agent will drop and pickup items repeatedly.
+
+        The function should motonic (i.e. removing an item from the argument,
+        shouldn't decrease counts of other items). Otherwise the agent will
+        go to the item, don't take it, and repeat infinitely
+        '''
+        raise NotImplementedError()
+
+
 class Inventory:
     def __init__(self, agent):
         self.agent = agent
@@ -556,9 +643,6 @@ class Inventory:
         self._stop_updating = False
         self.items_below_me = None
         self.letters_below_me = None
-        self._interesting_item_glyphs = set()
-        self._interesting_items = set()
-        self._last_interesting_item_update_turn = None
 
     def on_panic(self):
         self.items_below_me = None
@@ -592,8 +676,6 @@ class Inventory:
                 self._stop_updating = False
 
         assert self.items_below_me is not None and self.letters_below_me is not None
-
-        self.update_interesting_items()
 
     @contextlib.contextmanager
     def panic_if_items_below_me_change(self):
@@ -632,7 +714,7 @@ class Inventory:
             # TODO: depends on kind of a monster
             return False
 
-        if self.items.main_hand is None or self.items.main_hand.status == Item.CURSED or \
+        if (self.items.main_hand is not None and self.items.main_hand.status == Item.CURSED) or \
                 (item.objs[0].bi and self.items.off_hand is not None):
             return False
 
@@ -765,36 +847,95 @@ class Inventory:
                 self.letters_below_me = letters
                 return items
 
-    def pickup(self, items):
+    def pickup(self, items, counts=None):
         if isinstance(items, Item):
             items = [items]
+            if counts is not None:
+                counts = [counts]
+        if counts is None:
+            counts = [i.count for i in items]
         assert len(items) > 0
         assert all(map(lambda item: item in self.items_below_me, items))
+        assert len(counts) == len(items)
+        assert sum(counts) > 0 and all((0 <= c <= i.count for c, i in zip(counts, items)))
 
         letters = [self.letters_below_me[self.items_below_me.index(item)] for item in items]
-        assert len(set(letters)) == len(letters), 'TODO: not implemented'
+        screens = [max(self.letters_below_me[:self.items_below_me.index(item) + 1].count('a') - 1, 0) for item in items]
 
         with self.panic_if_items_below_me_change():
             self.get_items_below_me()
 
+        one_item = len(self.items_below_me) == 1
         with self.agent.atom_operation():
-            if len(self.items_below_me) == 1:
+            if one_item:
+                assert all((s in [0, None] for s in screens))
                 self.agent.step(A.Command.PICKUP)
+                drop_count = items[0].count - counts[0]
             else:
-                self.agent.step(A.Command.PICKUP, iter(letters + [A.MiscAction.MORE]))
+                text = ' '.join((
+                    ''.join([(str(count) if item.count != count else '') + letter
+                             for letter, item, count, screen in zip(letters, items, counts, screens)
+                             if count != 0 and screen == current_screen])
+                    for current_screen in range(max(screens) + 1)))
+                self.agent.step(A.Command.PICKUP, iter(list(text) + [A.MiscAction.MORE]))
+
             if re.search('You have [a-z ]+ lifting ', self.agent.message) and \
                     'Continue?' in self.agent.message:
                 self.agent.type_text('y')
+            if one_item and drop_count:
+                letter = re.search('([a-zA-Z]) - ', self.agent.message)
+
+        if one_item and drop_count:
+            self.drop(self.items.all_items[self.items.all_letters.index(letter)], drop_count)
+
+        self.get_items_below_me()
+
+        return True
+
+    def drop(self, items, counts=None):
+        if isinstance(items, Item):
+            items = [items]
+            if counts is not None:
+                counts = [counts]
+        if counts is None:
+            counts = [i.count for i in items]
+        assert len(items) > 0
+        assert all(map(lambda item: item in self.items.all_items, items))
+        assert len(counts) == len(items)
+        assert sum(counts) > 0 and all((0 <= c <= i.count for c, i in zip(counts, items)))
+
+        letters = [self.items.all_letters[self.items.all_items.index(item)] for item in items]
+        text = ''.join([(str(count) if item.count != count else '') + letter
+                         for letter, item, count in zip(letters, items, counts) if count != 0])
+
+        if all((not i.can_drop_from_inventory() for i in items)):
+            return False
+
+        def key_gen():
+            if 'Drop what type of items?' in '\n'.join(self.agent.popup):
+                yield 'a'
+                yield A.MiscAction.MORE
+            assert 'What would you like to drop?' in '\n'.join(self.agent.popup), \
+                   (self.agent.message, self.agent.popup)
+            yield from text
+            yield A.MiscAction.MORE
+
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.DROPTYPE, key_gen())
+        self.get_items_below_me()
+
         return True
 
 
     ######## STRATEGIES helpers
 
-    def get_best_weapon(self, return_dps=False):
+    def get_best_weapon(self, return_dps=False, items=None):
+        if items is None:
+            items = self.items
         # select the best
         best_item = None
         best_dps = utils.calc_dps(*self.agent.character.get_melee_bonus(None, large_monster=False))
-        for item in self.items:
+        for item in items:
             if item.is_weapon():
                 to_hit, dmg = self.agent.character.get_melee_bonus(item, large_monster=False)
                 dps = utils.calc_dps(to_hit, dmg)
@@ -807,12 +948,15 @@ class Inventory:
         return best_item
 
 
-    def get_best_armorset(self, return_ac=False):
+    def get_best_armorset(self, return_ac=False, items=None):
+        if items is None:
+            items = self.items
+
         best_items = [None] * O.ARM_NUM
         best_ac = [None] * O.ARM_NUM
-        for item in self.items:
+        for item in items:
             if item.is_armor() and item.is_ambiguous():
-                slot = item.object().sub
+                slot = item.object.sub
                 ac = item.get_ac()
                 if best_ac[slot] is None or best_ac[slot] > ac:
                     best_ac[slot] = ac
@@ -822,63 +966,18 @@ class Inventory:
         return best_items
 
 
-    def update_interesting_items(self, force=False):
-        if not force and self._last_interesting_item_update_turn is not None and \
-                self._last_interesting_item_update_turn + 10 > self.agent.blstats.time:
-            return
-        self._last_interesting_item_update_turn = self.agent.blstats.time
-
-        # TODO
-        if self.agent.character.role == Character.RANGER:
-            self._interesting_item_glyphs = set(range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + 6))
-            self._interesting_items = set()
-            for g in self._interesting_item_glyphs:
-                for i in O.possibilities_from_glyph(g):
-                    self._interesting_items.add(i)
-        else:
-            self._interesting_item_glyphs = set()
-            self._interesting_items = set()
-
-        best_weapon, best_weapon_dps = self.get_best_weapon(return_dps=True)
-        best_weapon_dps *= 1.15  # take only relatively better items than yours
-
-        best_armorset, best_armorset_ac = self.get_best_armorset(return_ac=True)
-
-        for glyph in range(nh.GLYPH_OBJ_OFF + 1, nh.GLYPH_OBJ_OFF + nh.NUM_OBJECTS - 6):
-            item = Item(self.item_manager.possible_objects_from_glyph(glyph), [glyph])
-            if not item.is_ambiguous():
-                continue
-
-            obj = O.objects[glyph - nh.GLYPH_OBJ_OFF]
-
-            if self.agent.character.role == Character.MONK and \
-                    (isinstance(obj, O.Weapon) or (isinstance(obj, O.Armor) and obj.sub in [O.ARM_SHIELD, O.ARM_SUIT])):
-                continue
-
-            if self.items.total_weight + item.weight() > self.agent.character.carrying_capacity - 100:
-                continue
-
-            if isinstance(obj, O.Weapon): # TODO: WepTool
-                dps = utils.calc_dps(*self.agent.character.get_melee_bonus(item, large_monster=False))
-                if dps > best_weapon_dps or obj.sub in [O.P_DAGGER, O.P_KNIFE]:
-                    self._interesting_item_glyphs.add(glyph)
-                    self._interesting_items.add(obj)
-            elif isinstance(obj, O.Armor):
-                ac = item.get_ac()
-                my_ac = best_armorset_ac[item.object().sub]
-                if my_ac is None or my_ac < ac:
-                    self._interesting_item_glyphs.add(glyph)
-                    self._interesting_items.add(obj)
-
-
     ######## LOW-LEVEL STRATEGIES
 
     def gather_items(self):
-        return self.pickup_items_below_me().before(
-               self.wear_best_stuff()).before(
-               self.go_to_item().preempt(self.agent, [
-                   self.pickup_items_below_me()
-               ])).repeat()
+        return (
+            self.pickup_and_drop_items()
+            .before(self.wear_best_stuff())
+            .before(self.go_to_item_to_pickup()
+                    .before(self.check_items())
+                    .preempt(self.agent, [
+                        self.pickup_and_drop_items()
+                    ])).repeat()
+        )
 
     @utils.debug_log('inventory.wear_best_stuff')
     @Strategy.wrap
@@ -926,14 +1025,11 @@ class Inventory:
             yield False
 
 
-    @utils.debug_log('inventory.go_to_item')
+    @utils.debug_log('inventory.check_items')
     @Strategy.wrap
-    def go_to_item(self):
-        mask = ((self.agent.last_observation['specials'] & nh.MG_OBJPILE) > 0) & \
-               ~self.agent.current_level().checked_item_pile
-        mask |= utils.isin(self.agent.glyphs, self._interesting_item_glyphs)
-        mask &= ~self.agent.current_level().shop
-
+    def check_items(self):
+        mask = np.vectorize(len)(self.agent.current_level().items) == 0
+        mask &= utils.isin(self.agent.glyphs, G.OBJECTS)  # TODO: G.BODIES
         if not mask.any():
             yield False
 
@@ -943,33 +1039,85 @@ class Inventory:
             yield False
         yield True
 
-        nonzero_y, nonzero_x = (mask & (dis == dis[mask].min())).nonzero()
+        nonzero_y, nonzero_x = (mask & (dis == dis[mask].min()) & (dis != 0)).nonzero()
         i = self.agent.rng.randint(len(nonzero_y))
         target_y, target_x = nonzero_y[i], nonzero_x[i]
 
         with self.agent.env.debug_tiles(mask, color=(255, 0, 0, 128)):
-            # TODO: search for traps before stepping in
             self.agent.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
 
-    @utils.debug_log('inventory.pickup_items_below_me')
+    @utils.debug_log('inventory.go_to_item_to_pickup')
     @Strategy.wrap
-    def pickup_items_below_me(self):
+    def go_to_item_to_pickup(self):
+        level = self.agent.current_level()
+        dis = self.agent.bfs()
+
+        mask = np.vectorize(len)(self.agent.current_level().items) != 0
+        mask &= dis != -1
+
+        items = {}
+        for y, x in sorted(zip(*mask.nonzero()), key=lambda p: dis[p]):
+            for i in level.items[y, x]:
+                assert i not in items
+                items[i] = (y, x)
+
+        if not items:
+            yield False  # TODO: what about just dropping items?
+
+        free_items = list(filter(Item.can_drop_from_inventory, self.items))
+        forced_items = list(filter(lambda i: not Item.can_drop_from_inventory(i), self.items))
+        counts = self.agent.global_logic.item_priority.split(
+                free_items + list(items.keys()), forced_items,
+                self.agent.character.carrying_capacity)
+
+        counts = counts[len(free_items):]
+        assert len(counts) == len(items)
+        if sum(counts) == 0:
+            yield False
+        yield True
+
+        for i, c in zip(items, counts):
+            if c != 0:
+                target_y, target_x = items[i]
+                break
+        else:
+            assert 0
+
+        with self.agent.env.debug_tiles(mask, color=(255, 0, 0, 128)):
+            self.agent.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
+
+    @utils.debug_log('inventory.pickup_and_drop_items')
+    @Strategy.wrap
+    def pickup_and_drop_items(self):
         if self.agent.current_level().shop[self.agent.blstats.y, self.agent.blstats.x]:
             yield False
+        if len(self.items_below_me) == 0:
+            yield False
 
-        if len(self.items_below_me) > 1:
-            self.agent.current_level().checked_item_pile[self.agent.blstats.y, self.agent.blstats.x] = True
+        yielded = False
+        while 1:
+            assert len(self.items_below_me) != 0
 
-        my_total_weight = self.agent.inventory.items.total_weight
+            free_items = list(filter(Item.can_drop_from_inventory, self.items))
+            forced_items = list(filter(lambda i: not Item.can_drop_from_inventory(i), self.items))
+            counts = self.agent.global_logic.item_priority.split(
+                    free_items + self.items_below_me, forced_items,
+                    self.agent.character.carrying_capacity)
+            to_drop = [item.count - count for item, count in zip(free_items, counts)]
+            if sum(to_drop) != 0:
+                if not yielded:
+                    yielded = True
+                    yield True
+                assert self.drop(free_items, to_drop)
+                continue
 
-        to_pickup = []
-        for item in self.items_below_me:
-            if (len(item.glyphs) == 1 and item.glyphs[0] in self._interesting_item_glyphs) or \
-                    len(set(item.objs).intersection(self._interesting_items)) == len(item.objs):
-                if my_total_weight + item.weight() / item.count <= self.agent.character.carrying_capacity - 50:
-                    my_total_weight += item.weight()
-                    to_pickup.append(item)
+            to_pickup = counts[len(free_items):]
+            if sum(to_pickup) > 0:
+                if not yielded:
+                    yielded = True
+                    yield True
+                assert self.pickup(self.items_below_me, to_pickup)
+            break
 
-        yield bool(to_pickup)
-        self.pickup(to_pickup)
-        self.update_interesting_items(force=True)
+        if not yielded:
+            yield False
