@@ -26,8 +26,11 @@ class Level:
         self.search_count = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
         self.corpse_age = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32) - 10000
         self.shop = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
-        self.checked_item_pile = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
         self.was_on = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
+
+        self.item_disagreement_counter = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
+        self.items = np.empty((C.SIZE_Y, C.SIZE_X), dtype=object)
+        self.items.fill([])
 
         self.stair_destination = {}  # {(y, x) -> ((dungeon, level), (y, x))}
 

@@ -1,3 +1,5 @@
+import functools
+
 import nle.nethack as nh
 
 
@@ -335,11 +337,12 @@ class MON: # monsters, pets
             return f'MON.fn({repr(MON.permonst(glyph).mname)})'
 
     @staticmethod
+    @functools.lru_cache(nh.NUMMONS)
     def from_name(name):
         for i in range(nh.NUMMONS):
             if nh.permonst(i).mname == name:
                 return nh.GLYPH_MON_OFF + i
-        assert 0
+        assert 0, name
 
     fn = from_name
 
@@ -397,6 +400,7 @@ class G:  # Glyphs
     CORRIDOR: ['#'] = {SS.S_corr}
     STAIR_UP: ['<'] = {SS.S_upstair}
     STAIR_DOWN: ['>'] = {SS.S_dnstair}
+    ALTAR: ['_'] = {SS.S_altar}
 
     DOOR_CLOSED: ['+'] = {SS.S_vcdoor, SS.S_hcdoor}
     DOOR_OPENED: ['-', '|'] = {SS.S_vodoor, SS.S_hodoor}
@@ -406,6 +410,8 @@ class G:  # Glyphs
 
     MONS = set(MON.ALL_MONS)
     PETS = set(MON.ALL_PETS)
+
+    STATUES = {i + nh.GLYPH_STATUE_OFF for i in range(nh.NUMMONS)}
 
     PEACEFUL_MONS = {i + nh.GLYPH_MON_OFF for i in range(nh.NUMMONS) if nh.permonst(i).mflags2 & MON.M2_PEACEFUL}
 

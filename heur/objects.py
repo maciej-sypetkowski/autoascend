@@ -1513,8 +1513,7 @@ def possibilities_from_glyph(i):
 
     if cat == nh.WEAPON_CLASS:
         if desc == 'runed broadsword':
-            # TODO: assuming that it's not a runesword
-            return [from_name('elven broadsword')]
+            return [objects[obj_id]]
 
         ret = [o for o in objects if o is not None and (o.desc or o.name) == desc]
         assert len(ret) == 1

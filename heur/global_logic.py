@@ -1,12 +1,89 @@
 from enum import IntEnum, auto
 
+import nle.nethack as nh
 import numpy as np
 
+import objects as O
+import soko_solver
 import utils
+from character import Character
+from exceptions import AgentPanic
 from glyph import Hunger, G
+from item import Item, ItemPriorityBase
 from level import Level
 from strategy import Strategy
-import soko_solver
+
+
+class ItemPriority(ItemPriorityBase):
+    def __init__(self, agent):
+        self.agent = agent
+
+    def split(self, items, forced_items, weight_capacity):
+        remaining_weight = weight_capacity
+        ret = {}
+        for item in forced_items:
+            remaining_weight -= item.weight()
+            ret[item] = item.count
+
+        def add_item(item, count=None):
+            nonlocal ret, remaining_weight
+            assert isinstance(item, Item)
+            if remaining_weight < 0:
+                return
+
+            how_many_already = ret.get(item, 0)
+            max_to_add = int(remaining_weight // item.unit_weight())
+            if count is not None:
+                max_to_add = min(max_to_add, count)
+            ret[item] = min(item.count, how_many_already + max_to_add)
+            remaining_weight -= item.unit_weight() * (ret[item] - how_many_already)
+
+        for allow_unknown_status in [False, True]:
+            item = self.agent.inventory.get_best_weapon(items=forced_items + items,
+                                                        allow_unknown_status=allow_unknown_status)
+            if item is not None:
+                if item not in ret:
+                    add_item(item)
+
+            for item in self.agent.inventory.get_best_armorset(items=forced_items + items,
+                                                               allow_unknown_status=allow_unknown_status):
+                if item is not None:
+                    if item not in ret:
+                        add_item(item)
+
+        for item in items:
+            if item.is_ambiguous():
+                if item.object in [
+                        O.from_name('healing', nh.POTION_CLASS),
+                        O.from_name('extra healing', nh.POTION_CLASS),
+                        O.from_name('full healing', nh.POTION_CLASS)]:
+                    add_item(item)
+
+                if self.agent.character.role in [Character.RANGER, Character.ROGUE,
+                                                 Character.SAMURAI, Character.TOURIST] and \
+                        (item.is_launcher() or item.is_fired_projectile()):
+                    add_item(item)
+
+        for item in sorted(filter(lambda i: i.is_thrown_projectile(), items),
+                           key=lambda i: -utils.calc_dps(*self.agent.character.get_melee_bonus(i))):
+            add_item(item)
+
+        for item in sorted(filter(lambda i: i.is_food(), items), key=lambda x: -x.nutrition_per_weight()):
+            add_item(item)
+
+        for item in sorted(items, key=lambda i: i.unit_weight()):
+            if item.category in [nh.POTION_CLASS, nh.RING_CLASS, nh.AMULET_CLASS, nh.WAND_CLASS, nh.SCROLL_CLASS,
+                                 nh.TOOL_CLASS, nh.COIN_CLASS]:
+                add_item(item)
+
+        categories = [nh.WEAPON_CLASS, nh.ARMOR_CLASS, nh.TOOL_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.AMULET_CLASS,
+                      nh.RING_CLASS, nh.COIN_CLASS, nh.POTION_CLASS, nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.WAND_CLASS]
+        for item in sorted(items, key=lambda i: i.unit_weight()):
+            if item.category in categories:
+                if item.status == Item.UNKNOWN:
+                    add_item(item)
+
+        return [ret.get(item, 0) for item in items]
 
 
 class Milestone(IntEnum):
@@ -21,6 +98,8 @@ class GlobalLogic:
         self.agent = agent
         self.milestone = Milestone(1)
         self.step_completion_log = {}  # Milestone -> (step, turn)
+
+        self.item_priority = ItemPriority(self.agent)
 
     @utils.debug_log('solving sokoban')
     @Strategy.wrap
@@ -103,28 +182,6 @@ class GlobalLogic:
             assert 0, 'sakomap unsolvable'
 
     @Strategy.wrap
-    def current_strategy(self):
-        if self.milestone == Milestone.FIND_GNOMISH_MINES and \
-                self.agent.current_level().dungeon_number == Level.GNOMISH_MINES:
-            self.milestone = Milestone(int(self.milestone) + 1)
-        elif self.milestone == Milestone.FIND_SOKOBAN and \
-                self.agent.current_level().dungeon_number == Level.SOKOBAN:
-            self.milestone = Milestone(int(self.milestone) + 1)
-        elif self.milestone == Milestone.SOLVE_SOKOBAN and \
-                self.agent.current_level().key() == (Level.SOKOBAN, 1):
-            self.milestone = Milestone(int(self.milestone) + 1)
-
-        yield from \
-            (self.agent.exploration.go_to_level_strategy(
-                Level.GNOMISH_MINES if self.milestone == Milestone.FIND_GNOMISH_MINES else Level.SOKOBAN, 1,
-                lambda y, x: (self.agent.exploration.explore1(None)
-                              .preempt(self.agent, [self.agent.exploration.go_to_strategy(y, x)])
-                              .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
-                              ),
-                self.agent.exploration.explore1(None)) \
-            .before(utils.assert_strategy('end'))).strategy()
-
-    @Strategy.wrap
     def wait_out_unexpected_state_strategy(self):
         yielded = False
         while (
@@ -142,6 +199,54 @@ class GlobalLogic:
         if not yielded:
             yield False
 
+    @Strategy.wrap
+    def indentify_items_on_altar(self):
+        mask = utils.isin(self.agent.current_level().objects, G.ALTAR)
+        if not mask.any():
+            yield False
+
+        dis = self.agent.bfs()
+        mask &= dis != -1
+        if not mask.any():
+            yield False
+
+        yield any((item.status == Item.UNKNOWN for item in self.agent.inventory.items
+                   if item.can_be_dropped_from_inventory()))
+
+        (ty, tx), *_ = zip(*(mask & (dis == dis[mask].min())).nonzero())
+        self.agent.go_to(ty, tx)
+        items_to_drop = [item for item in self.agent.inventory.items
+                         if item.can_be_dropped_from_inventory() and item.status == Item.UNKNOWN]
+        if not items_to_drop:
+            raise AgentPanic('items to drop on altar vanished')
+        self.agent.inventory.drop(items_to_drop)
+
+    @Strategy.wrap
+    def current_strategy(self):
+        if self.milestone == Milestone.FIND_GNOMISH_MINES and \
+                self.agent.current_level().dungeon_number == Level.GNOMISH_MINES:
+            self.milestone = Milestone(int(self.milestone) + 1)
+        elif self.milestone == Milestone.FIND_SOKOBAN and \
+                self.agent.current_level().dungeon_number == Level.SOKOBAN:
+            self.milestone = Milestone(int(self.milestone) + 1)
+        elif self.milestone == Milestone.SOLVE_SOKOBAN and \
+                self.agent.current_level().key() == (Level.SOKOBAN, 1):
+            self.milestone = Milestone(int(self.milestone) + 1)
+
+        go_to_strategy = lambda y, x: (
+                self.agent.exploration.explore1(None)
+                .preempt(self.agent, [self.agent.exploration.go_to_strategy(y, x)])
+                .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
+        )
+
+        # TODO: unconditioned indentify_items_on_altar on changing level
+        yield from (
+            (self.agent.exploration.go_to_level_strategy(
+                Level.GNOMISH_MINES if self.milestone == Milestone.FIND_GNOMISH_MINES else Level.SOKOBAN, 1,
+                go_to_strategy, self.agent.exploration.explore1(None)) \
+            .before(utils.assert_strategy('end'))).strategy()
+        )
+
     def global_strategy(self):
         return (
             self.current_strategy()
@@ -152,15 +257,18 @@ class GlobalLogic:
                                                self.agent.blstats.hitpoints >= 0.9 * self.agent.blstats.max_hitpoints)
             ])
             .preempt(self.agent, [
-                self.solve_sokoban_strategy().condition(lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN)
+                #self.indentify_items_on_altar().every(50),
+            ])
+            .preempt(self.agent, [
+                self.solve_sokoban_strategy()
+                .condition(lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN)
             ])
             .preempt(self.agent, [
                 self.wait_out_unexpected_state_strategy(),
             ])
             .preempt(self.agent, [
-                self.agent.eat1().condition(lambda: self.agent.blstats.time % 3 == 0 and
-                                                    self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
-                self.agent.eat_from_inventory(),
+                self.agent.eat1().every(5).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
+                self.agent.eat_from_inventory().every(5),
             ]).preempt(self.agent, [
                 self.agent.fight2(),
             ]).preempt(self.agent, [

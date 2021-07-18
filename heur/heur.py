@@ -386,12 +386,11 @@ def prepare_env(args, seed, step_limit=None):
                            output_dir=Path('/workspace/vis/') / str(seed))
     env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=200),
                      to_skip=args.skip_to, visualizer_args=visualizer_args,
-                     agent_args=dict(panic_on_errors=args.panic_on_errors),
+                     agent_args=dict(panic_on_errors=args.panic_on_errors,
+                                     verbose=args.mode == 'run'),
                      interactive=args.mode == 'run')
-
     if args.visualize_ends is not None:
         env.visualizer.frame_skipping = 1
-
     env.env.seed(seed, seed)
     return env
 
@@ -435,36 +434,96 @@ def run_single_interactive_game(args):
 
 
 def run_profiling(args):
-    import cProfile, pstats
-    pr = cProfile.Profile()
+    if args.profiler == 'cProfile':
+        import cProfile, pstats
+    elif args.profiler == 'pyinstrument':
+        from pyinstrument import Profiler
+    else:
+        assert 0
+
+    if args.profiler == 'cProfile':
+        pr = cProfile.Profile()
+    elif args.profiler == 'pyinstrument':
+        profiler = Profiler()
+    else:
+        assert 0
+
+    if args.profiler == 'cProfile':
+        pr.enable()
+    elif args.profiler == 'pyinstrument':
+        profiler.start()
+    else:
+        assert 0
 
     start_time = time.time()
-    pr.enable()
     res = []
     for i in range(args.episodes):
+        print(f'starting {i + 1} game...')
         res.append(single_simulation(args, i, timeout=None))
-    pr.disable()
-
     duration = time.time() - start_time
 
-    stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
-    stats.print_stats(30)
-    stats = pstats.Stats(pr).sort_stats(pstats.SortKey.TIME)
-    stats.print_stats(20)
-    stats.dump_stats('/tmp/nethack_stats.profile')
 
+    if args.profiler == 'cProfile':
+        pr.disable()
+    elif args.profiler == 'pyinstrument':
+        session = profiler.stop()
+    else:
+        assert 0
+
+    print()
     print('turns_per_second :', sum([r['turns'] for r in res]) / duration)
     print('steps_per_second :', sum([r['steps'] for r in res]) / duration)
     print('episodes_per_hour:', len(res) / duration * 3600)
+    print()
 
-    subprocess.run('gprof2dot -f pstats /tmp/nethack_stats.profile -o /tmp/calling_graph.dot'.split())
-    subprocess.run('xdot /tmp/calling_graph.dot'.split())
+    if args.profiler == 'cProfile':
+        stats = pstats.Stats(pr).sort_stats(pstats.SortKey.CUMULATIVE)
+        stats.print_stats(30)
+        stats = pstats.Stats(pr).sort_stats(pstats.SortKey.TIME)
+        stats.print_stats(30)
+        stats.dump_stats('/tmp/nethack_stats.profile')
+
+        subprocess.run('gprof2dot -f pstats /tmp/nethack_stats.profile -o /tmp/calling_graph.dot'.split())
+        subprocess.run('xdot /tmp/calling_graph.dot'.split())
+    elif args.profiler == 'pyinstrument':
+        frame_records = session.frame_records
+
+        new_records = []
+        for record in frame_records:
+            ret_frames = []
+            for frame in record[0][1:][::-1]:
+                func, module, line = frame.split('\0')
+                if func in ['f', 'run']:
+                    continue
+                ret_frames.append(frame)
+                if module.endswith('agent.py') and func in ['step', 'preempt', 'call_update_functions']:
+                    break
+            ret_frames.append(record[0][0])
+            new_records.append((ret_frames[::-1], record[1] / session.duration * 100))
+        session.frame_records = new_records
+        session.start_call_stack = [session.start_call_stack[0]]
+
+        print('Cumulative time:')
+        profiler.last_session = session
+        print(profiler.output_text(unicode=True, color=True))
+
+        new_records = []
+        for record in frame_records:
+            new_records.append([record[0][1:][-1:], record[1] / session.duration * 100])
+            new_records[-1][0] = record[0][:1] + new_records[-1][0]
+        session.frame_records = new_records
+        session.start_call_stack = [session.start_call_stack[0]]
+
+        print('Total time:')
+        profiler.last_session = session
+        print(profiler.output_text(unicode=True, color=True, show_all=True))
+    else:
+        assert 0
 
 
 def run_simulations(args):
     import ray
     ray.init(address='auto')
-    # ray.init(address='192.168.100.129:6379', _redis_password='5241590000000000')
 
     start_time = time.time()
     plot_queue = Queue()
@@ -625,7 +684,7 @@ def parse_args():
     parser.add_argument('--no-plot', action='store_true')
     parser.add_argument('--visualize-ends', type=Path, default=None,
                         help='Path to json file with dict: seed -> visualization_start_step')
-
+    parser.add_argument('--profiler', choices=('cProfile', 'pyinstrument'), default='pyinstrument')
 
     args = parser.parse_args()
     if args.seed is None:
