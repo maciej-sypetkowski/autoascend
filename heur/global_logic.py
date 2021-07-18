@@ -2,6 +2,7 @@ from enum import IntEnum, auto
 
 import nle.nethack as nh
 import numpy as np
+from nle.nethack import actions as A
 
 import objects as O
 import soko_solver
@@ -15,6 +16,7 @@ from strategy import Strategy
 
 
 class ItemPriority(ItemPriorityBase):
+    MAX_NUMBER_OF_ITEMS = 26 * 2  # + coin slot
     def __init__(self, agent):
         self.agent = agent
 
@@ -28,7 +30,7 @@ class ItemPriority(ItemPriorityBase):
         def add_item(item, count=None):
             nonlocal ret, remaining_weight
             assert isinstance(item, Item)
-            if remaining_weight < 0:
+            if remaining_weight < 0 or len(ret) >= ItemPriority.MAX_NUMBER_OF_ITEMS:  # TODO: coin slot
                 return
 
             how_many_already = ret.get(item, 0)
@@ -79,7 +81,7 @@ class ItemPriority(ItemPriorityBase):
         categories = [nh.WEAPON_CLASS, nh.ARMOR_CLASS, nh.TOOL_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.AMULET_CLASS,
                       nh.RING_CLASS, nh.COIN_CLASS, nh.POTION_CLASS, nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.WAND_CLASS]
         for item in sorted(items, key=lambda i: i.unit_weight()):
-            if item.category in categories:
+            if item.category in categories and (not isinstance(item.objs[0], O.Container) or item.objs[0].desc is not None):
                 if item.status == Item.UNKNOWN:
                     add_item(item)
 
@@ -199,8 +201,9 @@ class GlobalLogic:
         if not yielded:
             yield False
 
+    @utils.debug_log('identify_items_on_altar')
     @Strategy.wrap
-    def indentify_items_on_altar(self):
+    def identify_items_on_altar(self):
         mask = utils.isin(self.agent.current_level().objects, G.ALTAR)
         if not mask.any():
             yield False
@@ -221,6 +224,35 @@ class GlobalLogic:
             raise AgentPanic('items to drop on altar vanished')
         self.agent.inventory.drop(items_to_drop)
 
+    @utils.debug_log('dip_for_excalibur')
+    @Strategy.wrap
+    def dip_for_excalibur(self):
+        if self.agent.character.alignment != Character.LAWFUL or self.agent.blstats.experience_level < 5:
+            yield False
+
+        dis = self.agent.bfs()
+        mask = utils.isin(self.agent.current_level().objects, G.FOUNTAIN) & (dis != -1)
+        if not mask.any():
+            yield False
+
+        candidate = None
+        for item in self.agent.inventory.items:
+            if item.is_ambiguous() and item.object == O.from_name('long sword'):
+                if item.dmg_bonus is not None: # TODO: better condition for excalibur existance
+                    yield False
+                candidate = item
+
+        if candidate is None:
+            yield False
+        yield True
+
+        self.agent.go_to(*list(zip(*mask.nonzero()))[0])
+
+        # TODO: refactor
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.DIP)
+            self.agent.type_text(self.agent.inventory.items.get_letter(candidate))
+
     @Strategy.wrap
     def current_strategy(self):
         if self.milestone == Milestone.FIND_GNOMISH_MINES and \
@@ -233,16 +265,24 @@ class GlobalLogic:
                 self.agent.current_level().key() == (Level.SOKOBAN, 1):
             self.milestone = Milestone(int(self.milestone) + 1)
 
+        if self.milestone == Milestone.FIND_GNOMISH_MINES:
+            level = (Level.GNOMISH_MINES, 1)
+        elif self.milestone == Milestone.FIND_SOKOBAN:
+            level = (Level.SOKOBAN, 4)
+        elif self.milestone == Milestone.SOLVE_SOKOBAN:
+            level = (Level.SOKOBAN, 1)
+        else:
+            assert 0
+
         go_to_strategy = lambda y, x: (
                 self.agent.exploration.explore1(None)
                 .preempt(self.agent, [self.agent.exploration.go_to_strategy(y, x)])
                 .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
         )
 
-        # TODO: unconditioned indentify_items_on_altar on changing level
+        # TODO: unconditioned identify_items_on_altar on changing level
         yield from (
-            (self.agent.exploration.go_to_level_strategy(
-                Level.GNOMISH_MINES if self.milestone == Milestone.FIND_GNOMISH_MINES else Level.SOKOBAN, 1,
+            (self.agent.exploration.go_to_level_strategy(*level,
                 go_to_strategy, self.agent.exploration.explore1(None)) \
             .before(utils.assert_strategy('end'))).strategy()
         )
@@ -257,7 +297,9 @@ class GlobalLogic:
                                                self.agent.blstats.hitpoints >= 0.9 * self.agent.blstats.max_hitpoints)
             ])
             .preempt(self.agent, [
-                #self.indentify_items_on_altar().every(50),
+                self.identify_items_on_altar().every(50),
+                self.dip_for_excalibur().condition(lambda: self.agent.blstats.score > 1300 and
+                                                           self.agent.blstats.experience_level >= 7).every(10)
             ])
             .preempt(self.agent, [
                 self.solve_sokoban_strategy()

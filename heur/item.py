@@ -17,13 +17,19 @@ from strategy import Strategy
 
 
 class Item:
+    # beatitude
     UNKNOWN = 0
     CURSED = 1
     UNCURSED = 2
     BLESSED = 3
 
+    # shop status
+    NOT_SHOP = 0
+    FOR_SALE = 1
+    UNPAID = 2
+
     def __init__(self, objs, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False,
-                 monster_id=None, text=None):
+                 monster_id=None, shop_status=NOT_SHOP, dmg_bonus=None, to_hit_bonus=None, text=None):
         assert isinstance(objs, list) and len(objs) >= 1
         assert isinstance(glyphs, list) and len(glyphs) >= 1 and all((nh.glyph_is_object(g) for g in glyphs))
         assert isinstance(count, int)
@@ -36,6 +42,9 @@ class Item:
         self.equipped = equipped
         self.at_ready = at_ready
         self.monster_id = monster_id
+        self.shop_status = shop_status
+        self.dmg_bonus = dmg_bonus
+        self.to_hit_bonus = to_hit_bonus
         self.text = text
 
         self.category = O.get_category(self.objs[0])
@@ -102,6 +111,7 @@ class Item:
         dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
         if self.modifier is not None and self.modifier > 0:
             dmg += self.modifier
+        dmg += 0 if self.dmg_bonus is None else self.dmg_bonus
         return dmg
 
     def get_to_hit(self):
@@ -113,7 +123,7 @@ class Item:
         to_hit += weapon.hitbon
         if self.modifier is not None:
             to_hit += self.modifier
-
+        to_hit += 0 if self.to_hit_bonus is None else self.to_hit_bonus
         return to_hit
 
     def is_launcher(self):
@@ -244,7 +254,7 @@ class ItemManager:
         if self.agent.character.prop.hallu:
             glyph = None
 
-        objs, glyphs, count, status, modifier, equipped, at_ready, monster_id = \
+        objs, glyphs, count, status, modifier, *args = \
                 self.parse_text(text, category, glyph)
         category = O.get_category(objs[0])
 
@@ -272,7 +282,7 @@ class ItemManager:
             elif len(glyphs) == 1 and glyphs[0] in self.glyph_to_object:
                 objs = [self.glyph_to_object[glyphs[0]]]
 
-        return Item(objs, glyphs, count, status, modifier, equipped, at_ready, monster_id, text)
+        return Item(objs, glyphs, count, status, modifier, *args, text)
 
     def possible_objects_from_glyph(self, glyph):
         # TODO: take into account identified objects
@@ -296,7 +306,7 @@ class ItemManager:
         assert category not in [nh.BALL_CLASS, nh.RANDOM_CLASS]
 
         matches = re.findall(
-            r'^(a|an|\d+)'
+            r'^(a|an|the|\d+)'
             r'( empty)?'
             r'( (cursed|uncursed|blessed))?'
             r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used))*'
@@ -326,10 +336,19 @@ class ItemManager:
         else:
             assert 0, info
 
-        count = int({'a': 1, 'an': 1}.get(count, count))
+        count = int({'a': 1, 'an': 1, 'the': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
         monster_id = None
+
+        if shop_status == '':
+            shop_status = Item.NOT_SHOP
+        elif shop_status == 'for sale':
+            shop_status = Item.FOR_SALE
+        elif shop_status == 'unpaid':
+            shop_status = Item.UNPAID
+        else:
+            assert 0, shop_status
 
         if name in ['potion of holy water', 'potions of holy water']:
             name = 'potion of water'
@@ -384,9 +403,16 @@ class ItemManager:
             monster_id = nh.glyph_to_mon(MON.from_name(name[:-len(' egg')].strip()))
             name = 'egg'
 
+        dmg_bonus, to_hit_bonus = None, None
+
         if ' named ' in name:
             # TODO: many of these are artifacts
             name = name[:name.index(' named ')]
+
+        if name == 'Excalibur':
+            name = 'long sword'
+            dmg_bonus = 5.5  # 1d10
+            to_hit_bonus = 3  # 1d5
 
         objs, ret_glyphs = ItemManager.parse_name(name)
         assert category is None or category == O.get_category(objs[0]), (text, category, O.get_category(objs[0]))
@@ -399,7 +425,10 @@ class ItemManager:
             objs = sorted(set(objs).intersection(O.possibilities_from_glyph(glyph)))
 
         # TODO: Item should be returned here, but I don't want to memoize them
-        return objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id
+        return (
+            objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, shop_status, dmg_bonus,
+            to_hit_bonus,
+        )
 
 
     @staticmethod
@@ -811,7 +840,7 @@ class Inventory:
                     # LOOK is necessary even when 'Things that are here' popup is present for some very rare cases
                     self.agent.step(A.Command.LOOK)
 
-                if 'Things that are here:' not in self.agent.popup:
+                if 'Things that are here:' not in self.agent.popup and 'There is ' not in '\n'.join(self.agent.popup):
                     if 'You see no objects here.' in self.agent.message:
                         items = []
                         letters = []
