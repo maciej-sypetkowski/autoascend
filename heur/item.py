@@ -725,7 +725,7 @@ class Inventory:
             return False
 
         if (self.items.main_hand is not None and self.items.main_hand.status == Item.CURSED) or \
-                (item.objs[0].bi and self.items.off_hand is not None):
+                (item is not None and item.objs[0].bi and self.items.off_hand is not None):
             return False
 
         with self.agent.atom_operation():

@@ -371,7 +371,8 @@ def prepare_env(args, seed, step_limit=None):
 
     env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=200),
                      to_skip=args.skip_to, visualizer=args.mode == 'run',
-                     agent_args=dict(panic_on_errors=args.panic_on_errors))
+                     agent_args=dict(panic_on_errors=args.panic_on_errors,
+                                     verbose=args.mode == 'run'))
     env.env.seed(seed, seed)
     return env
 
