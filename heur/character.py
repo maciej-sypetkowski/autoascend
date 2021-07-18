@@ -1,7 +1,7 @@
 import re
 
-import numpy as np
 import nle.nethack as nh
+import numpy as np
 from nle.nethack import actions as A
 
 import objects as O
@@ -435,7 +435,7 @@ class Character:
                 # tmp -= (*role_roll_penalty = urole.spelarmr);
                 roll_offset -= 20
             elif item is None and self.agent.inventory.items.off_hand is None:
-            #  else if (!uwep && !uarms)
+                #  else if (!uwep && !uarms)
                 # tmp += (u.ulevel / 3) + 2;
                 roll_offset += (self.agent.blstats.experience_level // 3) + 2
 
@@ -471,15 +471,19 @@ class Character:
             dmg_bonus += item.get_dmg(large_monster)
         return roll_offset, max(0, dmg_bonus)
 
-    def __str__(self):
+    def get_skill_str_list(self):
         inv_skill_type = {v: k for k, v in self.name_to_skill_type.items()}
         inv_skill_level = {v: k for k, v in self.name_to_skill_level.items()}
+        return list(inv_skill_type[skill_type] + '-' + inv_skill_level[level]
+                    for skill_type, level in enumerate(self.skill_levels)
+                    if level in inv_skill_level and skill_type in inv_skill_type and level != 0)
+
+    def __str__(self):
         if self.role is None:
             return 'unparsed_character'
-        skill_str = '| '.join(inv_skill_type[skill_type] + '-' + inv_skill_level[level]
-                              for skill_type, level in enumerate(self.skill_levels)
-                              if level in inv_skill_level and skill_type in inv_skill_type and level != 0)
+        skill_str = '| '.join(self.get_skill_str_list())
         if self.upgradable_skills:
+            inv_skill_type = {v: k for k, v in self.name_to_skill_type.items()}
             skill_str += '\n Upgradable: ' + '|'.join(letter + '-' + inv_skill_type[skill]
                                                       for skill, letter in self.upgradable_skills.items())
         return '-'.join([f'{list(d.keys())[list(d.values()).index(v)][:3].lower()}'

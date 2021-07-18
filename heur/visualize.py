@@ -1,4 +1,5 @@
 import queue
+
 import cv2
 import numpy as np
 
@@ -6,7 +7,7 @@ import numpy as np
 
 MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
-FAST_FRAME_SKIPPING = 16
+FAST_FRAME_SKIPPING = 64
 RENDERS_HISTORY_SIZE = 64
 
 
@@ -224,10 +225,10 @@ class Visualizer:
         for drawer in self.drawers:
             scene_vis = drawer(scene_vis)
         _draw_frame(scene_vis)
-        topbar = self._draw_topbar(self.last_obs, scene_vis.shape[1])
-        tty = self._draw_tty(self.last_obs, scene_vis.shape[1])
+        topbar = self._draw_topbar(scene_vis.shape[1])
+        bottombar = self._draw_bottombar(scene_vis.shape[1])
 
-        rendered = np.concatenate([topbar, scene_vis, tty], axis=0)
+        rendered = np.concatenate([topbar, scene_vis, bottombar], axis=0)
         inventory = self._draw_inventory(rendered.shape[0])
         rendered = np.concatenate([rendered, inventory], axis=1)
 
@@ -238,7 +239,63 @@ class Visualizer:
         if self.renders_history is not None:
             self.renders_history.append(rendered)
 
-    def _draw_topbar(self, obs, width):
+    def _draw_bottombar(self, width):
+        height = FONT_SIZE * len(self.last_obs['tty_chars'])
+        tty = self._draw_tty(self.last_obs, width - width // 2, height)
+        stats = self._draw_stats(width // 2, height)
+        return np.concatenate([tty, stats], axis=1)
+
+    def _draw_stats(self, width, height):
+        ret = np.zeros((height, width, 3), dtype=np.uint8)
+        ch = self.env.agent.character
+        if ch.role is None:
+            return ret
+
+        # game info
+        i = 0
+        txt = f'Step: {self.env.step_count} | Level number: {self.env.agent.current_level().level_number}'
+        _put_text(ret, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+        i += 3
+
+        # general character info
+        txt = [
+            {v: k for k, v in ch.name_to_role.items()}[ch.role],
+            {v: k for k, v in ch.name_to_race.items()}[ch.race],
+            {v: k for k, v in ch.name_to_alignment.items()}[ch.alignment],
+            {v: k for k, v in ch.name_to_gender.items()}[ch.gender],
+        ]
+        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE))
+        i += 1
+        txt = [f'HP: {self.env.agent.blstats.hitpoints} / {self.env.agent.blstats.max_hitpoints}',
+               f'LVL: {self.env.agent.blstats.experience_level}',
+               ]
+        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE))
+        i += 2
+
+        # proficiency info
+        colors = {
+            'Basic': (100, 100, 255),
+            'Skilled': (100, 255, 100),
+            'Expert': (100, 255, 255),
+            'Master': (255, 255, 100),
+            'Grand Master': (255, 100, 100),
+        }
+        for line in ch.get_skill_str_list():
+            if 'Unskilled' not in line:
+                _put_text(ret, line, (0, i * FONT_SIZE), color=colors[line.split('-')[-1]])
+                i += 1
+        unskilled = []
+        for line in ch.get_skill_str_list():
+            if 'Unskilled' in line:
+                unskilled.append(line.split('-')[0])
+        _put_text(ret, '|'.join(unskilled), (0, i * FONT_SIZE), color=(100, 100, 100))
+        i += 2
+        _put_text(ret, 'Unarmed bonus: ' + str(ch.get_melee_bonus(None)), (0, i * FONT_SIZE))
+        i += 1
+        _draw_frame(ret)
+        return ret
+
+    def _draw_topbar(self, width):
         messages_vis = self._draw_message_history(width // 3)
         popup_vis = self._draw_popup_history(width // 4)
         log_messages_vis = self._draw_debug_message_log(width - width // 3 - width // 4)
@@ -306,8 +363,8 @@ class Visualizer:
         # if txt:
         self.popup_history.append(txt)
 
-    def _draw_tty(self, obs, width):
-        vis = np.zeros((FONT_SIZE * len(obs['tty_chars']), width, 3)).astype(np.uint8)
+    def _draw_tty(self, obs, width, height):
+        vis = np.zeros((height, width, 3)).astype(np.uint8)
         for i, line in enumerate(obs['tty_chars']):
             txt = ''.join([chr(i) for i in line])
             _put_text(vis, txt, (0, i * FONT_SIZE), console=True)
