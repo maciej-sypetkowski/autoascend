@@ -13,7 +13,7 @@ from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
 from glyph import MON, C, Hunger, G
-from item import Inventory
+from item import Inventory, Item
 from level import Level
 from strategy import Strategy
 
@@ -395,16 +395,19 @@ class Agent:
                 func()
 
     def update_level(self):
+        # this function shouldn't rely self.message and self.popup (because some update functions
+        # can call a few steps and change it)
+
         level = self.current_level()
 
-        if '(for sale,' in self.message or any('(for sale' in p for p in self.popup):
-            level.shop[self.blstats.y, self.blstats.x] = 1
+        level.shop[self.blstats.y, self.blstats.x] = \
+                any((item.shop_status != Item.NOT_SHOP for item in self.inventory.items_below_me))
 
         if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
             self._previous_glyphs = self.last_observation['glyphs']
 
             mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS,
-                              G.ALTAR)
+                              G.ALTAR, G.FOUNTAIN)
             level.walkable[mask] = True
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
@@ -424,7 +427,7 @@ class Agent:
             level.item_disagreement_counter[~mask] = 0
             for y, x in zip(*mask.nonzero()):
                 if (len(level.items[y, x]) >= 2) == ((self.last_observation['specials'][y, x] & nh.MG_OBJPILE) > 0):
-                    glyphs = np.unique([item.display_glyphs() for item in level.items[y, x]])
+                    glyphs = np.unique([glyph for item in level.items[y, x] for glyph in item.display_glyphs()])
                     if self.glyphs[y, x] in glyphs:
                         level.item_disagreement_counter[y, x] = 0
                         continue
@@ -433,8 +436,6 @@ class Agent:
                 if level.item_disagreement_counter[y, x] > 3:
                     level.item_disagreement_counter[y, x] = 0
                     level.items[y, x] = ()
-
-
 
         level.items[self.blstats.y, self.blstats.x] = self.inventory.items_below_me
 
