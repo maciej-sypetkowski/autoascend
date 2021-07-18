@@ -162,10 +162,6 @@ class GlobalLogic:
                                                     self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 self.agent.eat_from_inventory(),
             ]).preempt(self.agent, [
-                self.agent.fight2() if self.agent.character.role in (self.agent.character.TOURIST,
-                                                                     self.agent.character.ROGUE,
-                                                                     self.agent.character.RANGER,
-                                                                     self.agent.character.BARBARIAN,) else
                 self.agent.fight2(),
             ]).preempt(self.agent, [
                 self.agent.emergency_strategy(),

@@ -10,7 +10,12 @@ def interesting_reason(txt):
             and 'Error' not in txt
             and 'starved' not in txt
             and 'timeout' not in txt
-            and 'sleeping' not in txt)
+            and 'sleeping' not in txt
+            and 'wand' not in txt
+            and 'bolt' not in txt
+            and 'missile' not in txt
+            and 'rotted' not in txt
+            and 'invisible' not in txt)
 
 
 def process(path='/tmp/nh_sim.json'):
@@ -30,3 +35,5 @@ def process(path='/tmp/nh_sim.json'):
 
 
 process('/tmp/nh_sim.json')
+# process('/workspace/nh_sim_fight2.json')
+
