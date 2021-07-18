@@ -26,6 +26,7 @@ class Item:
                  monster_id=None, text=None):
         assert isinstance(objs, list) and len(objs) >= 1
         assert isinstance(glyphs, list) and len(glyphs) >= 1 and all((nh.glyph_is_object(g) for g in glyphs))
+        assert isinstance(count, int)
 
         self.objs = objs
         self.glyphs = glyphs
@@ -50,9 +51,9 @@ class Item:
         return self.glyphs
 
     def is_ambiguous(self):
-        return len(self.objs) == 1, self.objs
+        return len(self.objs) == 1
 
-    def can_drop_from_inventory(self):
+    def can_be_dropped_from_inventory(self):
         return not (
             (isinstance(self.objs[0], (O.Weapon, O.WepTool)) and self.status == Item.CURSED and self.equipped) or
             (isinstance(self.objs[0], O.Armor) and self.equipped) or
@@ -60,6 +61,9 @@ class Item:
         )
 
     def weight(self):
+        return self.count * self.unit_weight()
+
+    def unit_weight(self):
         if self.objs[0] == O.from_name('corpse'):
             assert self.is_ambiguous()
             return 10000  # TODO: take weight from monster
@@ -73,7 +77,7 @@ class Item:
             return 10000  # weight is unknown
 
         weight = max((obj.wt for obj in self.objs))
-        return self.count * weight
+        return weight
 
     @property
     def object(self):
@@ -149,8 +153,8 @@ class Item:
                 'dart', 'shuriken']
 
     def __str__(self):
-        #if self.text is not None:
-        #    return self.text
+        if self.text is not None:
+            return self.text
         return (f'{self.count}_'
                 f'{self.status if self.status is not None else ""}_'
                 f'{self.modifier if self.modifier is not None else ""}_'
@@ -240,7 +244,16 @@ class ItemManager:
         if self.agent.character.prop.hallu:
             glyph = None
 
-        objs, glyphs, *args = self.parse_text(text, category, glyph)
+        objs, glyphs, count, status, modifier, equipped, at_ready, monster_id = \
+                self.parse_text(text, category, glyph)
+        category = O.get_category(objs[0])
+
+        if status == Item.UNKNOWN and (
+                self.agent.character == Character.PRIEST or
+                (modifier is not None and category not in [nh.ARMOR_CLASS, nh.RING_CLASS])):
+            # TODO; oc_charged, amulets of yendor
+            status = Item.UNCURSED
+
         old_objs = None
         old_glyphs = None
         while old_objs != objs or old_glyphs != glyphs:
@@ -259,7 +272,7 @@ class ItemManager:
             elif len(glyphs) == 1 and glyphs[0] in self.glyph_to_object:
                 objs = [self.glyph_to_object[glyphs[0]]]
 
-        return Item(objs, glyphs, *args)
+        return Item(objs, glyphs, count, status, modifier, equipped, at_ready, monster_id, text)
 
     def possible_objects_from_glyph(self, glyph):
         # TODO: take into account identified objects
@@ -386,7 +399,7 @@ class ItemManager:
             objs = sorted(set(objs).intersection(O.possibilities_from_glyph(glyph)))
 
         # TODO: Item should be returned here, but I don't want to memoize them
-        return objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, text
+        return objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id
 
 
     @staticmethod
@@ -893,7 +906,7 @@ class Inventory:
                     'Continue?' in self.agent.message:
                 self.agent.type_text('y')
             if one_item and drop_count:
-                letter = re.search('([a-zA-Z]) - ', self.agent.message)
+                letter = re.search('([a-zA-Z]) - ', self.agent.message)[1]
 
         if one_item and drop_count:
             self.drop(self.items.all_items[self.items.all_letters.index(letter)], drop_count)
@@ -909,16 +922,17 @@ class Inventory:
                 counts = [counts]
         if counts is None:
             counts = [i.count for i in items]
+        assert all(map(lambda x: isinstance(x, (int, np.int32, np.int64)), counts)), list(map(type, counts))
         assert len(items) > 0
         assert all(map(lambda item: item in self.items.all_items, items))
         assert len(counts) == len(items)
         assert sum(counts) > 0 and all((0 <= c <= i.count for c, i in zip(counts, items)))
 
         letters = [self.items.all_letters[self.items.all_items.index(item)] for item in items]
-        text = ''.join([(str(count) if item.count != count else '') + letter
-                         for letter, item, count in zip(letters, items, counts) if count != 0])
+        texts_to_type = [(str(count) if item.count != count else '') + letter
+                         for letter, item, count in zip(letters, items, counts) if count != 0]
 
-        if all((not i.can_drop_from_inventory() for i in items)):
+        if all((not i.can_be_dropped_from_inventory() for i in items)):
             return False
 
         def key_gen():
@@ -927,7 +941,15 @@ class Inventory:
                 yield A.MiscAction.MORE
             assert 'What would you like to drop?' in '\n'.join(self.agent.popup), \
                    (self.agent.message, self.agent.popup)
-            yield from text
+            while texts_to_type:
+                for text in list(texts_to_type):
+                    letter = text[-1]
+                    if f'{letter} - ' in '\n'.join(self.agent.popup):
+                        yield from text
+                        texts_to_type.remove(text)
+
+                if texts_to_type:
+                    yield A.TextCharacters.SPACE
             yield A.MiscAction.MORE
 
         with self.agent.atom_operation():
@@ -939,7 +961,7 @@ class Inventory:
 
     ######## STRATEGIES helpers
 
-    def get_best_weapon(self, return_dps=False, items=None):
+    def get_best_weapon(self, items=None, *, return_dps=False, allow_unknown_status=False):
         if self.agent.character.role == Character.MONK:
             return None
 
@@ -949,7 +971,9 @@ class Inventory:
         best_item = None
         best_dps = utils.calc_dps(*self.agent.character.get_melee_bonus(None, large_monster=False))
         for item in items:
-            if item.is_weapon():
+            if item.is_weapon() and \
+                    (item.status in [Item.UNCURSED, Item.BLESSED] or
+                     (allow_unknown_status and item.status == Item.UNKNOWN)):
                 to_hit, dmg = self.agent.character.get_melee_bonus(item, large_monster=False)
                 dps = utils.calc_dps(to_hit, dmg)
                 # dps = item.get_dps(large_monster=False)  # TODO: what about monster size
@@ -961,14 +985,16 @@ class Inventory:
         return best_item
 
 
-    def get_best_armorset(self, return_ac=False, items=None):
+    def get_best_armorset(self, items=None, *, return_ac=False, allow_unknown_status=False):
         if items is None:
             items = self.items
 
         best_items = [None] * O.ARM_NUM
         best_ac = [None] * O.ARM_NUM
         for item in items:
-            if item.is_armor() and item.is_ambiguous():
+            if item.is_armor() and item.is_ambiguous() and \
+                    (item.status in [Item.UNCURSED, Item.BLESSED] or
+                     (allow_unknown_status and item.status == Item.UNKNOWN)):
                 slot = item.object.sub
                 ac = item.get_ac()
 
@@ -991,7 +1017,7 @@ class Inventory:
             self.pickup_and_drop_items()
             .before(self.wear_best_stuff())
             .before(self.go_to_item_to_pickup()
-                    .before(self.check_items()).every(10)
+                    .before(self.check_items()).repeat().every(5)
                     .preempt(self.agent, [
                         self.pickup_and_drop_items()
                     ])).repeat()
@@ -1046,13 +1072,18 @@ class Inventory:
     @utils.debug_log('inventory.check_items')
     @Strategy.wrap
     def check_items(self):
-        mask = np.vectorize(len)(self.agent.current_level().items) == 0
-        mask &= utils.isin(self.agent.glyphs, G.OBJECTS)  # TODO: G.BODIES
+        mask = utils.isin(self.agent.glyphs, G.OBJECTS, G.BODIES, G.STATUES)
         if not mask.any():
             yield False
 
+        level = self.agent.current_level()
         dis = self.agent.bfs()
+
         mask &= dis > 0
+        if not mask.any():
+            yield False
+
+        mask[mask] = np.vectorize(len)(self.agent.current_level().items[mask]) == 0
         if not mask.any():
             yield False
         yield True
@@ -1070,7 +1101,7 @@ class Inventory:
         level = self.agent.current_level()
         dis = self.agent.bfs()
 
-        mask = dis > 0
+        mask = ~level.shop & (dis > 0)
         if not mask.any():
             yield False
 
@@ -1085,8 +1116,8 @@ class Inventory:
         if not items:
             yield False  # TODO: what about just dropping items?
 
-        free_items = list(filter(Item.can_drop_from_inventory, self.items))
-        forced_items = list(filter(lambda i: not Item.can_drop_from_inventory(i), self.items))
+        free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(), self.items))
+        forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), self.items))
         counts = self.agent.global_logic.item_priority.split(
                 free_items + list(items.keys()), forced_items,
                 self.agent.character.carrying_capacity)
@@ -1117,10 +1148,11 @@ class Inventory:
 
         yielded = False
         while 1:
-            assert len(self.items_below_me) != 0
+            if not self.items_below_me:
+                raise AgentPanic('items below me vanished')
 
-            free_items = list(filter(Item.can_drop_from_inventory, self.items))
-            forced_items = list(filter(lambda i: not Item.can_drop_from_inventory(i), self.items))
+            free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(), self.items))
+            forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), self.items))
             counts = self.agent.global_logic.item_priority.split(
                     free_items + self.items_below_me, forced_items,
                     self.agent.character.carrying_capacity)

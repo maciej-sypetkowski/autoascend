@@ -153,7 +153,7 @@ class Agent:
         # check if less nested ChangeStategy is present
         self.call_update_functions()
 
-    def preempt(self, strategies, default, continue_after_preemption=True):
+    def preempt(self, strategies, func, first_func=None, continue_after_preemption=True):
         id2fun = {}
         for strategy in strategies:
             def f(iden, strategy):
@@ -174,6 +174,7 @@ class Agent:
 
         last_step = self.step_count
         inactivity_counter = 0
+        is_first = True
         while 1:
             inactivity_counter += 1
             if self.step_count != last_step:
@@ -188,10 +189,11 @@ class Agent:
                         call_update = False
                         self.call_update_functions(list(id2fun.values()))
 
-                    if isinstance(default, Strategy):
-                        val = default.run()
+                    f = (first_func or func) if is_first else func
+                    if isinstance(f, Strategy):
+                        val = f.run()
                     else:
-                        val = default()
+                        val = f()
                     break
 
             except AgentChangeStrategy as e:
@@ -209,6 +211,8 @@ class Agent:
 
                 if not continue_after_preemption:
                     break
+
+            is_first = False
 
         return val
 
@@ -399,8 +403,8 @@ class Agent:
         if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
             self._previous_glyphs = self.last_observation['glyphs']
 
-            # TODO: all statues
-            mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS)
+            mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS,
+                              G.ALTAR)
             level.walkable[mask] = True
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
@@ -410,11 +414,13 @@ class Agent:
             level.objects[mask] = self.glyphs[mask]
             level.walkable[mask] = False
 
-            mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS)
+            mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS, G.STATUES)
             level.seen[mask] = True
             level.walkable[mask & ~utils.isin(level.objects, G.STONE)] = True
 
-            mask = (np.vectorize(len)(level.items) != 0) & ~utils.isin(self.glyphs, G.MONS, G.PETS)  # TODO: effects, etc
+            ignore_mask = utils.isin(self.glyphs, G.MONS, G.PETS)  # TODO: effects, etc
+            item_mask = np.vectorize(len)(level.items) != 0
+            mask = item_mask & ~ignore_mask
             level.item_disagreement_counter[~mask] = 0
             for y, x in zip(*mask.nonzero()):
                 if (len(level.items[y, x]) >= 2) == ((self.last_observation['specials'][y, x] & nh.MG_OBJPILE) > 0):
@@ -427,6 +433,8 @@ class Agent:
                 if level.item_disagreement_counter[y, x] > 3:
                     level.item_disagreement_counter[y, x] = 0
                     level.items[y, x] = ()
+
+
 
         level.items[self.blstats.y, self.blstats.x] = self.inventory.items_below_me
 

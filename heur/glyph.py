@@ -400,6 +400,7 @@ class G:  # Glyphs
     CORRIDOR: ['#'] = {SS.S_corr}
     STAIR_UP: ['<'] = {SS.S_upstair}
     STAIR_DOWN: ['>'] = {SS.S_dnstair}
+    ALTAR: ['_'] = {SS.S_altar}
 
     DOOR_CLOSED: ['+'] = {SS.S_vcdoor, SS.S_hcdoor}
     DOOR_OPENED: ['-', '|'] = {SS.S_vodoor, SS.S_hodoor}
