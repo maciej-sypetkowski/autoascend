@@ -522,7 +522,7 @@ class Agent:
 
     def fight(self, y, x=None):
         with self.panic_if_position_changes():
-            assert self.glyphs[y, x] in G.MONS
+            assert self.glyphs[y, x] in G.MONS.union([nh.GLYPH_INVISIBLE])
             self.direction(y, x)
         return True
 
@@ -780,13 +780,19 @@ class Agent:
         """ Returns list of tuples (distance, y, x, monster)
         """
         dis = self.bfs()
-        mask = utils.isin(self.glyphs, G.MONS - G.PEACEFUL_MONS)
+        mask = utils.isin(self.glyphs, (G.MONS - G.PEACEFUL_MONS).union([nh.GLYPH_INVISIBLE]))
         mask[self.blstats.y, self.blstats.x] = 0
         # mask &= dis != -1
         ret = []
         for y, x in zip(*mask.nonzero()):
             if (dis[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2] != -1).any():
-                ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))
+                if self.glyphs[y][x] == nh.GLYPH_INVISIBLE:
+                    if utils.adjacent((self.blstats.y, self.blstats.x), (y, x)):
+                        class dummy_permonst:
+                            mname='unknown'
+                        ret.append((dis[y][x], y, x, dummy_permonst(), self.glyphs[y][x]))
+                else:
+                    ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))
         ret.sort()
         return ret
 

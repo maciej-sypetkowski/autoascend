@@ -15,8 +15,8 @@ def interesting_reason(txt):
             and 'bolt' not in txt
             and 'missile' not in txt
             and 'rotted' not in txt
-            and 'invisible' not in txt
-            and 'guard' not in txt)
+            and 'guard' not in txt
+            and 'quit' not in txt)
 
 
 def process(path='/tmp/nh_sim.json'):
