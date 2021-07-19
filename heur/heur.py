@@ -100,6 +100,8 @@ class EnvWrapper:
                 break
             except ReloadAgent:
                 pass
+            finally:
+                self.render()
 
             self.agent = None
             reload_agent()
@@ -159,7 +161,7 @@ class EnvWrapper:
                 self.visualizer.render()
                 break
 
-    def render(self):
+    def render(self, force=False):
         if self.visualizer is not None:
             with self.debug_tiles(self.agent.current_level().walkable, color=(0, 255, 0, 128)) \
                     if self.draw_walkable else contextlib.suppress():
@@ -168,9 +170,11 @@ class EnvWrapper:
                     with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0,
                                           color=(0, 255, 255, 128)):
                         self.visualizer.step(self.last_observation)
+                        if force:
+                            self.visualizer.force_next_frame()
                         rendered = self.visualizer.render()
 
-            if not self.interactive or not rendered:
+            if not force and (not self.interactive or not rendered):
                 return
 
             if self.agent is not None:

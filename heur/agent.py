@@ -490,9 +490,9 @@ class Agent:
                 self.update_level()
                 self.step(A.Command.ESC)
 
-    def wield_best_weapon(self):
+    def wield_best_melee_weapon(self):
         # TODO: move to inventory
-        item = self.inventory.get_best_weapon()
+        item = self.inventory.get_best_melee_weapon()
         if item != self.inventory.items.main_hand:
             return self.inventory.wield(item)
         return False
@@ -742,11 +742,11 @@ class Agent:
     @utils.debug_log('ranged_stance1')
     def ranged_stance1(self):
         while True:
-            valid_combinations = self.get_ranged_combinations(throwing=False)
+            valid_combinations = self.inventory.get_ranged_combinations(throwing=False)
 
             # TODO: select best combination
             if not valid_combinations:
-                self.wield_best_weapon()
+                self.wield_best_melee_weapon()
                 return False
 
             # TODO: consider using monster information to select the best combination
@@ -766,21 +766,6 @@ class Agent:
                         break
             else:
                 return False
-
-    def get_ranged_combinations(self, throwing=True):
-        launchers = [i for i in self.inventory.items if i.is_launcher()]
-        ammo_list = [i for i in self.inventory.items if i.is_fired_projectile()]
-        valid_combinations = []
-        for launcher in launchers:
-            for ammo in ammo_list:
-                if ammo.is_fired_projectile(launcher):
-                    valid_combinations.append((launcher, ammo))
-
-        best_melee_weapon = self.inventory.get_best_weapon()
-        if throwing:
-            valid_combinations.extend([(None, i) for i in self.inventory.items
-                                       if i.is_thrown_projectile() and not i == best_melee_weapon])
-        return valid_combinations
 
     def get_visible_monsters(self):
         """ Returns list of tuples (distance, y, x, monster)
@@ -851,7 +836,7 @@ class Agent:
             dis = self.bfs()
 
             if not monsters or all(dis > 7 for dis, *_ in monsters) or \
-                    (only_ranged_slow_monsters and not self.get_ranged_combinations() and np.sum(dis != -1) > 1):
+                    (only_ranged_slow_monsters and not self.inventory.get_ranged_combinations() and np.sum(dis != -1) > 1):
                 if wait_counter:
                     self.search()
                     wait_counter -= 1
@@ -909,7 +894,7 @@ class Agent:
         else:
             _, action_name, target_y, target_x, monster = best_action
             if action_name == 'melee':
-                if self.wield_best_weapon():
+                if self.wield_best_melee_weapon():
                     return wait_counter
                 with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
                                            [target_y, target_x]], color=(255, 0, 255), is_path=True):
@@ -920,20 +905,15 @@ class Agent:
                     wait_counter = 0
                     return wait_counter
             elif action_name == 'ranged':
-                valid_combinations = self.get_ranged_combinations()
-
-                # TODO: select best combination
-                if not valid_combinations:
-                    self.wield_best_weapon()
-                    return wait_counter
-
-                # TODO: consider using monster information to select the best combination
-                launcher, ammo = valid_combinations[0]
-
+                launcher, ammo = self.inventory.get_best_ranged_set()
+                assert ammo is not None
+                # if ammo is None:
+                #     assert len(self.inventory.get_ranged_combinations()) == 0
+                #     self.wield_best_melee_weapon()
+                #     return wait_counter
                 if launcher is not None and not launcher.equipped:
-                    self.inventory.wield(launcher)
-                    return wait_counter
-
+                    if self.inventory.wield(launcher):
+                        return wait_counter
                 with self.env.debug_tiles([[target_y, target_x]], (0, 0, 255, 255), mode='frame'):
                     dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
                                               allow_nonunit_distance=True)
@@ -1016,7 +996,7 @@ class Agent:
                            debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
                 continue
 
-            if self.wield_best_weapon():
+            if self.wield_best_melee_weapon():
                 continue
             try:
                 self.fight(y, x)

@@ -66,12 +66,12 @@ def draw_monster_priority_positive(agent, monster, priority, walkable):
             _draw_around(priority, y, x, 2, radius=1, operation='max')
             _draw_around(priority, y, x, 1, radius=2, operation='max')
     # elif mon.mname in COLD_MONSTERS:
-    #     if len(agent.get_ranged_combinations()):
+    #     if len(agent.inventory.get_ranged_combinations()):
     #         _draw_around(priority, y, x, 1, radius=2, operation='max')
     #     elif agent.blstats.hitpoints > 12:
     #         _draw_around(priority, y, x, 2, radius=1, operation='max')
     #         _draw_around(priority, y, x, 1, radius=2, operation='max')
-    elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.get_ranged_combinations():
+    elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.inventory.get_ranged_combinations():
         # ignore
         pass
     else:
@@ -97,14 +97,14 @@ def draw_monster_priority_negative(agent, monster, priority, walkable):
             and not mon.mname in ONLY_RANGED_SLOW_MONSTERS:
         # stay out of melee range
         _draw_around(priority, y, x, -10, radius=1)
-        if not len(agent.get_ranged_combinations()):
+        if not len(agent.inventory.get_ranged_combinations()):
             _draw_ranged(priority, y, x, -1, walkable, radius=6)
     elif 'mold' in mon.mname and mon.mname not in COLD_MONSTERS + ONLY_RANGED_SLOW_MONSTERS:
         # prioritize staying in ranged weapons line of fire
-        if len(agent.get_ranged_combinations()):
+        if len(agent.inventory.get_ranged_combinations()):
             _draw_ranged(priority, y, x, 2, walkable, radius=5)
     # elif mon.mname in COLD_MONSTERS:
-    #     if len(agent.get_ranged_combinations()):
+    #     if len(agent.inventory.get_ranged_combinations()):
     #         _draw_ranged(priority, y, x, 6, walkable, radius=5)
     #     elif agent.blstats.hitpoints < 20 or agent.blstats.hitpoints == agent.blstats.max_hitpoints:
 
@@ -113,16 +113,16 @@ def draw_monster_priority_negative(agent, monster, priority, walkable):
         # stay away
         _draw_around(priority, y, x, -10, radius=1)
         # prioritize staying in ranged weapons line of fire
-        if len(agent.get_ranged_combinations()):
+        if len(agent.inventory.get_ranged_combinations()):
             _draw_ranged(priority, y, x, 6, walkable, radius=5)
-    elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.get_ranged_combinations():
+    elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.inventory.get_ranged_combinations():
         # ignore
         pass
     else:
         if mon.mname not in WEAK_MONSTERS:
             # engage, but ensure striking first if possible
             _draw_around(priority, y, x, -9, radius=1)
-            if not len(agent.get_ranged_combinations()):
+            if not len(agent.inventory.get_ranged_combinations()):
                 _draw_ranged(priority, y, x, -1, walkable, radius=6)
 
 
@@ -155,7 +155,7 @@ def melee_monster_priority(agent, monsters, monster):
     #     ret -= 5
     if mon.mname in ONLY_RANGED_SLOW_MONSTERS:
         # ret -= 1
-        # if agent.get_ranged_combinations():
+        # if agent.inventory.get_ranged_combinations():
         #     ret -= 19
         ret -= 100
     return ret
@@ -166,23 +166,22 @@ def ranged_monster_priority(agent, y, x, mon):
     if not (agent.blstats.y == y or agent.blstats.x == x or abs(agent.blstats.y - y) == abs(agent.blstats.x - x)):
         return None
 
-    if max(abs(agent.blstats.x - x), abs(agent.blstats.y - y)) in (1, 2):
+    dis = max(abs(agent.blstats.x - x), abs(agent.blstats.y - y))
+    if dis in (1, 2):
         ret -= 5
-
-    if max(abs(agent.blstats.y - y), abs(agent.blstats.x - x)) == 1:
+    if dis == 1:
         ret -= 6
 
-    # TODO: check if there is a walkable path
-
-    ranged_combinations = agent.get_ranged_combinations()
-    if not ranged_combinations:
+    launcher, ammo = agent.inventory.get_best_ranged_set()
+    if ammo is None:
         return None
 
-    # TODO: select best
-    launcher, ammo = ranged_combinations[0]
+    if dis > agent.character.get_range(launcher, ammo):
+        return None
 
     if launcher is not None and not launcher.equipped:
         ret -= 5
+
 
     # search for obstacles along the line of shot
     assert y != agent.blstats.y or x != agent.blstats.x

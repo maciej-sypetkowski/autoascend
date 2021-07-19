@@ -269,11 +269,11 @@ class Visualizer:
 
             if render_start_time is not None:
                 self._dynamic_frame_skipping_render_time = \
-                        self._dynamic_frame_skipping_render_time * self._dynamic_frame_skipping_exp() + \
-                        render_time * (1 - self._dynamic_frame_skipping_exp())
+                    self._dynamic_frame_skipping_render_time * self._dynamic_frame_skipping_exp() + \
+                    render_time * (1 - self._dynamic_frame_skipping_exp())
             self._dynamic_frame_skipping_agent_time = \
-                    self._dynamic_frame_skipping_agent_time * self._dynamic_frame_skipping_exp() + \
-                    agent_time * (1 - self._dynamic_frame_skipping_exp())
+                self._dynamic_frame_skipping_agent_time * self._dynamic_frame_skipping_exp() + \
+                agent_time * (1 - self._dynamic_frame_skipping_exp())
 
         self._dynamic_frame_skipping_last_end_time = time.time()
 
@@ -290,7 +290,7 @@ class Visualizer:
             if self.frame_skipping is None:
                 # dynamic frame skipping
                 frame_skipping = self._dynamic_frame_skipping_render_time / self._dynamic_frame_skipping_agent_time / \
-                                self._dynamic_frame_skipping_threshold
+                                 self._dynamic_frame_skipping_threshold
                 if not self._force_next_frame and self.frame_counter <= frame_skipping:
                     return False
                 else:
@@ -348,8 +348,12 @@ class Visualizer:
 
         # game info
         i = 0
-        txt = f'Step: {self.env.step_count} | Level number: {self.env.agent.current_level().level_number}'
-        _put_text(ret, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+        txt = [f'Level number: {self.env.agent.current_level().level_number}',
+               f'Step: {self.env.step_count}',
+               f'Turn: {self.env.agent._last_turn}',
+               f'Score: {self.env.score}',
+               ]
+        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE), color=(255, 255, 255))
         i += 3
 
         # general character info
@@ -480,8 +484,18 @@ class Visualizer:
         }[item.status]
         _put_text(vis, str(letter), (0, 0))
         _put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)
+
         if item.modifier is not None:
             _put_text(vis, str(item.modifier), (FONT_SIZE * 2, 0))
+
+        best_launcher, best_ammo = self.env.agent.inventory.get_best_ranged_set()
+        best_melee = self.env.agent.inventory.get_best_melee_weapon()
+        if item == best_launcher:
+            _put_text(vis, 'L', (FONT_SIZE * 3, 0), color=(255, 255, 255))
+        if item == best_ammo:
+            _put_text(vis, 'A', (FONT_SIZE * 3, 0), color=(255, 255, 255))
+        if item == best_melee:
+            _put_text(vis, 'M', (FONT_SIZE * 3, 0), color=(255, 255, 255))
 
         if item.is_weapon():
             _put_text(vis, str(self.env.agent.character.get_melee_bonus(item)), (FONT_SIZE * 4, 0))
