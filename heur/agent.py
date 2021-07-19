@@ -15,6 +15,7 @@ from global_logic import GlobalLogic
 from glyph import MON, C, Hunger, G
 from item import Inventory, Item
 from level import Level
+from monster_tracker import MonsterTracker
 from strategy import Strategy
 
 BLStats = namedtuple('BLStats',
@@ -41,6 +42,7 @@ class Agent:
         self.character = Character(self)
         self.exploration = ExplorationLogic(self)
         self.global_logic = GlobalLogic(self)
+        self.monster_tracker = MonsterTracker(self)
 
         self.last_bfs_dis = None
         self.last_bfs_step = None
@@ -383,6 +385,7 @@ class Agent:
         try:
             # functions that are allowed to call state unchanging steps
             self.inventory.update()
+            self.monster_tracker.update()
             self.check_terrain(force=False)
             self.update_level()
 
@@ -636,7 +639,8 @@ class Agent:
 
         level = self.current_level()
 
-        walkable = level.walkable & ~utils.isin(self.glyphs, G.PEACEFUL_MONS, G.BOULDER) & \
+        walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
+                   ~self.monster_tracker.peaceful_monster_mask & \
                    ~utils.isin(level.objects, G.TRAPS)
 
         for my, mx in list(zip(*np.nonzero(utils.isin(self.glyphs, G.MONS)))):
@@ -721,7 +725,7 @@ class Agent:
                 if stop_one_before:
                     path = path[:-1]
                 for y, x in path:
-                    if self.glyphs[y, x] in G.PEACEFUL_MONS:
+                    if self.monster_tracker.peaceful_monster_mask[y, x]:
                         cont = True
                         break
                     if not self.current_level().walkable[y, x]:
@@ -786,8 +790,7 @@ class Agent:
         """ Returns list of tuples (distance, y, x, monster)
         """
         dis = self.bfs()
-        mask = utils.isin(self.glyphs, (G.MONS - G.PEACEFUL_MONS).union([nh.GLYPH_INVISIBLE]))
-        mask[self.blstats.y, self.blstats.x] = 0
+        mask = self.monster_tracker.monster_mask & ~self.monster_tracker.peaceful_monster_mask
         # mask &= dis != -1
         ret = []
         for y, x in zip(*mask.nonzero()):

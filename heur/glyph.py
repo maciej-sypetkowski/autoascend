@@ -417,7 +417,6 @@ class G:  # Glyphs
     MONS = set(MON.ALL_MONS)
     PETS = set(MON.ALL_PETS)
     INVISIBLE_MON = {nh.GLYPH_INVISIBLE}
-    PEACEFUL_MONS = {i + nh.GLYPH_MON_OFF for i in range(nh.NUMMONS) if nh.permonst(i).mflags2 & MON.M2_PEACEFUL}
 
     STATUES = {i + nh.GLYPH_STATUE_OFF for i in range(nh.NUMMONS)}
 
