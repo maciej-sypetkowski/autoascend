@@ -41,8 +41,8 @@ class ItemPriority(ItemPriorityBase):
             remaining_weight -= item.unit_weight() * (ret[item] - how_many_already)
 
         for allow_unknown_status in [False, True]:
-            item = self.agent.inventory.get_best_weapon(items=forced_items + items,
-                                                        allow_unknown_status=allow_unknown_status)
+            item = self.agent.inventory.get_best_melee_weapon(items=forced_items + items,
+                                                              allow_unknown_status=allow_unknown_status)
             if item is not None:
                 if item not in ret:
                     add_item(item)

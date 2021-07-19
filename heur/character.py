@@ -384,6 +384,32 @@ class Character:
             # TODO:
             return self.weapon_bonus[self.skill_levels[sub]]
 
+    def get_ranged_bonus(self, launcher, ammo, monster=None, large_monster=False):
+        # TODO: check code/wiki
+
+        if launcher is not None:
+            assert launcher.is_launcher()
+            assert ammo.is_fired_projectile()
+        else:
+            assert ammo.is_thrown_projectile()
+
+        roll_offset = 0
+        dmg_bonus = 0
+        if launcher is not None:
+            skill_hit_bonus, dmg_bonus = self._get_weapon_skill_bonus(launcher)
+            roll_offset += skill_hit_bonus
+            roll_offset += launcher.get_to_hit()
+            dmg_bonus += launcher.get_dmg(large_monster)
+
+        roll_offset += ammo.get_to_hit()
+        dmg_bonus += ammo.get_dmg(large_monster)
+
+        return roll_offset, max(0, dmg_bonus)
+
+    def get_range(self, launcher, ammo):
+        # TODO: implement
+        return 7
+
     def get_melee_bonus(self, item, monster=None, large_monster=False):
         """ Returns a pair (to_hit, damaga)
         https://github.com/facebookresearch/nle/blob/master/src/uhitm.c : find_roll_to_hit
@@ -467,8 +493,15 @@ class Character:
         roll_offset += skill_hit_bonus
 
         if item is not None:
+            if item.is_launcher() or item.is_fired_projectile() or item.objs[0].name in ['dart', 'shuriken']:
+                # TODO: rocks, boomerang
+                dmg_bonus = 1.5  # 1d2
+            else:
+                dmg_bonus += item.get_dmg(large_monster)
             roll_offset += item.get_to_hit()
-            dmg_bonus += item.get_dmg(large_monster)
+        else:
+            # TODO: proper unarmed base damage
+            dmg_bonus += 1.5
         return roll_offset, max(0, dmg_bonus)
 
     def get_skill_str_list(self):
