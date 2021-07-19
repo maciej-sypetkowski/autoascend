@@ -344,6 +344,10 @@ class MON: # monsters, pets
                 return nh.GLYPH_MON_OFF + i
         assert 0, name
 
+    @staticmethod
+    def body_from_name(name):
+        return MON.from_name(name) - nh.GLYPH_MON_OFF + nh.GLYPH_BODY_OFF
+
     fn = from_name
 
     ALL_MONS = [nh.GLYPH_MON_OFF + i for i in range(nh.NUMMONS)]
@@ -412,10 +416,10 @@ class G:  # Glyphs
 
     MONS = set(MON.ALL_MONS)
     PETS = set(MON.ALL_PETS)
+    INVISIBLE_MON = {nh.GLYPH_INVISIBLE}
+    PEACEFUL_MONS = {i + nh.GLYPH_MON_OFF for i in range(nh.NUMMONS) if nh.permonst(i).mflags2 & MON.M2_PEACEFUL}
 
     STATUES = {i + nh.GLYPH_STATUE_OFF for i in range(nh.NUMMONS)}
-
-    PEACEFUL_MONS = {i + nh.GLYPH_MON_OFF for i in range(nh.NUMMONS) if nh.permonst(i).mflags2 & MON.M2_PEACEFUL}
 
     BODIES = {nh.GLYPH_BODY_OFF + i for i in range(nh.NUMMONS)}
     OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) != nh.ROCK_CLASS}

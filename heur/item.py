@@ -259,7 +259,7 @@ class ItemManager:
         category = O.get_category(objs[0])
 
         if status == Item.UNKNOWN and (
-                self.agent.character == Character.PRIEST or
+                self.agent.character.role == Character.PRIEST or
                 (modifier is not None and category not in [nh.ARMOR_CLASS, nh.RING_CLASS])):
             # TODO; oc_charged, amulets of yendor
             status = Item.UNCURSED

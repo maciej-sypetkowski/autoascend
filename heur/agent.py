@@ -48,6 +48,7 @@ class Agent:
         self._previous_glyphs = None
         self._last_turn = -1
         self._inactivity_counter = 0
+        self._is_updating_state = False
 
         self._no_step_calls = False
 
@@ -375,15 +376,19 @@ class Agent:
             self.update_state()
 
     def update_state(self):
-        step = self.step_count
-        self.inventory.update()
-        if self.step_count != step:
+        if self._is_updating_state:
             return
+        self._is_updating_state = True
 
-        if self._last_terrain_check is None or self.blstats.time - self._last_terrain_check > 50:
-            self.check_terrain()
-        self.update_level()
-        self.call_update_functions()
+        try:
+            # functions that are allowed to call state unchanging steps
+            self.inventory.update()
+            self.check_terrain(force=False)
+            self.update_level()
+
+            self.call_update_functions()
+        finally:
+            self._is_updating_state = False
 
     def call_update_functions(self, funcs=None):
         if funcs is None:
@@ -476,13 +481,14 @@ class Agent:
 
     ######## TRIVIAL ACTIONS
 
-    def check_terrain(self):
-        self._last_terrain_check = self.blstats.time
-        with self.atom_operation():
-            self.type_text('#te')
-            self.step(A.MiscAction.MORE, iter('b'))
-            self.update_level()
-            self.step(A.Command.ESC)
+    def check_terrain(self, force):
+        if force or self._last_terrain_check is None or self.blstats.time - self._last_terrain_check > 50:
+            self._last_terrain_check = self.blstats.time
+            with self.atom_operation():
+                self.type_text('#te')
+                self.step(A.MiscAction.MORE, iter('b'))
+                self.update_level()
+                self.step(A.Command.ESC)
 
     def wield_best_weapon(self):
         # TODO: move to inventory
@@ -544,7 +550,7 @@ class Agent:
             self.step(A.Command.SEARCH)
             self.current_level().search_count[self.blstats.y, self.blstats.x] += 1
             if 'You find ' in self.message:
-                self.check_terrain()
+                self.check_terrain(force=True)
         return True
 
     def direction(self, y, x=None):
@@ -1029,7 +1035,9 @@ class Agent:
         else:
             flags = MON.M1_ACID | MON.M1_POIS
         editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags == 0]
-        mask = utils.isin(self.glyphs, editable_bodies) & (self.blstats.time - level.corpse_age <= 50)
+        mask = utils.isin(self.glyphs, editable_bodies) & \
+               ((self.blstats.time - level.corpse_age <= 50) |
+                utils.isin(self.glyphs, [MON.body_from_name('lizard'), MON.body_from_name('lichen')]))
         mask |= utils.isin(self.glyphs, G.FOOD_OBJECTS)
         mask &= ~level.shop
         if not mask.any():
@@ -1134,7 +1142,7 @@ class Agent:
 
                     self.step(A.Command.ESC)
                     self.step(A.Command.ESC)
-                    self.check_terrain()
+                    self.check_terrain(force=True)
 
                     last_step = self.step_count
 

@@ -226,7 +226,7 @@ class Visualizer:
                 cv2.waitKey(1)
             except KeyboardInterrupt:
                 pass
-            except ConnectionResetError:
+            except (ConnectionResetError, EOFError):
                 return
 
         cv2.destroyWindow(self._window_name)

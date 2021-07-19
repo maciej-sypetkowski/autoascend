@@ -177,17 +177,20 @@ class ExplorationLogic:
         return self.agent.go_to(y, x, *args, **kwargs)
 
     @Strategy.wrap
-    def search_neighbors_for_traps(self):
+    def search_neighbors_for_traps(self, offset=0):
         search_count = 0
         level = self.agent.current_level()
         for y, x in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, shuffle=False):
-            if level.was_on[y, x] or \
-                    level.objects[y, x] in G.TRAPS or \
-                    (self.agent.last_observation['specials'][y, x] & nh.MG_OBJPILE) == 0:
+            if level.was_on[y, x] or level.objects[y, x] in G.TRAPS:
+                continue
+            c = level.search_count[min(y - 1, 0) : y + 2, min(x - 1, 0) : x + 2].sum()
+
+            if (self.agent.last_observation['specials'][y, x] & nh.MG_OBJPILE) == 0:
+                search_count = max(search_count, offset - c)
                 continue
 
             c = level.search_count[min(y - 1, 0) : y + 2, min(x - 1, 0) : x + 2].sum()
-            search_count = max(search_count, 4 - c)
+            search_count = max(search_count, offset + 4 - c)
 
         if search_count == 0:
             yield False
@@ -197,7 +200,7 @@ class ExplorationLogic:
             self.agent.search()
 
     @utils.debug_log('explore1')
-    def explore1(self, search_prio_limit=0):
+    def explore1(self, search_prio_limit=0, open_doors=True, trap_search_offset=0):
         # TODO: refactor entire function
 
 
@@ -226,7 +229,7 @@ class ExplorationLogic:
                 for dx in [-1, 0, 1]:
                     if dy != 0 or dx != 0:
                         to_visit |= utils.translate(~level.seen & utils.isin(self.agent.glyphs, G.STONE), dy, dx)
-                        if dx == 0 or dy == 0:
+                        if dx == 0 or dy == 0 and open_doors:
                             to_visit |= utils.translate(utils.isin(self.agent.glyphs, G.DOOR_CLOSED), dy, dx)
             return to_visit
 
@@ -264,13 +267,14 @@ class ExplorationLogic:
         def open_visit_search(search_prio_limit):
             yielded = False
             while 1:
-                for py, px in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, diagonal=False, shuffle=False):
-                    if self.agent.glyphs[py, px] in G.DOOR_CLOSED:
-                        if not yielded:
-                            yielded = True
-                            yield True
-                        open_neighbor_doors()
-                        break
+                if open_doors:
+                    for py, px in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, diagonal=False, shuffle=False):
+                        if self.agent.glyphs[py, px] in G.DOOR_CLOSED:
+                            if not yielded:
+                                yielded = True
+                                yield True
+                            open_neighbor_doors()
+                            break
 
                 to_visit = to_visit_func()
                 to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)
@@ -334,6 +338,6 @@ class ExplorationLogic:
                 self.agent.inventory.gather_items(),
             ])
             .preempt(self.agent, [
-                self.search_neighbors_for_traps(),
+                self.search_neighbors_for_traps(trap_search_offset),
             ])
         )
