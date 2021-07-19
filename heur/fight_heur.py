@@ -209,11 +209,11 @@ def get_available_actions(agent, monsters):
         _, y, x, mon, _ = monster
         if utils.adjacent((y, x), (agent.blstats.y, agent.blstats.x)):
             priority = melee_monster_priority(agent, monsters, monster)
-            actions.append((priority, 'melee', y, x))
+            actions.append((priority, 'melee', y, x, monster))
 
         ranged_pr = ranged_monster_priority(agent, y, x, mon)
         if ranged_pr is not None:
-            actions.append((ranged_pr, 'ranged', y, x))
+            actions.append((ranged_pr, 'ranged', y, x, monster))
     return actions
 
 

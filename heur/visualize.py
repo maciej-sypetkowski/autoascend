@@ -9,7 +9,7 @@ import numpy as np
 
 MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
-RENDERS_HISTORY_SIZE = 64
+RENDERS_HISTORY_SIZE = 128
 
 
 def _put_text(img, text, pos, scale=FONT_SIZE / 35, thickness=1, color=(255, 255, 0), console=False):

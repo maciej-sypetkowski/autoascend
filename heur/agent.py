@@ -901,13 +901,16 @@ class Agent:
                 wait_counter = 5
                 return wait_counter
         else:
-            _, action_name, target_y, target_x = best_action
+            _, action_name, target_y, target_x, monster = best_action
             if action_name == 'melee':
                 if self.wield_best_weapon():
                     return wait_counter
                 with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
                                            [target_y, target_x]], color=(255, 0, 255), is_path=True):
-                    self.fight(target_y, target_x)
+                    try:
+                        self.fight(target_y, target_x)
+                    finally:
+                        self._track_hunted_corpse(monster, target_x, target_y)
                     wait_counter = 0
                     return wait_counter
             elif action_name == 'ranged':
@@ -928,11 +931,20 @@ class Agent:
                 with self.env.debug_tiles([[target_y, target_x]], (0, 0, 255, 255), mode='frame'):
                     dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
                                               allow_nonunit_distance=True)
-                    self.fire(ammo, dir)
+                    try:
+                        self.fire(ammo, dir)
+                    finally:
+                        self._track_hunted_corpse(monster, target_x, target_y)
                     return wait_counter
             else:
                 raise NotImplementedError()
         return wait_counter
+
+    def _track_hunted_corpse(self, monster, target_x, target_y):
+        _, _, _, _, mon_glyph = monster
+        if nh.glyph_is_body(self.glyphs[target_y, target_x]) \
+                and self.glyphs[target_y, target_x] - nh.GLYPH_BODY_OFF == nh.glyph_to_mon(mon_glyph):
+            self.current_level().corpse_age[target_y, target_x] = self.blstats.time
 
     @utils.debug_log('fight1')
     @Strategy.wrap

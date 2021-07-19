@@ -4,6 +4,7 @@ import pandas as pd
 
 
 def interesting_reason(txt):
+    return ('food' in txt or 'fainted' in txt or 'starved' in txt)
     return ('food' not in txt
             and 'shop' not in txt
             and 'falling rock' not in txt
@@ -29,7 +30,7 @@ def process(path='/tmp/nh_sim.json'):
     for row in df.itertuples():
         if interesting_reason(row.end_reason):
             print(row.seed[0], row.end_reason)
-            ret[row.seed[0]] = row.steps - 64
+            ret[row.seed[0]] = row.steps - 128
 
     with open('filtered.json', 'w') as f:
         json.dump(ret, f)
