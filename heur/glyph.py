@@ -394,6 +394,7 @@ class C:
 
 class G:  # Glyphs
     FLOOR: ['.'] = {SS.S_room, SS.S_ndoor, SS.S_darkroom}
+    VISIBLE_FLOOR: ['.'] = {SS.S_room}
     STONE: [' '] = {SS.S_stone}
     WALL: ['|', '-'] = {SS.S_vwall, SS.S_hwall, SS.S_tlcorn, SS.S_trcorn, SS.S_blcorn, SS.S_brcorn,
                         SS.S_crwall, SS.S_tuwall, SS.S_tdwall, SS.S_tlwall, SS.S_trwall}

@@ -683,7 +683,7 @@ class Agent:
 
     ######## NON-TRIVIAL ACTIONS
 
-    def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_tiles_args=None):
+    def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_tiles_args=None, callback=lambda: False):
         assert not stop_one_before or (self.blstats.y != y or self.blstats.x != x)
 
         if stop_one_before and self.bfs()[y, x] == -1:
@@ -699,6 +699,8 @@ class Agent:
 
         assert self.bfs()[y, x] != -1
 
+        if callback():
+            return
         steps_taken = 0
         cont = True
         while cont:
@@ -720,6 +722,8 @@ class Agent:
                         cont = True
                         break
                     self.move(y, x)
+                    if callback():
+                        return
                     steps_taken += 1
                     if max_steps is not None and steps_taken >= max_steps:
                         cont = False

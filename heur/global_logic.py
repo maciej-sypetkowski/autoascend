@@ -111,6 +111,38 @@ class GlobalLogic:
             yield False
         yield True
 
+        def push_bolder(ty, tx, dy, dx):
+            while 1:
+                self.agent.go_to(ty, tx, debug_tiles_args=dict(color=(255, 255, 255), is_path=True))
+                with self.agent.atom_operation():
+                    direction = self.agent.calc_direction(ty, tx, ty + dy, tx + dx)
+                    self.agent.direction(direction)
+                    message = self.agent.message
+
+                if (self.agent.blstats.y, self.agent.blstats.x) == (ty, tx):
+                    assert 'You hear a monster behind the boulder.' in message, message
+                    if self.agent.bfs()[ty + dy, tx + dx] != -1:
+                        self.agent.go_to(ty + dy, tx + dx, debug_tiles_args=dict(color=(255, 255, 255), is_path=True))
+                        continue
+                    else:
+                        pickaxe = None
+                        for item in self.agent.inventory.items:
+                            if item.is_ambiguous() and \
+                                    item.object in [O.from_name('pick-axe'), O.from_name('dwarvish mattock')]:
+                                pickaxe = item
+                                break
+                        if pickaxe is not None:
+                            with self.agent.atom_operation():
+                                self.agent.step(A.Command.APPLY)
+                                self.agent.type_text(self.agent.inventory.items.get_letter(pickaxe))
+                                self.agent.direction(direction)
+                            return
+                else:
+                    return
+
+            # TODO: not sure what to do
+            self.agent.exploration.explore(None).run()
+
         while 1:
             wall_map = utils.isin(self.agent.current_level().objects, G.WALL)
             for smap, answer in soko_solver.maps.items():
@@ -135,21 +167,40 @@ class GlobalLogic:
                 if self.agent.bfs()[ty, tx] != -1 and \
                         ((soko_boulder_mask | mask) == soko_boulder_mask).all() and \
                         self.agent.glyphs[ty + dy, tx + dx] in G.BOULDER:
-                    self.agent.go_to(ty, tx, debug_tiles_args=dict(color=(255, 255, 255), is_path=True))
-                    with self.agent.atom_operation():
-                        direction = self.agent.calc_direction(ty, tx, ty + dy, tx + dx)
-                        self.agent.direction(direction)
-                        if 'You hear a monster behind the boulder.' in self.agent.message:
-                            # TODO: go deal with that monster
-                            self.agent.exploration.explore1(None).run()
-                            # TODO: destroy bolder
-                            # TODO: do the same in last resort move
+
+                    soko_dis1 = sokomap.bfs()
+                    sokomap.move(y, x, dy, dx)
+                    soko_dis2 = sokomap.bfs()
+
+                    # see points that will no longer be accessible
+                    with self.agent.env.debug_log('checking for monsters'):
+                        to_visit_mask = self.agent.bfs() != -1
+                        to_visit_mask[offset[0] : offset[0] + sokomap.sokomap.shape[0],
+                                      offset[1] : offset[1] + sokomap.sokomap.shape[1]] &= \
+                                              (soko_dis1 != -1) & (soko_dis2 == -1)
+
+                        with self.agent.env.debug_tiles(to_visit_mask, color=(255, 0, 0, 128)):
+                            while to_visit_mask.any():
+                                vy, vx = list(zip(*to_visit_mask.nonzero()))[0]
+                                to_visit_mask[vy, vx] = 0
+
+                                def clear_neighbors():
+                                    to_visit_mask[self.agent.blstats.y, self.agent.blstats.x] = 0
+                                    to_visit_mask[utils.isin(self.agent.glyphs, G.VISIBLE_FLOOR)] = 0
+                                    return not to_visit_mask[vy, vx]
+
+                                self.agent.go_to(vy, vx, callback=clear_neighbors)
+
+                    push_bolder(ty, tx, dy, dx)
 
                     possible_mimics = set()
                     last_resort_move = None
 
                     if not utils.isin(self.agent.current_level().objects, G.TRAPS).any():
                         return
+
+                else:
+                    sokomap.move(y, x, dy, dx)
 
                 if (~soko_boulder_mask | mask).all():
                     if self.agent.bfs()[ty, tx] != -1 and \
@@ -161,7 +212,6 @@ class GlobalLogic:
                         for mim_y, mim_x in zip(*(~soko_boulder_mask & mask).nonzero()):
                             possible_mimics.add((mim_y + offset[0], mim_x + offset[1]))
 
-                sokomap.move(y, x, dy, dx)
 
             # sokoban configuration is not in the list. Check for mimics
             with self.agent.env.debug_log('mimics'):
@@ -177,8 +227,7 @@ class GlobalLogic:
             with self.agent.env.debug_log('last_resort'):
                 if last_resort_move is not None:
                     ty, tx, dy, dx = last_resort_move
-                    self.agent.go_to(ty, tx, debug_tiles_args=dict(color=(255, 255, 255), is_path=True))
-                    self.agent.move(ty + dy, tx + dx)
+                    push_bolder(ty, tx, dy, dx)
                     continue
 
             assert 0, 'sakomap unsolvable'

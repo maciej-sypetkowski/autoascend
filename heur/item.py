@@ -314,7 +314,7 @@ class ItemManager:
             r'([a-zA-z0-9-! ]+)'
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
             r'( \(([a-zA-Z0-9; ]+)\))?'
-            r'( \((for sale|unpaid), ((\d+) ?[a-zA-Z- ]+|no charge)\))?'
+            r'( \((for sale|unpaid), ((\d+)[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
         assert len(matches) <= 1, text
