@@ -132,12 +132,9 @@ class EnvWrapper:
                     with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0,
                                           color=(0, 255, 255, 128)):
                         self.visualizer.step(self.last_observation)
-                        self.visualizer.render()
+                        rendered = self.visualizer.render()
 
-            if self.visualizer.frame_counter % self.visualizer.frame_skipping != 0:
-                return
-
-            if not self.interactive:
+            if not self.interactive or not rendered:
                 return
 
             if self.agent is not None:
@@ -218,6 +215,7 @@ class EnvWrapper:
             if key == b'\x1b[15~':  # F5
                 fork_again = True
                 while fork_again:
+                    self.visualizer.close_window()
                     if (pid := fork_with_nethack_env(self.env)) != 0:
                         # parent
                         print('freezing parent')
@@ -227,6 +225,8 @@ class EnvWrapper:
                                 break
                             except KeyboardInterrupt:
                                 pass
+                        self.visualizer.create_window()
+                        self.visualizer.force_next_frame()
                         self.visualizer.render()
                         while 1:
                             try:
@@ -244,6 +244,9 @@ class EnvWrapper:
                         tty.setcbreak(sys.stdin.fileno())
                     else:
                         # child
+                        self.visualizer.create_window()
+                        self.visualizer.force_next_frame()
+                        self.visualizer.render()
                         break
                 continue
 
@@ -284,15 +287,12 @@ class EnvWrapper:
 
             if self.to_skip > 0:
                 self.to_skip -= 1
-                self.visualizer.frame_skipping = visualize.FAST_FRAME_SKIPPING
-                if not self.interactive:
-                    self.visualizer.frame_skipping = 1
+                if self.interactive and self.to_skip == 0:
+                    self.visualizer.force_next_frame()
                 action = None
             else:
-                old_frame_skipping = self.visualizer.frame_skipping
-                self.visualizer.frame_skipping = 1
-                if old_frame_skipping > 1:
-                    self.render()
+                self.visualizer.force_next_frame()
+                self.render()
                 action = self.get_action()
 
             if action is None:
@@ -333,9 +333,9 @@ class EnvWrapper:
         if done:
             if self.visualizer is not None:
                 self.render()
-                if self.interactive:
-                    print('Summary:')
-                    pprint(self.get_summary())
+            if self.interactive:
+                print('Summary:')
+                pprint(self.get_summary())
 
         return obs, reward, done, info
 
@@ -383,14 +383,13 @@ def prepare_env(args, seed, step_limit=None):
     visualizer_args = dict(enable=args.mode == 'run' or args.visualize_ends is not None,
                            start_visualize=args.visualize_ends[seed] if args.visualize_ends is not None else None,
                            show=args.mode == 'run',
-                           output_dir=Path('/workspace/vis/') / str(seed))
+                           output_dir=Path('/workspace/vis/') / str(seed),
+                           frame_skipping=None if args.visualize_ends is None else 1)
     env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=200),
                      to_skip=args.skip_to, visualizer_args=visualizer_args,
                      agent_args=dict(panic_on_errors=args.panic_on_errors,
                                      verbose=args.mode == 'run'),
                      interactive=args.mode == 'run')
-    if args.visualize_ends is not None:
-        env.visualizer.frame_skipping = 1
     env.env.seed(seed, seed)
     return env
 

@@ -1,4 +1,6 @@
 import queue
+import time
+from multiprocessing import Process, Queue
 
 import cv2
 import numpy as np
@@ -7,7 +9,6 @@ import numpy as np
 
 MSG_HISTORY_COUNT = 10
 FONT_SIZE = 32
-FAST_FRAME_SKIPPING = 64
 RENDERS_HISTORY_SIZE = 64
 
 
@@ -136,7 +137,7 @@ class DebugLogScope():
 class Visualizer:
 
     def __init__(self, env, tileset_path='/workspace/heur/tilesets/3.6.1tiles32.png', tile_size=32,
-                 start_visualize=None, show=False, output_dir=None):
+                 start_visualize=None, show=False, output_dir=None, frame_skipping=None):
         self.env = env
         self.tile_size = tile_size
         self._window_name = 'NetHackVis'
@@ -166,8 +167,6 @@ class Visualizer:
         if self.show:
             print('Read tileset of size:', self.tileset.shape)
 
-        self.create_window()
-
         self.message_history = list()
         self.popup_history = list()
 
@@ -175,8 +174,15 @@ class Visualizer:
         self.log_messages = list()
         self.log_messages_history = list()
 
-        self.frame_skipping = 1
+        self.frame_skipping = frame_skipping
         self.frame_counter = -1
+        self._force_next_frame = False
+        self._dynamic_frame_skipping_exp = lambda: min(0.95, 1 - 1 / (self.env.step_count + 1))
+        self._dynamic_frame_skipping_render_time = 0
+        self._dynamic_frame_skipping_agent_time = 1e-6
+        self._dynamic_frame_skipping_threshold = 0.3  # for render_time / agent_time
+        self._dynamic_frame_skipping_last_end_time = None
+        self.total_time = 0
 
         self.renders_history = None
         if not self.show:
@@ -185,13 +191,52 @@ class Visualizer:
             self.output_dir = output_dir
             self.output_dir.mkdir(exist_ok=True, parents=True)
 
+        self.create_window()
+
+    def _display_thread(self):
+        cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+
+        last_size = (None, None)
+        image = None
+        while 1:
+            is_new_image = False
+            while 1:
+                try:
+                    image = self._display_queue.get(timeout=0.03)
+                    is_new_image = True
+                except queue.Empty:
+                    break
+
+            if image is None:
+                image = self._display_queue.get()
+                is_new_image = True
+
+            width = cv2.getWindowImageRect(self._window_name)[2]
+            height = cv2.getWindowImageRect(self._window_name)[3]
+            ratio = min(width / image.shape[1], height / image.shape[0])
+            width, height = round(image.shape[1] * ratio), round(image.shape[0] * ratio)
+
+            if last_size != (width, height) or is_new_image:
+                last_size = (width, height)
+
+                resized_image = cv2.resize(image, (width, height), cv2.INTER_AREA)
+                cv2.imshow(self._window_name, resized_image)
+
+            cv2.waitKey(1)
+
+        cv2.destroyWindow(self._window_name)
+
     def create_window(self):
         if self.show:
-            cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+            self._display_queue = Queue()
+            self._display_process = None
+            self._display_process = Process(target=self._display_thread, daemon=False)
+            self._display_process.start()
 
     def close_window(self):
         if self.show:
-            cv2.destroyWindow(self._window_name)
+            self._display_process.terminate()
+            self._display_process.join()
 
     def debug_tiles(self, *args, **kwargs):
         return DrawTilesScope(self, *args, **kwargs)
@@ -205,39 +250,85 @@ class Visualizer:
         self._update_message_history()
         self._update_popup_history()
 
+    def force_next_frame(self):
+        self._force_next_frame = True
+
+    def _update_dynamic_frame_skipping(self, render_start_time):
+        if self._dynamic_frame_skipping_last_end_time is not None:
+            self.total_time += time.time() - self._dynamic_frame_skipping_last_end_time
+            if render_start_time is not None:
+                render_time = time.time() - render_start_time
+            else:
+                render_time = None
+            agent_time = time.time() - self._dynamic_frame_skipping_last_end_time - \
+                         (render_time if render_time is not None else 0)
+
+            if render_start_time is not None:
+                self._dynamic_frame_skipping_render_time = \
+                        self._dynamic_frame_skipping_render_time * self._dynamic_frame_skipping_exp() + \
+                        render_time * (1 - self._dynamic_frame_skipping_exp())
+            self._dynamic_frame_skipping_agent_time = \
+                    self._dynamic_frame_skipping_agent_time * self._dynamic_frame_skipping_exp() + \
+                    agent_time * (1 - self._dynamic_frame_skipping_exp())
+
+        self._dynamic_frame_skipping_last_end_time = time.time()
+
     def render(self):
         self.frame_counter += 1
+        render_start_time = None
 
-        if self.frame_counter % self.frame_skipping != 0:
-            return
+        try:
+            if not self._force_next_frame and self.frame_skipping is not None:
+                # static frame skipping
+                if self.frame_counter % self.frame_skipping != 0:
+                    return False
 
-        if self.last_obs is None:
-            return
+            if self.frame_skipping is None:
+                # dynamic frame skipping
+                frame_skipping = self._dynamic_frame_skipping_render_time / self._dynamic_frame_skipping_agent_time / \
+                                self._dynamic_frame_skipping_threshold
+                if not self._force_next_frame and self.frame_counter <= frame_skipping:
+                    return False
+                else:
+                    self.frame_counter = 0
 
-        if self.start_visualize is not None:
-            if self.env.step_count < self.start_visualize:
-                return
+            if self.last_obs is None:
+                return False
 
-        glyphs = self.last_obs['glyphs']
-        tiles_idx = self.glyph2tile[glyphs]
-        tiles = self.tileset[tiles_idx.reshape(-1)]
-        scene_vis = _draw_grid(tiles, glyphs.shape[1])
-        for drawer in self.drawers:
-            scene_vis = drawer(scene_vis)
-        _draw_frame(scene_vis)
-        topbar = self._draw_topbar(scene_vis.shape[1])
-        bottombar = self._draw_bottombar(scene_vis.shape[1])
+            if self.start_visualize is not None:
+                if self.env.step_count < self.start_visualize:
+                    return False
 
-        rendered = np.concatenate([topbar, scene_vis, bottombar], axis=0)
-        inventory = self._draw_inventory(rendered.shape[0])
-        rendered = np.concatenate([rendered, inventory], axis=1)
+            if self._force_next_frame:
+                self.frame_counter = 0
+            self._force_next_frame = False
 
-        if self.show:
-            cv2.imshow(self._window_name, rendered[..., ::-1])
-            cv2.waitKey(1)
+            render_start_time = time.time()
 
-        if self.renders_history is not None:
-            self.renders_history.append(rendered)
+            glyphs = self.last_obs['glyphs']
+            tiles_idx = self.glyph2tile[glyphs]
+            tiles = self.tileset[tiles_idx.reshape(-1)]
+            scene_vis = _draw_grid(tiles, glyphs.shape[1])
+            for drawer in self.drawers:
+                scene_vis = drawer(scene_vis)
+            _draw_frame(scene_vis)
+            topbar = self._draw_topbar(scene_vis.shape[1])
+            bottombar = self._draw_bottombar(scene_vis.shape[1])
+
+            rendered = np.concatenate([topbar, scene_vis, bottombar], axis=0)
+            inventory = self._draw_inventory(rendered.shape[0])
+            rendered = np.concatenate([rendered, inventory], axis=1)
+
+            if self.show:
+                self._display_queue.put(rendered[..., ::-1].copy())
+
+            if self.renders_history is not None:
+                self.renders_history.append(rendered)
+
+        finally:
+            self._update_dynamic_frame_skipping(render_start_time)
+
+        return True
 
     def _draw_bottombar(self, width):
         height = FONT_SIZE * len(self.last_obs['tty_chars'])
