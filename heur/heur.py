@@ -1,3 +1,4 @@
+import atexit
 import contextlib
 import gc
 import json
@@ -123,6 +124,41 @@ class EnvWrapper:
 
         return obs
 
+    def fork(self):
+        fork_again = True
+        while fork_again:
+            if (pid := fork_with_nethack_env(self.env)) != 0:
+                # parent
+                print('freezing parent')
+                while 1:
+                    try:
+                        os.waitpid(pid, 0)
+                        break
+                    except KeyboardInterrupt:
+                        pass
+                self.visualizer.force_next_frame()
+                self.visualizer.render()
+                while 1:
+                    try:
+                        fork_again = input('fork again [yn]: ')
+                        if fork_again == 'y':
+                            fork_again = True
+                            break
+                        elif fork_again == 'n':
+                            fork_again = False
+                            break
+                    except KeyboardInterrupt:
+                        pass
+
+                termios.tcgetattr(sys.stdin)
+                tty.setcbreak(sys.stdin.fileno())
+            else:
+                # child
+                atexit.unregister(multiprocessing.util._exit_function)
+                self.visualizer.force_next_frame()
+                self.visualizer.render()
+                break
+
     def render(self):
         if self.visualizer is not None:
             with self.debug_tiles(self.agent.current_level().walkable, color=(0, 255, 0, 128)) \
@@ -213,41 +249,7 @@ class EnvWrapper:
                 raise ReloadAgent()
 
             if key == b'\x1b[15~':  # F5
-                fork_again = True
-                while fork_again:
-                    self.visualizer.close_window()
-                    if (pid := fork_with_nethack_env(self.env)) != 0:
-                        # parent
-                        print('freezing parent')
-                        while 1:
-                            try:
-                                os.waitpid(pid, 0)
-                                break
-                            except KeyboardInterrupt:
-                                pass
-                        self.visualizer.create_window()
-                        self.visualizer.force_next_frame()
-                        self.visualizer.render()
-                        while 1:
-                            try:
-                                fork_again = input('fork again [yn]: ')
-                                if fork_again == 'y':
-                                    fork_again = True
-                                    break
-                                elif fork_again == 'n':
-                                    fork_again = False
-                                    break
-                            except KeyboardInterrupt:
-                                pass
-
-                        termios.tcgetattr(sys.stdin)
-                        tty.setcbreak(sys.stdin.fileno())
-                    else:
-                        # child
-                        self.visualizer.create_window()
-                        self.visualizer.force_next_frame()
-                        self.visualizer.render()
-                        break
+                self.fork()
                 continue
 
             elif key == b'\x1b[3~':  # Delete

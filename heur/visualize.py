@@ -1,6 +1,6 @@
+import multiprocessing
 import queue
 import time
-from multiprocessing import Process, Queue
 
 import cv2
 import numpy as np
@@ -191,7 +191,7 @@ class Visualizer:
             self.output_dir = output_dir
             self.output_dir.mkdir(exist_ok=True, parents=True)
 
-        self.create_window()
+        self.start_display_thread()
 
     def _display_thread(self):
         cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
@@ -200,40 +200,44 @@ class Visualizer:
         image = None
         while 1:
             is_new_image = False
-            while 1:
-                try:
-                    image = self._display_queue.get(timeout=0.03)
+            try:
+                while 1:
+                    try:
+                        image = self._display_queue.get(timeout=0.03)
+                        is_new_image = True
+                    except queue.Empty:
+                        break
+
+                if image is None:
+                    image = self._display_queue.get()
                     is_new_image = True
-                except queue.Empty:
-                    break
 
-            if image is None:
-                image = self._display_queue.get()
-                is_new_image = True
+                width = cv2.getWindowImageRect(self._window_name)[2]
+                height = cv2.getWindowImageRect(self._window_name)[3]
+                ratio = min(width / image.shape[1], height / image.shape[0])
+                width, height = round(image.shape[1] * ratio), round(image.shape[0] * ratio)
 
-            width = cv2.getWindowImageRect(self._window_name)[2]
-            height = cv2.getWindowImageRect(self._window_name)[3]
-            ratio = min(width / image.shape[1], height / image.shape[0])
-            width, height = round(image.shape[1] * ratio), round(image.shape[0] * ratio)
+                if last_size != (width, height) or is_new_image:
+                    last_size = (width, height)
 
-            if last_size != (width, height) or is_new_image:
-                last_size = (width, height)
+                    resized_image = cv2.resize(image, (width, height), cv2.INTER_AREA)
+                    cv2.imshow(self._window_name, resized_image)
 
-                resized_image = cv2.resize(image, (width, height), cv2.INTER_AREA)
-                cv2.imshow(self._window_name, resized_image)
-
-            cv2.waitKey(1)
+                cv2.waitKey(1)
+            except KeyboardInterrupt:
+                pass
+            except ConnectionResetError:
+                return
 
         cv2.destroyWindow(self._window_name)
 
-    def create_window(self):
+    def start_display_thread(self):
         if self.show:
-            self._display_queue = Queue()
-            self._display_process = None
-            self._display_process = Process(target=self._display_thread, daemon=False)
+            self._display_queue = multiprocessing.Manager().Queue()
+            self._display_process = multiprocessing.Process(target=self._display_thread, daemon=False)
             self._display_process.start()
 
-    def close_window(self):
+    def stop_display_thread(self):
         if self.show:
             self._display_process.terminate()
             self._display_process.join()
