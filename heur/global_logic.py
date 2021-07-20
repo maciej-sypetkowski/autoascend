@@ -73,13 +73,17 @@ class ItemPriority(ItemPriorityBase):
         for item in sorted(filter(lambda i: i.is_food(), items), key=lambda x: -x.nutrition_per_weight()):
             add_item(item)
 
+        # TODO: take nh.COIN_CLASS once shopping is implemented.
+        # You have to drop all coins not to be attacked by a vault guard
+
         for item in sorted(items, key=lambda i: i.unit_weight()):
             if item.category in [nh.POTION_CLASS, nh.RING_CLASS, nh.AMULET_CLASS, nh.WAND_CLASS, nh.SCROLL_CLASS,
-                                 nh.TOOL_CLASS, nh.COIN_CLASS]:
-                add_item(item)
+                                 nh.TOOL_CLASS]:
+                if not isinstance(item.objs[0], O.Container) or item.objs[0].desc is not None:
+                    add_item(item)
 
         categories = [nh.WEAPON_CLASS, nh.ARMOR_CLASS, nh.TOOL_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.AMULET_CLASS,
-                      nh.RING_CLASS, nh.COIN_CLASS, nh.POTION_CLASS, nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.WAND_CLASS]
+                      nh.RING_CLASS, nh.POTION_CLASS, nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.WAND_CLASS]
         for item in sorted(items, key=lambda i: i.unit_weight()):
             if item.category in categories and (not isinstance(item.objs[0], O.Container) or item.objs[0].desc is not None):
                 if item.status == Item.UNKNOWN:
@@ -300,6 +304,8 @@ class GlobalLogic:
         # TODO: refactor
         with self.agent.atom_operation():
             self.agent.step(A.Command.DIP)
+            if 'What do you want to dip ' in self.agent.message and 'into?' in self.agent.message:
+                raise AgentPanic('no fountain here')
             self.agent.type_text(self.agent.inventory.items.get_letter(candidate))
 
     @Strategy.wrap
@@ -322,7 +328,7 @@ class GlobalLogic:
         elif self.milestone == Milestone.SOLVE_SOKOBAN:
             level = (Level.SOKOBAN, 1)
         else:
-            assert 0, 'SOKOBAN SOLVED!!!'
+            level = (Level.GNOMISH_MINES, 10)
 
         exploration_strategy = (
             self.agent.exploration.explore1(None, trap_search_offset=1).preempt(self.agent, [

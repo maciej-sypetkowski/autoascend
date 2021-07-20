@@ -264,7 +264,13 @@ class Character:
             while self.upgradable_skills:
                 to_upgrade = self.select_skill_to_upgrade()
                 old_skill_level = self.skill_levels.copy()
-                self.agent.step(A.Command.ENHANCE, iter([self.upgradable_skills[to_upgrade]]))
+                letter = self.upgradable_skills[to_upgrade]
+                def type_letter():
+                    while f'{letter} - ' not in '\n'.join(self.agent.popup):
+                        yield A.TextCharacters.SPACE
+                    yield letter
+                self.agent.step(A.Command.ENHANCE, type_letter())
+
                 self.agent.step(A.Command.ENHANCE)
                 self._parse_enhance_view()
                 assert (old_skill_level != self.skill_levels).any(), (old_skill_level, self.skill_levels)
@@ -398,11 +404,11 @@ class Character:
         if launcher is not None:
             skill_hit_bonus, dmg_bonus = self._get_weapon_skill_bonus(launcher)
             roll_offset += skill_hit_bonus
-            roll_offset += launcher.get_to_hit()
-            dmg_bonus += launcher.get_dmg(large_monster)
+            roll_offset += launcher.get_weapon_bonus(large_monster)[0]
+            dmg_bonus += launcher.get_weapon_bonus(large_monster)[1]
 
-        roll_offset += ammo.get_to_hit()
-        dmg_bonus += ammo.get_dmg(large_monster)
+        roll_offset += ammo.get_weapon_bonus(large_monster)[0]
+        dmg_bonus += ammo.get_weapon_bonus(large_monster)[1]
 
         return roll_offset, max(0, dmg_bonus)
 
@@ -497,8 +503,8 @@ class Character:
                 # TODO: rocks, boomerang
                 dmg_bonus = 1.5  # 1d2
             else:
-                dmg_bonus += item.get_dmg(large_monster)
-            roll_offset += item.get_to_hit()
+                dmg_bonus += item.get_weapon_bonus(large_monster)[1]
+            roll_offset += item.get_weapon_bonus(large_monster)[0]
         else:
             # TODO: proper unarmed base damage
             dmg_bonus += 1.5

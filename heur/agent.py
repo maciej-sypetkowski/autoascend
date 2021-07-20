@@ -280,8 +280,10 @@ class Agent:
                 pref += line.strip()
 
                 # I'm not sure when the new line character in broken messages should be a space and when be ignored.
-                # '#' character occasionally occurs at the beginning of the broken line and isn't in the message.
-                if pref.replace(' ', '').replace('#', '') == message.replace(' ', '').replace('#', ''):
+                # '#' character (and others) occasionally occurs at the beginning of the broken line and isn't in
+                # the message. Sometimes the message on the screen lacks last '.'.
+                replace_func = lambda x: ''.join((c for c in x if c.isalnum()))
+                if replace_func(pref) == replace_func(message):
                     break
             else:
                 if marker_pos[0] == 0:
@@ -289,9 +291,6 @@ class Agent:
                     elems2 = [s for s in pref.split() if s]
                     assert len(elems1) < len(elems2) and elems2[-len(elems1):] == elems1, (elems1, elems2)
                     return message_preffix + pref, popup, False
-                if self.env.visualizer is not None:
-                    self.env.visualizer.frame_skipping = 1
-                    self.env.render()
                 raise ValueError(f"Message:\n{repr(message)}\ndoesn't match the screen:\n{repr(pref)}")
 
         # cut out popup
@@ -347,6 +346,11 @@ class Agent:
         self._message_history.append(self.message)
 
         if observation['misc'][1]:  # entering text
+            self.step(A.Command.ESC)
+            return
+
+        if 'Where do you want to be teleported?' in self.message:
+            # TODO: teleport control
             self.step(A.Command.ESC)
             return
 
@@ -420,14 +424,14 @@ class Agent:
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
 
+            mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS, G.STATUES)
+            level.seen[mask] = True
+            level.walkable[mask & ~utils.isin(level.objects, G.STONE)] = True
+
             mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS)
             level.seen[mask] = True
             level.objects[mask] = self.glyphs[mask]
             level.walkable[mask] = False
-
-            mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS, G.STATUES)
-            level.seen[mask] = True
-            level.walkable[mask & ~utils.isin(level.objects, G.STONE)] = True
 
             ignore_mask = utils.isin(self.glyphs, G.MONS, G.PETS)  # TODO: effects, etc
             item_mask = np.vectorize(len)(level.items) != 0
@@ -536,6 +540,7 @@ class Agent:
         return True
 
     def fire(self, item, direction):
+        # TODO: throwing is not possible if you don't have hands
         with self.atom_operation():
             self.step(A.Command.THROW)
             self.type_text(self.inventory.items.get_letter(item))

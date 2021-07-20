@@ -98,42 +98,35 @@ class Item:
     def is_weapon(self):
         return self.category == nh.WEAPON_CLASS
 
-    # TODO: refactor: merge get_to_hit and get_dmg to one function, add argument for melee, thrown
-
-    def get_dmg(self, large_monster):
+    def get_weapon_bonus(self, large_monster):
         assert self.is_weapon()
 
-        if self.is_fired_projectile() or self.is_launcher():
-            return 1.5  # 1d2
+        hits = []
+        dmgs = []
+        for weapon in self.objs:
+            dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
+            to_hit = 1 + weapon.hitbon
+            if self.modifier is not None:
+                dmg += max(0, self.modifier)
+                to_hit += self.modifier
 
-        weapon = self.object
+            dmg += 0 if self.dmg_bonus is None else self.dmg_bonus
+            to_hit += 0 if self.to_hit_bonus is None else self.to_hit_bonus
 
-        dmg = WEA.expected_damage(weapon.damage_large if large_monster else weapon.damage_small)
-        if self.modifier is not None and self.modifier > 0:
-            dmg += self.modifier
-        dmg += 0 if self.dmg_bonus is None else self.dmg_bonus
-        return dmg
+            dmgs.append(dmg)
+            hits.append(to_hit)
 
-    def get_to_hit(self):
-        assert self.is_weapon()
-
-        weapon = self.object
-
-        to_hit = 1
-        to_hit += weapon.hitbon
-        if self.modifier is not None:
-            to_hit += self.modifier
-        to_hit += 0 if self.to_hit_bonus is None else self.to_hit_bonus
-        return to_hit
+        # assume the worse
+        return min(hits), min(dmgs)
 
     def is_launcher(self):
-        if not self.is_weapon():
+        if not self.is_weapon() or not self.is_ambiguous():
             return False
 
         return self.object.name in ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
 
     def is_fired_projectile(self, launcher=None):
-        if not self.is_weapon():
+        if not self.is_weapon() or not self.is_ambiguous():
             return False
 
         arrows = ['arrow', 'elven arrow', 'orcish arrow', 'silver arrow', 'ya']
@@ -152,7 +145,7 @@ class Item:
                 return self.object.name in arrows
 
     def is_thrown_projectile(self):
-        if not self.is_weapon():
+        if not self.is_weapon() or not self.is_ambiguous():
             return False
 
         # TODO: boomerang
@@ -311,16 +304,16 @@ class ItemManager:
             r'( (cursed|uncursed|blessed))?'
             r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used))*'
             r'( ([+-]\d+))? '
-            r'([a-zA-z0-9-! ]+)'
+            r"([a-zA-z0-9-!' ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
             r'( \(([a-zA-Z0-9; ]+)\))?'
-            r'( \((for sale|unpaid), ((\d+)[a-zA-Z- ]+|no charge)\))?'
+            r'( \((for sale|unpaid), (\d+ aum, )?((\d+)[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
         assert len(matches) <= 1, text
         assert len(matches), text
 
-        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, _, shop_price = matches[0]
+        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, _, _, shop_price = matches[0]
         # TODO: effects, uses
 
         if info in {'being worn', 'being worn; slippery', 'wielded'} or info.startswith('weapon in ') or \
@@ -330,7 +323,7 @@ class ItemManager:
         elif info in {'at the ready', 'in quiver', 'in quiver pouch', 'lit'}:
             equipped = False
             at_ready = True
-        elif info in {'', 'alternate weapon; not wielded'}:
+        elif info in {'', 'alternate weapon; not wielded', 'alternate weapon; notwielded'}:
             equipped = False
             at_ready = False
         else:
@@ -381,8 +374,12 @@ class ItemManager:
                 mon_name = mon_name[3:]
             monster_id = nh.glyph_to_mon(MON.from_name(mon_name))
             name = 'corpse'
-        elif name.startswith('statue of ') or name.startswith('statues of '):
-            mon_name = name[len('statue of '):].strip()
+        elif name.startswith('statue of ') or name.startswith('statues of ') or \
+                name.startswith('historic statue of ') or name.startswith('historic statues of '):
+            if name.startswith('historic'):
+                mon_name = name[len('historic statue of '):].strip()
+            else:
+                mon_name = name[len('statue of '):].strip()
             if mon_name.startswith('a '):
                 mon_name = mon_name[2:]
             if mon_name.startswith('an '):
@@ -782,7 +779,7 @@ class Inventory:
                 return False
             assert re.search(r'(You secure the tether\.  )?([a-zA-z] - |welds?( itself| themselves| ) to|'
                              r'You are already wielding that|You are empty handed|You are already empty handed)', \
-                             self.agent.message), self.agent.message
+                             self.agent.message), (self.agent.message, self.agent.popup)
 
         return True
 
@@ -900,6 +897,7 @@ class Inventory:
                 return items
 
     def pickup(self, items, counts=None):
+        # TODO: if polyphormed, sometimes 'You are physically incapable of picking anything up.'
         if isinstance(items, Item):
             items = [items]
             if counts is not None:
@@ -935,7 +933,9 @@ class Inventory:
                     'Continue?' in self.agent.message:
                 self.agent.type_text('y')
             if one_item and drop_count:
-                letter = re.search('([a-zA-Z]) - ', self.agent.message)[1]
+                letter = re.search(r'([a-zA-Z$]) - ', self.agent.message)
+                assert letter is not None, self.agent.message
+                letter = letter[1]
 
         if one_item and drop_count:
             self.drop(self.items.all_items[self.items.all_letters.index(letter)], drop_count)
