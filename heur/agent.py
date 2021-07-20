@@ -589,7 +589,7 @@ class Agent:
         expected_x = self.blstats.x + ('e' in dir) - ('w' in dir)
 
         if (expected_y != self.blstats.y or expected_x != self.blstats.x) \
-                and self.glyphs[expected_y, expected_x] in MON.ALL_MONS:
+                and self.monster_tracker.monster_mask[expected_y, expected_x]:
             # TODO: consider handling it in different way, since this situation is sometimes expected
             raise AgentPanic(f'Monster on a next tile when moving: ({expected_y},{expected_x})')
 
