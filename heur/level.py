@@ -31,6 +31,7 @@ class Level:
         self.item_disagreement_counter = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
         self.items = np.empty((C.SIZE_Y, C.SIZE_X), dtype=object)
         self.items.fill([])
+        self.item_count = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=np.int32)
 
         self.stair_destination = {}  # {(y, x) -> ((dungeon, level), (y, x))}
 

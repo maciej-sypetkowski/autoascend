@@ -8,9 +8,9 @@ import utils
 from glyph import C, G
 
 
-@nb.njit(cache=True)
+@nb.njit('optional(b1[:,:])(i2[:,:],i2[:,:],i2[:,:],i4)', cache=True)
 def figure_out_monster_movement(peaceful_mons, aggressive_mons, new_mons, max_radius):
-    ret_peaceful_mons = np.zeros_like(peaceful_mons)
+    ret_peaceful_mons = np.zeros_like(peaceful_mons, dtype=nb.b1)
     for y in range(new_mons.shape[0]):
         for x in range(new_mons.shape[1]):
             glyph = new_mons[y, x]
@@ -71,11 +71,11 @@ class MonsterTracker:
             new_peaceful_mons = None
         else:
             pea_mon = self._last_glyphs.copy()
-            pea_mon[(~self.peaceful_monster_mask).nonzero()] = -1
+            pea_mon[~self.peaceful_monster_mask] = -1
             agr_mon = self._last_glyphs.copy()
-            agr_mon[(~self.monster_mask | self.peaceful_monster_mask).nonzero()] = -1
+            agr_mon[~self.monster_mask | self.peaceful_monster_mask] = -1
             new_mon = self._last_glyphs.copy()
-            new_mon[(~new_monster_mask).nonzero()] = -1
+            new_mon[~new_monster_mask] = -1
             new_peaceful_mons = figure_out_monster_movement(pea_mon, agr_mon, new_mon, max_radius=2)
 
         self.monster_mask = new_monster_mask

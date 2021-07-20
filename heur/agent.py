@@ -223,31 +223,32 @@ class Agent:
 
     def on_panic(self):
         self.inventory.on_panic()
+        # TODO: monster_tracker panic
+
+    @staticmethod
+    def _find_marker(lines, regex=re.compile(r"(--More--|\(end\)|\(\d+ of \d+\))")):
+        """ Return (line, column) of markers:
+        --More-- | (end) | (X of N)
+        """
+        if len(regex.findall(' '.join(lines))) > 1:
+            raise ValueError('Too many markers')
+
+        result, marker_type = None, None
+        for i, line in enumerate(lines):
+            res = regex.findall(line)
+            if res:
+                assert len(res) == 1
+                j = line.find(res[0])
+                result, marker_type = (i, j), res[0]
+                break
+
+        if result is not None and result[1] == 1:
+            result = (result[0], 0)  # e.g. for known items view
+        return result, marker_type
 
     def get_message_and_popup(self, obs):
         """ Uses MORE action to get full popup and/or message.
         """
-
-        def find_marker(lines):
-            """ Return (line, column) of markers:
-            --More-- | (end) | (X of N)
-            """
-            regex = r"(--More--|\(end\)|\(\d+ of \d+\))"
-            if len(re.findall(regex, ' '.join(lines))) > 1:
-                raise ValueError('Too many markers')
-
-            result, marker_type = None, None
-            for i, line in enumerate(lines):
-                res = re.findall(regex, line)
-                if res:
-                    assert len(res) == 1
-                    j = line.find(res[0])
-                    result, marker_type = (i, j), res[0]
-                    break
-
-            if result is not None and result[1] == 1:
-                result = (result[0], 0)  # e.g. for known items view
-            return result, marker_type
 
         message = bytes(obs['message']).decode().replace('\0', ' ').replace('\n', '').strip()
         if message.endswith('--More--'):
@@ -265,7 +266,7 @@ class Agent:
             popup = []
 
         lines = [bytes(line).decode().replace('\0', ' ').replace('\n', '') for line in obs['tty_chars']]
-        marker_pos, marker_type = find_marker(lines)
+        marker_pos, marker_type = self._find_marker(lines)
 
         if marker_pos is None:
             return message_preffix + message, popup, True
@@ -406,6 +407,26 @@ class Agent:
             for func in funcs:
                 func()
 
+    def _update_items_on_level(self):
+        # TODO: optimize
+        level = self.current_level()
+        ignore_mask = utils.isin(self.glyphs, G.MONS, G.PETS)  # TODO: effects, etc
+        item_mask = level.item_count != 0
+        mask = item_mask & ~ignore_mask
+        level.item_disagreement_counter[~mask] = 0
+        for y, x in zip(*mask.nonzero()):
+            if (level.item_count[y, x] >= 2) == ((self.last_observation['specials'][y, x] & nh.MG_OBJPILE) > 0):
+                glyphs = (glyph for item in level.items[y, x] for glyph in item.display_glyphs())
+                if self.glyphs[y, x] in glyphs:
+                    level.item_disagreement_counter[y, x] = 0
+                    continue
+
+            level.item_disagreement_counter[y, x] += 1
+            if level.item_disagreement_counter[y, x] > 2:
+                level.item_disagreement_counter[y, x] = 0
+                level.items[y, x] = ()
+                level.item_count[y, x] = 0
+
     def update_level(self):
         # this function shouldn't rely self.message and self.popup (because some update functions
         # can call a few steps and change it)
@@ -433,23 +454,11 @@ class Agent:
             level.objects[mask] = self.glyphs[mask]
             level.walkable[mask] = False
 
-            ignore_mask = utils.isin(self.glyphs, G.MONS, G.PETS)  # TODO: effects, etc
-            item_mask = np.vectorize(len)(level.items) != 0
-            mask = item_mask & ~ignore_mask
-            level.item_disagreement_counter[~mask] = 0
-            for y, x in zip(*mask.nonzero()):
-                if (len(level.items[y, x]) >= 2) == ((self.last_observation['specials'][y, x] & nh.MG_OBJPILE) > 0):
-                    glyphs = np.unique([glyph for item in level.items[y, x] for glyph in item.display_glyphs()])
-                    if self.glyphs[y, x] in glyphs:
-                        level.item_disagreement_counter[y, x] = 0
-                        continue
+            self._update_items_on_level()
 
-                level.item_disagreement_counter[y, x] += 1
-                if level.item_disagreement_counter[y, x] > 3:
-                    level.item_disagreement_counter[y, x] = 0
-                    level.items[y, x] = ()
 
         level.items[self.blstats.y, self.blstats.x] = self.inventory.items_below_me
+        level.item_count[self.blstats.y, self.blstats.x] = len(self.inventory.items_below_me)
 
         level.was_on[self.blstats.y, self.blstats.x] = True
 
@@ -779,9 +788,11 @@ class Agent:
     def get_visible_monsters(self):
         """ Returns list of tuples (distance, y, x, monster)
         """
-        dis = self.bfs()
         mask = self.monster_tracker.monster_mask & ~self.monster_tracker.peaceful_monster_mask
-        # mask &= dis != -1
+        if not mask.any():
+            return []
+
+        dis = self.bfs()
         ret = []
         for y, x in zip(*mask.nonzero()):
             if (dis[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2] != -1).any():

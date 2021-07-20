@@ -1,3 +1,4 @@
+import functools
 from functools import partial, wraps
 from itertools import chain
 
@@ -38,8 +39,11 @@ def bfs(y, x, *, walkable, walkable_diagonally, can_squeeze):
     return dis
 
 
-def translate(array, y_offset, x_offset):
-    ret = np.zeros_like(array)
+def translate(array, y_offset, x_offset, out=None):
+    if out is None:
+        out = np.zeros_like(array)
+    else:
+        out.fill(0)
 
     if y_offset > 0:
         array = array[:-y_offset]
@@ -51,13 +55,56 @@ def translate(array, y_offset, x_offset):
         array = array[:, -x_offset:]
 
     sy, sx = max(y_offset, 0), max(x_offset, 0)
-    ret[sy: sy + array.shape[0], sx: sx + array.shape[1]] = array
+    out[sy: sy + array.shape[0], sx: sx + array.shape[1]] = array
+    return out
+
+
+@nb.njit('b1[:,:](i2[:,:],i2,i2,b1[:])', cache=True)
+def _isin_kernel(array, mi, ma, mask):
+    ret = np.zeros(array.shape, dtype=nb.b1)
+    for y in range(array.shape[0]):
+        for x in range(array.shape[1]):
+            if array[y, x] < mi or array[y, x] > ma:
+                continue
+            ret[y, x] = mask[array[y, x] - mi]
     return ret
 
 
+@functools.lru_cache(1024)
+def _isin_mask(elems):
+    elems = np.array(list(chain(*elems)), np.int16)
+    return _isin_mask_kernel(elems)
+
+
+@nb.njit('Tuple((i2,i2,b1[:]))(i2[:])', cache=True)
+def _isin_mask_kernel(elems):
+    mi : i2 = 32767
+    ma : i2 = -32768
+    for i in range(elems.shape[0]):
+        if mi > elems[i]:
+            mi = elems[i]
+        if ma < elems[i]:
+            ma = elems[i]
+    ret = np.zeros(ma - mi + 1, dtype=nb.b1)
+    for i in range(elems.shape[0]):
+        ret[elems[i] - mi] = True
+    return mi, ma, ret
+
+
 def isin(array, *elems):
-    elems = list(chain(*elems))
-    return np.isin(array, elems)
+    assert array.dtype == np.int16
+
+    # for memoization
+    elems = tuple((
+        e               if isinstance(e, tuple)     else
+        e               if isinstance(e, frozenset) else
+        tuple(e)        if isinstance(e, list)      else
+        frozenset(e)    if isinstance(e, set)       else
+        e
+        for e in elems))
+
+    mi, ma, mask = _isin_mask(elems)
+    return _isin_kernel(array, mi, ma, mask)
 
 
 @toolz.curry
@@ -94,7 +141,7 @@ def adjacent(p1, p2):
 
 
 def calc_dps(to_hit, damage):
-    return damage * np.clip((to_hit - 1), 0, 20) / 20
+    return damage * min(20, max(0, (to_hit - 1))) / 20
 
 @Strategy.wrap
 def assert_strategy(error=None):

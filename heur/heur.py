@@ -498,7 +498,7 @@ def run_profiling(args):
             ret_frames = []
             for frame in record[0][1:][::-1]:
                 func, module, line = frame.split('\0')
-                if func in ['f', 'f2', 'run']:
+                if func in ['f', 'f2', 'run', 'wrapper']:
                     continue
                 ret_frames.append(frame)
                 if module.endswith('agent.py') and func in ['step', 'preempt', 'call_update_functions']:
@@ -514,12 +514,14 @@ def run_profiling(args):
 
         new_records = []
         for record in frame_records:
+            ret_frames = []
             for frame in record[0][1:][::-1]:
                 func, module, line = frame.split('\0')
+                ret_frames.append(frame)
                 if str(Path(module).absolute()).startswith(str(Path(__file__).parent.absolute())):
                     break
-            new_records.append([[frame], record[1] / session.duration * 100])
-            new_records[-1][0] = record[0][:1] + new_records[-1][0]
+            ret_frames.append(record[0][0])
+            new_records.append((ret_frames[::-1], record[1] / session.duration * 100))
         session.frame_records = new_records
         session.start_call_stack = [session.start_call_stack[0]]
 

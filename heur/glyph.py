@@ -321,6 +321,7 @@ class MON: # monsters, pets
         return nh.glyph_is_pet(glyph)
 
     @staticmethod
+    @functools.lru_cache(nh.NUMMONS * 10)
     def permonst(glyph):
         if nh.glyph_is_monster(glyph):
             return nh.permonst(nh.glyph_to_mon(glyph))
@@ -397,40 +398,44 @@ class C:
 
 
 class G:  # Glyphs
-    FLOOR: ['.'] = {SS.S_room, SS.S_ndoor, SS.S_darkroom}
-    VISIBLE_FLOOR: ['.'] = {SS.S_room}
-    STONE: [' '] = {SS.S_stone}
-    WALL: ['|', '-'] = {SS.S_vwall, SS.S_hwall, SS.S_tlcorn, SS.S_trcorn, SS.S_blcorn, SS.S_brcorn,
-                        SS.S_crwall, SS.S_tuwall, SS.S_tdwall, SS.S_tlwall, SS.S_trwall}
-    CORRIDOR: ['#'] = {SS.S_corr}
-    STAIR_UP: ['<'] = {SS.S_upstair}
-    STAIR_DOWN: ['>'] = {SS.S_dnstair}
-    ALTAR: ['_'] = {SS.S_altar}
-    FOUNTAIN = {SS.S_fountain}
+    FLOOR: ['.'] = frozenset({SS.S_room, SS.S_ndoor, SS.S_darkroom})
+    VISIBLE_FLOOR: ['.'] = frozenset({SS.S_room})
+    STONE: [' '] = frozenset({SS.S_stone})
+    WALL: ['|', '-'] = frozenset({SS.S_vwall, SS.S_hwall, SS.S_tlcorn, SS.S_trcorn, SS.S_blcorn, SS.S_brcorn,
+                                  SS.S_crwall, SS.S_tuwall, SS.S_tdwall, SS.S_tlwall, SS.S_trwall})
+    CORRIDOR: ['#'] = frozenset({SS.S_corr})
+    STAIR_UP: ['<'] = frozenset({SS.S_upstair})
+    STAIR_DOWN: ['>'] = frozenset({SS.S_dnstair})
+    ALTAR: ['_'] = frozenset({SS.S_altar})
+    FOUNTAIN = frozenset({SS.S_fountain})
 
-    DOOR_CLOSED: ['+'] = {SS.S_vcdoor, SS.S_hcdoor}
-    DOOR_OPENED: ['-', '|'] = {SS.S_vodoor, SS.S_hodoor}
-    DOORS = set.union(DOOR_CLOSED, DOOR_OPENED)
+    DOOR_CLOSED: ['+'] = frozenset({SS.S_vcdoor, SS.S_hcdoor})
+    DOOR_OPENED: ['-', '|'] = frozenset({SS.S_vodoor, SS.S_hodoor})
+    DOORS = frozenset.union(DOOR_CLOSED, DOOR_OPENED)
 
-    BARS = {SS.S_bars}
+    BARS = frozenset({SS.S_bars})
 
-    MONS = set(MON.ALL_MONS)
-    PETS = set(MON.ALL_PETS)
-    INVISIBLE_MON = {nh.GLYPH_INVISIBLE}
+    MONS = frozenset(MON.ALL_MONS)
+    PETS = frozenset(MON.ALL_PETS)
+    INVISIBLE_MON = frozenset({nh.GLYPH_INVISIBLE})
 
-    STATUES = {i + nh.GLYPH_STATUE_OFF for i in range(nh.NUMMONS)}
+    STATUES = frozenset({i + nh.GLYPH_STATUE_OFF for i in range(nh.NUMMONS)})
 
-    BODIES = {nh.GLYPH_BODY_OFF + i for i in range(nh.NUMMONS)}
-    OBJECTS = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) != nh.ROCK_CLASS}
-    BOULDER = {nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS) if ord(nh.objclass(i).oc_class) == nh.ROCK_CLASS}
+    BODIES = frozenset({nh.GLYPH_BODY_OFF + i for i in range(nh.NUMMONS)})
+    OBJECTS = frozenset({nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS)
+                         if ord(nh.objclass(i).oc_class) != nh.ROCK_CLASS})
+    BOULDER = frozenset({nh.GLYPH_OBJ_OFF + i for i in range(nh.NUM_OBJECTS)
+                         if ord(nh.objclass(i).oc_class) == nh.ROCK_CLASS})
 
-    NORMAL_OBJECTS = {i for i in range(nh.MAX_GLYPH) if nh.glyph_is_normal_object(i)}
-    FOOD_OBJECTS = {i for i in NORMAL_OBJECTS if ord(nh.objclass(nh.glyph_to_obj(i)).oc_class) == nh.FOOD_CLASS}
+    NORMAL_OBJECTS = frozenset({i for i in range(nh.MAX_GLYPH) if nh.glyph_is_normal_object(i)})
+    FOOD_OBJECTS = frozenset({i for i in NORMAL_OBJECTS
+                              if ord(nh.objclass(nh.glyph_to_obj(i)).oc_class) == nh.FOOD_CLASS})
 
-    TRAPS = {SS.S_arrow_trap, SS.S_dart_trap, SS.S_falling_rock_trap, SS.S_squeaky_board, SS.S_bear_trap,
-             SS.S_land_mine, SS.S_rolling_boulder_trap, SS.S_sleeping_gas_trap, SS.S_rust_trap, SS.S_fire_trap,
-             SS.S_pit, SS.S_spiked_pit, SS.S_hole, SS.S_trap_door, SS.S_teleportation_trap, SS.S_level_teleporter,
-             SS.S_magic_portal, SS.S_web, SS.S_statue_trap, SS.S_magic_trap, SS.S_anti_magic_trap, SS.S_polymorph_trap}
+    TRAPS = frozenset({SS.S_arrow_trap, SS.S_dart_trap, SS.S_falling_rock_trap, SS.S_squeaky_board, SS.S_bear_trap,
+                       SS.S_land_mine, SS.S_rolling_boulder_trap, SS.S_sleeping_gas_trap, SS.S_rust_trap,
+                       SS.S_fire_trap, SS.S_pit, SS.S_spiked_pit, SS.S_hole, SS.S_trap_door, SS.S_teleportation_trap,
+                       SS.S_level_teleporter, SS.S_magic_portal, SS.S_web, SS.S_statue_trap, SS.S_magic_trap,
+                       SS.S_anti_magic_trap, SS.S_polymorph_trap})
 
     DICT = {k: v for k, v in locals().items() if not k.startswith('_')}
 

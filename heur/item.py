@@ -689,7 +689,6 @@ class Inventory:
         self.items = InventoryItems(self.agent)
 
         self._previous_blstats = None
-        self._stop_updating = False
         self.items_below_me = None
         self.letters_below_me = None
 
@@ -703,8 +702,6 @@ class Inventory:
     def update(self):
         self.item_manager.update()
         self.items.update()
-        if self._stop_updating:
-            return
 
         if self._previous_blstats is None or \
                 (self._previous_blstats.y, self._previous_blstats.x, \
@@ -718,11 +715,7 @@ class Inventory:
             self.items_below_me = None
             self.letters_below_me = None
 
-            try:
-                self._stop_updating = True
-                self.get_items_below_me(assume_appropriate_message=assume_appropriate_message)
-            finally:
-                self._stop_updating = False
+            self.get_items_below_me(assume_appropriate_message=assume_appropriate_message)
 
         assert self.items_below_me is not None and self.letters_below_me is not None
 
@@ -1153,7 +1146,7 @@ class Inventory:
         if not mask.any():
             yield False
 
-        mask[mask] = np.vectorize(len)(self.agent.current_level().items[mask]) == 0
+        mask[mask] = self.agent.current_level().item_count[mask] == 0
         if not mask.any():
             yield False
         yield True
@@ -1175,7 +1168,7 @@ class Inventory:
         if not mask.any():
             yield False
 
-        mask[mask] = np.vectorize(len)(self.agent.current_level().items[mask]) != 0
+        mask[mask] = self.agent.current_level().item_count[mask] != 0
 
         items = {}
         for y, x in sorted(zip(*mask.nonzero()), key=lambda p: dis[p]):

@@ -225,12 +225,14 @@ class ExplorationLogic:
         def to_visit_func():
             level = self.agent.current_level()
             to_visit = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
+
+            tmp = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     if dy != 0 or dx != 0:
-                        to_visit |= utils.translate(~level.seen & utils.isin(self.agent.glyphs, G.STONE), dy, dx)
+                        to_visit |= utils.translate(~level.seen & utils.isin(self.agent.glyphs, G.STONE), dy, dx, out=tmp)
                         if dx == 0 or dy == 0 and open_doors:
-                            to_visit |= utils.translate(utils.isin(self.agent.glyphs, G.DOOR_CLOSED), dy, dx)
+                            to_visit |= utils.translate(utils.isin(self.agent.glyphs, G.DOOR_CLOSED), dy, dx, out=tmp)
             return to_visit
 
         def to_search_func(prio_limit=0, return_prio=False):
@@ -246,14 +248,15 @@ class ExplorationLogic:
             stones = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
             walls = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32)
 
+            tmp = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=self.agent.glyphs.dtype)
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     if dy != 0 or dx != 0:
-                        stones += utils.isin(utils.translate(level.objects, dy, dx), G.STONE)
-                        walls += utils.isin(utils.translate(level.objects, dy, dx), G.WALL)
+                        stones += utils.isin(utils.translate(level.objects, dy, dx, out=tmp), G.STONE)
+                        walls += utils.isin(utils.translate(level.objects, dy, dx, out=tmp), G.WALL)
 
             prio += (is_on_door & (stones > 3)) * 250
-            prio += (np.stack([utils.translate(level.walkable, y, x).astype(np.int32)
+            prio += (np.stack([utils.translate(level.walkable, y, x, out=tmp).astype(np.int32)
                                for y, x in [(1, 0), (-1, 0), (0, 1), (0, -1)]]).sum(0) <= 1) * 250
             prio[(stones == 0) & (walls == 0)] = -np.inf
 
