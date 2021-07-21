@@ -29,7 +29,7 @@ class Item:
     UNPAID = 2
 
     def __init__(self, objs, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False,
-                 monster_id=None, shop_status=NOT_SHOP, dmg_bonus=None, to_hit_bonus=None, text=None):
+                 monster_id=None, shop_status=NOT_SHOP, price=0, dmg_bonus=None, to_hit_bonus=None, text=None):
         assert isinstance(objs, list) and len(objs) >= 1
         assert isinstance(glyphs, list) and len(glyphs) >= 1 and all((nh.glyph_is_object(g) for g in glyphs))
         assert isinstance(count, int)
@@ -43,6 +43,7 @@ class Item:
         self.at_ready = at_ready
         self.monster_id = monster_id
         self.shop_status = shop_status
+        self.price = price
         self.dmg_bonus = dmg_bonus
         self.to_hit_bonus = to_hit_bonus
         self.text = text
@@ -209,6 +210,7 @@ class ItemManager:
         self.object_to_glyph = {}
         self.glyph_to_object = {}
         self._last_object_glyph_mapping_update_step = None
+        self._glyph_to_price_range = {}
 
     def on_panic(self):
         self.update_object_glyph_mapping()
@@ -240,6 +242,62 @@ class ItemManager:
 
             self._last_object_glyph_mapping_update_step = self.agent.step_count
 
+    def price_identification(self):
+        if self.agent.character.prop.hallu:
+            return
+        if not self.agent.current_level().shop_interior[self.agent.blstats.y, self.agent.blstats.x]:
+            return
+
+        if self.agent.blstats.charisma <= 5:
+            charisma_multiplier = 2
+        elif self.agent.blstats.charisma <= 7:
+            charisma_multiplier = 1.5
+        elif self.agent.blstats.charisma <= 10:
+            charisma_multiplier = 1 + 1 / 3
+        elif self.agent.blstats.charisma <= 15:
+            charisma_multiplier = 1
+        elif self.agent.blstats.charisma <= 17:
+            charisma_multiplier = 3 / 4
+        elif self.agent.blstats.charisma <= 18:
+            charisma_multiplier = 2 / 3
+        else:
+            charisma_multiplier = 1 / 2
+
+        if (self.agent.character.role == Character.TOURIST and self.agent.blstats.experience_level < 15) or \
+                (self.agent.inventory.items.shirt is not None and self.agent.inventory.items.suit is None and
+                 self.agent.inventory.items.cloak is None) or \
+                (self.agent.inventory.items.helm is not None and self.agent.inventory.items.helm.is_ambiguous() and
+                 self.agent.inventory.items.helm.object == O.from_name('dunce cap')):
+            dupe_multiplier = (4 / 3, 4 / 3)
+        elif self.agent.inventory.items.helm is not None and \
+                any(((obj == O.from_name('dunce cap')) for obj in self.agent.inventory.items.helm.objs)):
+            dupe_multiplier = (4 / 3, 1)
+        else:
+            dupe_multiplier = (1, 1)
+
+        for item in self.agent.inventory.items_below_me:
+            if item.shop_status == Item.FOR_SALE and not item.is_ambiguous() and len(item.glyphs) == 1 and \
+                    isinstance(item.objs[0], (O.Armor, O.Ring, O.Wand, O.Scroll, O.Potion, O.Tool)):
+                # TODO: not an artifact
+                # TODO: Base price of partly eaten food, uncursed water, and (x:-1) wands is 0.
+                assert item.price % item.count == 0
+                low = int(item.price / item.count / charisma_multiplier / (4 / 3) / dupe_multiplier[0])
+                if isinstance(item.objs[0], (O.Weapon, O.Armor)):
+                    low = 0  # +10 zorkmoids for each point of enchantment
+
+                if low <= 5:
+                    low = 0
+                high = int(item.price / item.count / charisma_multiplier / dupe_multiplier[1]) + 1
+                if item.glyphs[0] in self._glyph_to_price_range:
+                    l, h = self._glyph_to_price_range[item.glyphs[0]]
+                    low = max(low, l)
+                    high = min(high, h)
+                assert low <= high, (low, high)
+                self._glyph_to_price_range[item.glyphs[0]] = (low, high)
+
+                # update mapping for that object
+                self.possible_objects_from_glyph(item.glyphs[0])
+                # TODO: update dependent objects
 
     def get_item_from_text(self, text, category=None, glyph=None):
         # TODO: when blind, it may not work as expected, e.g. "a shield", "a gem", "a potion", etc
@@ -250,6 +308,10 @@ class ItemManager:
         objs, glyphs, count, status, modifier, *args = \
                 self.parse_text(text, category, glyph)
         category = O.get_category(objs[0])
+
+        possibilities_from_glyphs = set.union(*(set(self.possible_objects_from_glyph(glyph)) for glyph in glyphs))
+        objs = [o for o in objs if o in possibilities_from_glyphs]
+        assert len(objs), ([O.objects[g - nh.GLYPH_OBJ_OFF].desc for g in glyphs], [o.name for o in possibilities_from_glyphs])
 
         if status == Item.UNKNOWN and (
                 self.agent.character.role == Character.PRIEST or
@@ -278,12 +340,23 @@ class ItemManager:
         return Item(objs, glyphs, count, status, modifier, *args, text)
 
     def possible_objects_from_glyph(self, glyph):
-        # TODO: take into account identified objects
         assert nh.glyph_is_object(glyph)
         if glyph in self.glyph_to_object:
             return [self.glyph_to_object[glyph]]
-        objs = [obj for obj in O.possibilities_from_glyph(glyph) if obj not in self.object_to_glyph]
-        assert len(objs)
+        objs = [obj for obj in O.possibilities_from_glyph(glyph)
+                if obj not in self.object_to_glyph and
+                   (glyph not in self._glyph_to_price_range or not hasattr(obj, 'cost') or
+                    self._glyph_to_price_range[glyph][0] <= obj.cost <= self._glyph_to_price_range[glyph][1])
+        ]
+        if len(objs) == 1:
+            self.glyph_to_object[glyph] = objs[0]
+            assert objs[0] not in self.object_to_glyph
+            self.object_to_glyph[objs[0]] = glyph
+
+            # update objects with have the same possible glyph
+            for g in O.possible_glyphs_from_object(objs[0]):
+                self.possible_objects_from_glyph(g)
+        assert len(objs), (O.objects[glyph - nh.GLYPH_OBJ_OFF].desc, self._glyph_to_price_range[glyph])
         return objs
 
     @staticmethod
@@ -328,6 +401,11 @@ class ItemManager:
             at_ready = False
         else:
             assert 0, info
+
+        if not shop_price:
+            shop_price = 0
+        else:
+            shop_price = int(shop_price)
 
         count = int({'a': 1, 'an': 1, 'the': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
@@ -423,8 +501,8 @@ class ItemManager:
 
         # TODO: Item should be returned here, but I don't want to memoize them
         return (
-            objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, shop_status, dmg_bonus,
-            to_hit_bonus,
+            objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, shop_status, shop_price,
+            dmg_bonus, to_hit_bonus,
         )
 
 
@@ -1206,6 +1284,7 @@ class Inventory:
     @Strategy.wrap
     def pickup_and_drop_items(self):
         # TODO: free (no charge) items
+        self.item_manager.price_identification()
         if self.agent.current_level().shop_interior[self.agent.blstats.y, self.agent.blstats.x]:
             yield False
         if len(self.items_below_me) == 0:

@@ -8,7 +8,7 @@ import numpy as np
 # avoid importing agent modules here, because it makes agent reloading less reliable
 
 MSG_HISTORY_COUNT = 10
-FONT_SIZE = 32
+FONT_SIZE = 16
 RENDERS_HISTORY_SIZE = 128
 
 
@@ -500,16 +500,18 @@ class Visualizer:
         if item.is_weapon():
             _put_text(vis, str(self.env.agent.character.get_melee_bonus(item)), (FONT_SIZE * 4, 0))
 
-        _put_text(vis, str(item), (FONT_SIZE * 8, 0))
+        _put_text(vis, str(item), (FONT_SIZE * 8, round(FONT_SIZE * -0.1)), scale=FONT_SIZE / 45)
+        _put_text(vis, str(len(item.objs)) + ' | ' + ' | '.join((o.name for o in item.objs)),
+                  (FONT_SIZE * 2, round(FONT_SIZE * 0.3)), scale=FONT_SIZE / 45)
         if item.equipped:
-            cv2.rectangle(vis, (0, 0), (int(FONT_SIZE * 1.5), vis.shape[0] - 1), (0, 255, 255), 6)
+            cv2.rectangle(vis, (0, 0), (int(FONT_SIZE * 1.8), vis.shape[0] - 1), (0, 255, 255), 6)
         return vis
 
     def _draw_inventory(self, height):
-        width = 800
+        width = 600
         vis = np.zeros((height, width, 3)).astype(np.uint8)
         if self.env.agent:
-            item_h = FONT_SIZE
+            item_h = round(FONT_SIZE * 1.4)
             for i, (letter, item) in enumerate(zip(self.env.agent.inventory.items.all_letters,
                                                    self.env.agent.inventory.items.all_items)):
                 vis[i * item_h:(i + 1) * item_h] = self._draw_item(letter, item, width, item_h)

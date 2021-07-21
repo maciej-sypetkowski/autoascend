@@ -283,6 +283,7 @@ class EnvWrapper:
                 self.print_help()
                 continue
             elif key == 127:  # Backspace
+                self.visualizer.force_next_frame()
                 return None
             else:
                 actions = [a for a in self.env._actions if int(a) == key]
@@ -328,7 +329,7 @@ class EnvWrapper:
         # if not done:
         #     agent_lib.G.assert_map(obs['glyphs'], obs['chars'])
         if self.visualizer is not None:
-            self.visualizer.step(self.last_observation)
+            self.visualizer.step(obs)
 
         if done:
             end_reason = bytes(obs['tty_chars'].reshape(-1)).decode().replace('You made the top ten list!', '').split()

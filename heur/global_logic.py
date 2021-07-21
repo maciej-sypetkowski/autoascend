@@ -304,9 +304,9 @@ class GlobalLogic:
         # TODO: refactor
         with self.agent.atom_operation():
             self.agent.step(A.Command.DIP)
+            self.agent.type_text(self.agent.inventory.items.get_letter(candidate))
             if 'What do you want to dip ' in self.agent.message and 'into?' in self.agent.message:
                 raise AgentPanic('no fountain here')
-            self.agent.type_text(self.agent.inventory.items.get_letter(candidate))
 
     @Strategy.wrap
     def current_strategy(self):

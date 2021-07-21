@@ -12,7 +12,7 @@ from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
-from glyph import MON, C, Hunger, G, SHOP
+from glyph import MON, C, Hunger, G, SHOP, ALL
 from item import Inventory, Item
 from level import Level
 from monster_tracker import MonsterTracker
@@ -222,6 +222,7 @@ class Agent:
     ######## UPDATE FUNCTIONS
 
     def on_panic(self):
+        self.check_terrain(force=True)
         self.inventory.on_panic()
         # TODO: monster_tracker panic
 
@@ -466,14 +467,14 @@ class Agent:
         #     self._previous_glyphs = self.last_observation['glyphs']
 
         mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS,
-                            G.ALTAR, G.FOUNTAIN)
+                          G.ALTAR, G.FOUNTAIN)
         level.walkable[mask] = True
         level.seen[mask] = True
         level.objects[mask] = self.glyphs[mask]
 
         mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS, G.STATUES)
         level.seen[mask] = True
-        level.walkable[mask & ~utils.isin(level.objects, G.STONE)] = True
+        level.walkable[mask & (level.objects == -1)] = True
 
         mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS)
         level.seen[mask] = True
@@ -482,7 +483,6 @@ class Agent:
 
         self._update_level_items()
         self._update_level_shops()
-
 
         level.was_on[self.blstats.y, self.blstats.x] = True
 
@@ -1162,11 +1162,9 @@ class Agent:
                 assert inactivity_counter < 5, ('cyclic panic', sorted({p.args[0] for p in self.all_panics[-5:]}))
 
                 try:
+                    self.step(A.Command.ESC)
+                    self.step(A.Command.ESC)
                     self.on_panic()
-
-                    self.step(A.Command.ESC)
-                    self.step(A.Command.ESC)
-                    self.check_terrain(force=True)
 
                     last_step = self.step_count
 

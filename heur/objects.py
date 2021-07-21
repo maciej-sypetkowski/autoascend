@@ -1604,6 +1604,13 @@ def possibilities_from_glyph(i):
 
 
 @utils.copy_result
+@functools.lru_cache(len(objects))
+def possible_glyphs_from_object(obj):
+    return [i for i in range(nh.GLYPH_OBJ_OFF, nh.GLYPH_OBJ_OFF + nh.NUM_OBJECTS)
+            if objects[i - nh.GLYPH_OBJ_OFF] is not None and obj in possibilities_from_glyph(i)]
+
+
+@utils.copy_result
 @functools.lru_cache(len(objects) * 20)
 def desc_to_glyphs(desc, category=None):
     assert desc is not None
@@ -1611,6 +1618,7 @@ def desc_to_glyphs(desc, category=None):
            if o is not None and ord(nh.objclass(i).oc_class) == category and o.desc == desc]
     assert ret
     return ret
+
 
 @functools.lru_cache(len(objects) * 100)
 def from_name(name, category=None):
