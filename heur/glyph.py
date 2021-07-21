@@ -384,6 +384,26 @@ class ALL:
         return x
 
 
+class SHOP:
+    UNKNOWN = 0
+    # names from nle/src/shknam.c
+    name2id = {
+        'UNKNOWN': UNKNOWN,
+        "general store": 1,
+        "used armor dealership": 2,
+        "second-hand bookstore": 3,
+        "liquor emporium": 4,
+        "antique weapons outlet": 5,
+        "delicatessen": 6,
+        "jewelers": 7,
+        "quality apparel and accessories": 8,
+        "hardware store": 9,
+        "rare books": 10,
+        "health food store": 11,
+        "lighting store": 12,
+    }
+
+
 class Hunger:
     SATIATED = 0
     NOT_HUNGRY = 1
@@ -418,6 +438,8 @@ class G:  # Glyphs
     MONS = frozenset(MON.ALL_MONS)
     PETS = frozenset(MON.ALL_PETS)
     INVISIBLE_MON = frozenset({nh.GLYPH_INVISIBLE})
+
+    SHOPKEEPER = frozenset({MON.fn('shopkeeper')})
 
     STATUES = frozenset({i + nh.GLYPH_STATUE_OFF for i in range(nh.NUMMONS)})
 

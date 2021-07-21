@@ -150,6 +150,7 @@ class Strategy:
                 assert 0
             it = self.strategy()
             yield next(it)
+            current_num = -1
             try:
                 next(it)
                 assert 0

@@ -183,13 +183,13 @@ class ExplorationLogic:
         for y, x in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, shuffle=False):
             if level.was_on[y, x] or level.objects[y, x] in G.TRAPS:
                 continue
-            c = level.search_count[min(y - 1, 0) : y + 2, min(x - 1, 0) : x + 2].sum()
+            c = level.search_count[max(y - 1, 0) : y + 2, max(x - 1, 0) : x + 2].sum()
 
             if (self.agent.last_observation['specials'][y, x] & nh.MG_OBJPILE) == 0:
                 search_count = max(search_count, offset - c)
                 continue
 
-            c = level.search_count[min(y - 1, 0) : y + 2, min(x - 1, 0) : x + 2].sum()
+            c = level.search_count[max(y - 1, 0) : y + 2, max(x - 1, 0) : x + 2].sum()
             search_count = max(search_count, offset + 4 - c)
 
         if search_count == 0:
@@ -200,14 +200,21 @@ class ExplorationLogic:
             self.agent.search()
 
     @utils.debug_log('explore1')
-    def explore1(self, search_prio_limit=0, open_doors=True, trap_search_offset=0):
+    def explore1(self, search_prio_limit=0, door_open_count=4, kick_doors=True, trap_search_offset=0):
         # TODO: refactor entire function
 
 
+        @Strategy.wrap
         def open_neighbor_doors():
             # TODO: polymorphed into a handless creature, too heavy load to kick, using lockpicks
+
+            yielded = False
             for py, px in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, diagonal=False):
-                if self.agent.glyphs[py, px] in G.DOOR_CLOSED:
+                if (self.agent.current_level().door_open_count[py, px] < door_open_count or kick_doors) and \
+                        self.agent.glyphs[py, px] in G.DOOR_CLOSED:
+                    if not yielded:
+                        yielded = True
+                        yield True
                     with self.agent.panic_if_position_changes():
                         if not self.agent.open_door(py, px):
                             if not 'locked' in self.agent.message:
@@ -215,12 +222,17 @@ class ExplorationLogic:
                                     if self.agent.open_door(py, px):
                                         break
                                 else:
+                                    if kick_doors:
+                                        while self.agent.glyphs[py, px] in G.DOOR_CLOSED:
+                                            self.agent.kick(py, px)
+                            else:
+                                if kick_doors:
                                     while self.agent.glyphs[py, px] in G.DOOR_CLOSED:
                                         self.agent.kick(py, px)
-                            else:
-                                while self.agent.glyphs[py, px] in G.DOOR_CLOSED:
-                                    self.agent.kick(py, px)
                     break
+
+            if not yielded:
+                yield False
 
         def to_visit_func():
             level = self.agent.current_level()
@@ -231,8 +243,10 @@ class ExplorationLogic:
                 for dx in [-1, 0, 1]:
                     if dy != 0 or dx != 0:
                         to_visit |= utils.translate(~level.seen & utils.isin(self.agent.glyphs, G.STONE), dy, dx, out=tmp)
-                        if dx == 0 or dy == 0 and open_doors:
-                            to_visit |= utils.translate(utils.isin(self.agent.glyphs, G.DOOR_CLOSED), dy, dx, out=tmp)
+                        if dx == 0 or dy == 0:
+                            to_visit |= utils.translate(utils.isin(self.agent.glyphs, G.DOOR_CLOSED) &
+                                                        (level.door_open_count < door_open_count),
+                                                        dy, dx, out=tmp)
             return to_visit
 
         def to_search_func(prio_limit=0, return_prio=False):
@@ -270,14 +284,12 @@ class ExplorationLogic:
         def open_visit_search(search_prio_limit):
             yielded = False
             while 1:
-                if open_doors:
-                    for py, px in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, diagonal=False, shuffle=False):
-                        if self.agent.glyphs[py, px] in G.DOOR_CLOSED:
-                            if not yielded:
-                                yielded = True
-                                yield True
-                            open_neighbor_doors()
-                            break
+                if open_neighbor_doors().check_condition():
+                    if not yielded:
+                        yielded = True
+                        yield True
+                    open_neighbor_doors().run()
+                    continue
 
                 to_visit = to_visit_func()
                 to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)

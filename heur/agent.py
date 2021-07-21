@@ -12,7 +12,7 @@ from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
-from glyph import MON, C, Hunger, G
+from glyph import MON, C, Hunger, G, SHOP
 from item import Inventory, Item
 from level import Level
 from monster_tracker import MonsterTracker
@@ -47,7 +47,7 @@ class Agent:
         self.last_bfs_dis = None
         self.last_bfs_step = None
         self.last_prayer_turn = None
-        self._previous_glyphs = None
+        # self._previous_glyphs = None
         self._last_turn = -1
         self._inactivity_counter = 0
         self._is_updating_state = False
@@ -386,13 +386,16 @@ class Agent:
         if self._is_updating_state:
             return
         self._is_updating_state = True
+        message = self.message
+        popup = self.popup
 
         try:
             # functions that are allowed to call state unchanging steps
-            self.inventory.update()
-            self.monster_tracker.update()
-            self.check_terrain(force=False)
-            self.update_level()
+            for func in [self.inventory.update, self.monster_tracker.update,
+                         partial(self.check_terrain, force=False), self.update_level]:
+                func()
+                self.message = message
+                self.popup = popup
 
             self.call_update_functions()
         finally:
@@ -407,9 +410,13 @@ class Agent:
             for func in funcs:
                 func()
 
-    def _update_items_on_level(self):
-        # TODO: optimize
+    def _update_level_items(self):
         level = self.current_level()
+
+        level.items[self.blstats.y, self.blstats.x] = self.inventory.items_below_me
+        level.item_count[self.blstats.y, self.blstats.x] = len(self.inventory.items_below_me)
+
+        # TODO: optimize
         ignore_mask = utils.isin(self.glyphs, G.MONS, G.PETS)  # TODO: effects, etc
         item_mask = level.item_count != 0
         mask = item_mask & ~ignore_mask
@@ -422,43 +429,60 @@ class Agent:
                     continue
 
             level.item_disagreement_counter[y, x] += 1
-            if level.item_disagreement_counter[y, x] > 2:
+            if level.item_disagreement_counter[y, x] > 3:
                 level.item_disagreement_counter[y, x] = 0
                 level.items[y, x] = ()
                 level.item_count[y, x] = 0
 
-    def update_level(self):
-        # this function shouldn't rely self.message and self.popup (because some update functions
-        # can call a few steps and change it)
-
+    def _update_level_shops(self):
         level = self.current_level()
 
-        level.shop[self.blstats.y, self.blstats.x] = \
-                any((item.shop_status != Item.NOT_SHOP for item in self.inventory.items_below_me))
+        shop_type = None
+        matches = re.search(f"Welcome( again)? to [a-zA-Z' ]*({'|'.join(SHOP.name2id.keys())})!", self.message)
+        if matches is not None:
+            shop_name = matches.groups()[1]
+            assert shop_name in SHOP.name2id, shop_name
+            shop_type = SHOP.name2id[shop_name]
 
-        if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
-            self._previous_glyphs = self.last_observation['glyphs']
+        shopkeepers = list(zip(*(utils.isin(self.glyphs, G.SHOPKEEPER) & self.monster_tracker.peaceful_monster_mask).nonzero()))
+        for y, x in shopkeepers:
+            wall_mask = utils.isin(level.objects, G.WALL)
+            entry = ((utils.translate(wall_mask, 1, 0) & utils.translate(wall_mask, -1, 0)) |
+                     (utils.translate(wall_mask, 0, 1) & utils.translate(wall_mask, 0, -1))) & \
+                    level.walkable
+            walkable = level.walkable & ~entry
+            mask = utils.bfs(y, x, walkable=walkable, walkable_diagonally=walkable, can_squeeze=False) != -1
+            mask = utils.dilate(mask, radius=1)
 
-            mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS,
-                              G.ALTAR, G.FOUNTAIN)
-            level.walkable[mask] = True
-            level.seen[mask] = True
-            level.objects[mask] = self.glyphs[mask]
+            level.shop[mask] = True
+            if mask[self.blstats.y, self.blstats.x] and shop_type is not None:
+                level.shop_type[mask] = shop_type
+            level.shop_interior[mask & ~utils.dilate(entry, radius=1, with_diagonal=False)] = True
 
-            mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS, G.STATUES)
-            level.seen[mask] = True
-            level.walkable[mask & ~utils.isin(level.objects, G.STONE)] = True
+    def update_level(self):
+        level = self.current_level()
 
-            mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS)
-            level.seen[mask] = True
-            level.objects[mask] = self.glyphs[mask]
-            level.walkable[mask] = False
+        # if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
+        #     self._previous_glyphs = self.last_observation['glyphs']
 
-            self._update_items_on_level()
+        mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS,
+                            G.ALTAR, G.FOUNTAIN)
+        level.walkable[mask] = True
+        level.seen[mask] = True
+        level.objects[mask] = self.glyphs[mask]
 
+        mask = utils.isin(self.glyphs, G.MONS, G.PETS, G.BODIES, G.OBJECTS, G.STATUES)
+        level.seen[mask] = True
+        level.walkable[mask & ~utils.isin(level.objects, G.STONE)] = True
 
-        level.items[self.blstats.y, self.blstats.x] = self.inventory.items_below_me
-        level.item_count[self.blstats.y, self.blstats.x] = len(self.inventory.items_below_me)
+        mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS)
+        level.seen[mask] = True
+        level.objects[mask] = self.glyphs[mask]
+        level.walkable[mask] = False
+
+        self._update_level_items()
+        self._update_level_shops()
+
 
         level.was_on[self.blstats.y, self.blstats.x] = True
 
@@ -536,10 +560,11 @@ class Agent:
         self.step(A.Command.PRAY)
         return True
 
-    def open_door(self, y, x=None):
+    def open_door(self, y, x):
         with self.panic_if_position_changes():
             assert self.glyphs[y, x] in G.DOOR_CLOSED
             self.direction(y, x)
+            self.current_level().door_open_count[y, x] += 1
             return self.glyphs[y, x] not in G.DOOR_CLOSED
 
     def fight(self, y, x=None):

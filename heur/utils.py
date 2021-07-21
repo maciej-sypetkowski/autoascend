@@ -1,3 +1,4 @@
+import cv2
 import functools
 from functools import partial, wraps
 from itertools import chain
@@ -158,3 +159,14 @@ def copy_result(func):
             return tuple((x.copy() if isinstance(x, list) else x for x in ret))
         return ret.copy()
     return f
+
+
+def dilate(mask, radius=1, with_diagonal=True):
+    d = radius * 2 + 1
+    if with_diagonal:
+        kernel = np.ones((d, d), dtype=np.uint8)
+    else:
+        kernel = np.zeros((d, d), dtype=np.uint8)
+        kernel[radius : radius + 1, :] = 1
+        kernel[:, radius : radius + 1] = 1
+    return cv2.dilate(mask.astype(np.uint8), kernel).astype(bool)

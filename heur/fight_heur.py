@@ -189,7 +189,8 @@ def ranged_monster_priority(agent, y, x, mon):
     dir_x = np.sign(x - agent.blstats.x)
     y1, x1 = agent.blstats.y + dir_y, agent.blstats.x + dir_x
     while y1 != y or x1 != x:
-        if agent.glyphs[y1, x1] in G.PETS or not agent.current_level().walkable[y1, x1]:
+        if agent.glyphs[y1, x1] in G.PETS or agent.monster_tracker.peaceful_monster_mask[y1, x1] or \
+                not agent.current_level().walkable[y1, x1]:
             ret -= 100
         y1 += dir_y
         x1 += dir_x

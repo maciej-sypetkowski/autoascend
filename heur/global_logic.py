@@ -312,7 +312,8 @@ class GlobalLogic:
     def current_strategy(self):
         if self.milestone == Milestone.FIND_GNOMISH_MINES and \
                 self.agent.current_level().dungeon_number == Level.GNOMISH_MINES:
-            self.milestone = Milestone(int(self.milestone) + 1)
+            #self.milestone = Milestone(int(self.milestone) + 1)
+            pass
         elif self.milestone == Milestone.FIND_SOKOBAN and \
                 self.agent.current_level().dungeon_number == Level.SOKOBAN:
             self.milestone = Milestone(int(self.milestone) + 1)
@@ -322,7 +323,7 @@ class GlobalLogic:
             self.milestone = Milestone(int(self.milestone) + 1)
 
         if self.milestone == Milestone.FIND_GNOMISH_MINES:
-            level = (Level.GNOMISH_MINES, 1)
+            level = (Level.GNOMISH_MINES, 9)
         elif self.milestone == Milestone.FIND_SOKOBAN:
             level = (Level.SOKOBAN, 4)
         elif self.milestone == Milestone.SOLVE_SOKOBAN:
@@ -330,8 +331,10 @@ class GlobalLogic:
         else:
             level = (Level.GNOMISH_MINES, 10)
 
-        exploration_strategy = (
-            self.agent.exploration.explore1(None, trap_search_offset=1).preempt(self.agent, [
+        exploration_strategy = lambda level: (
+            Strategy(lambda: self.agent.exploration.explore1(level, trap_search_offset=1,
+                kick_doors=self.agent.current_level().dungeon_number != Level.GNOMISH_MINES).strategy())
+            .preempt(self.agent, [
                 self.identify_items_on_altar().every(50),
                 self.dip_for_excalibur().condition(lambda: self.agent.blstats.score > 1400 and
                                                            self.agent.blstats.experience_level >= 7).every(10),
@@ -339,7 +342,7 @@ class GlobalLogic:
         )
 
         go_to_strategy = lambda y, x: (
-            exploration_strategy
+            exploration_strategy(None)
             .preempt(self.agent, [
                 self.agent.exploration.go_to_strategy(y, x).preempt(self.agent, [
                     self.agent.inventory.gather_items(),
@@ -352,14 +355,13 @@ class GlobalLogic:
         )
 
         yield from (
-            self.agent.exploration.go_to_level_strategy(*level, go_to_strategy, exploration_strategy)
+            self.agent.exploration.go_to_level_strategy(*level, go_to_strategy, exploration_strategy(None))
             .before(self.agent.exploration.explore1(None, trap_search_offset=1))
             .preempt(self.agent, [
-                self.agent.exploration.explore1(0, trap_search_offset=1),
-                self.agent.exploration.explore1(None, trap_search_offset=1)
-                .until(self.agent, lambda: (
-                    (self.agent.blstats.score > 1200) and # or self.agent.blstats.hunger_state >= Hunger.WEAK) and
-                    self.agent.blstats.hitpoints >= 0.8 * self.agent.blstats.max_hitpoints))
+                exploration_strategy(0),
+                exploration_strategy(None)
+                .until(self.agent, lambda: self.agent.blstats.score > 1200 and
+                                           self.agent.blstats.hitpoints >= 0.8 * self.agent.blstats.max_hitpoints)
             ])
         ).strategy()
 

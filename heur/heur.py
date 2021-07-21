@@ -90,6 +90,7 @@ class EnvWrapper:
 
         self.draw_walkable = False
         self.draw_seen = False
+        self.draw_shop = False
 
     def main(self):
         self.reset()
@@ -167,12 +168,15 @@ class EnvWrapper:
                     if self.draw_walkable else contextlib.suppress():
                 with self.debug_tiles(~self.agent.current_level().seen, color=(255, 0, 0, 128)) \
                         if self.draw_seen else contextlib.suppress():
-                    with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0,
-                                          color=(0, 255, 255, 128)):
-                        self.visualizer.step(self.last_observation)
-                        if force:
-                            self.visualizer.force_next_frame()
-                        rendered = self.visualizer.render()
+                    with self.debug_tiles(self.agent.current_level().shop, color=(0, 0, 255, 64)) \
+                            if self.draw_shop else contextlib.suppress():
+                        with self.debug_tiles(self.agent.current_level().shop_interior, color=(0, 0, 255, 64)) \
+                                if self.draw_shop else contextlib.suppress():
+                            with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0,
+                                                color=(0, 255, 255, 128)):
+                                if force:
+                                    self.visualizer.force_next_frame()
+                                rendered = self.visualizer.render()
 
             if not force and (not self.interactive or not rendered):
                 return
@@ -242,10 +246,18 @@ class EnvWrapper:
 
             if key == b'\x1bOP':  # F1
                 self.draw_walkable = not self.draw_walkable
+                self.visualizer.force_next_frame()
                 self.render()
                 continue
             elif key == b'\x1bOQ':  # F2
                 self.draw_seen = not self.draw_seen
+                self.visualizer.force_next_frame()
+                self.render()
+                continue
+
+            elif key == b'\x1bOR':  # F3
+                self.draw_shop = not self.draw_shop
+                self.visualizer.force_next_frame()
                 self.render()
                 continue
 
@@ -315,6 +327,8 @@ class EnvWrapper:
         self.step_count += 1
         # if not done:
         #     agent_lib.G.assert_map(obs['glyphs'], obs['chars'])
+        if self.visualizer is not None:
+            self.visualizer.step(self.last_observation)
 
         if done:
             end_reason = bytes(obs['tty_chars'].reshape(-1)).decode().replace('You made the top ten list!', '').split()

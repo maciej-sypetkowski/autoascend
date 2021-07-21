@@ -1164,7 +1164,8 @@ class Inventory:
         level = self.agent.current_level()
         dis = self.agent.bfs()
 
-        mask = ~level.shop & (dis > 0)
+        # TODO: free (no charge) items
+        mask = ~level.shop_interior & (dis > 0)
         if not mask.any():
             yield False
 
@@ -1204,7 +1205,8 @@ class Inventory:
     @utils.debug_log('inventory.pickup_and_drop_items')
     @Strategy.wrap
     def pickup_and_drop_items(self):
-        if self.agent.current_level().shop[self.agent.blstats.y, self.agent.blstats.x]:
+        # TODO: free (no charge) items
+        if self.agent.current_level().shop_interior[self.agent.blstats.y, self.agent.blstats.x]:
             yield False
         if len(self.items_below_me) == 0:
             yield False
@@ -1220,7 +1222,7 @@ class Inventory:
                     free_items + self.items_below_me, forced_items,
                     self.agent.character.carrying_capacity)
             to_drop = [item.count - count for item, count in zip(free_items, counts)]
-            if sum(to_drop) != 0:
+            if sum(to_drop) > 0:
                 if not yielded:
                     yielded = True
                     yield True
