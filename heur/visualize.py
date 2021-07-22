@@ -7,8 +7,8 @@ import numpy as np
 
 # avoid importing agent modules here, because it makes agent reloading less reliable
 
-MSG_HISTORY_COUNT = 10
-FONT_SIZE = 16
+MSG_HISTORY_COUNT = 13
+FONT_SIZE = 32
 RENDERS_HISTORY_SIZE = 128
 
 
@@ -473,8 +473,7 @@ class Visualizer:
     def _draw_item(self, letter, item, width, height):
         from item import Item
 
-        vis = np.zeros((height, width, 3)).astype(np.uint8)
-        _draw_frame(vis, color=(50, 50, 50), thickness=2)
+        vis = np.zeros((round(height * 0.9), width, 3)).astype(np.uint8)
         _put_text(vis, str(letter), (0, 0))
         status_str, status_col = {
             Item.UNKNOWN: (' ', (255, 255, 255)),
@@ -482,7 +481,7 @@ class Visualizer:
             Item.UNCURSED: ('U', (0, 255, 255)),
             Item.BLESSED: ('B', (0, 255, 0)),
         }[item.status]
-        _put_text(vis, str(letter), (0, 0))
+        _put_text(vis, str(letter), (0, 0), color=(255, 255, 255))
         _put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)
 
         if item.modifier is not None:
@@ -500,21 +499,34 @@ class Visualizer:
         if item.is_weapon():
             _put_text(vis, str(self.env.agent.character.get_melee_bonus(item)), (FONT_SIZE * 4, 0))
 
-        _put_text(vis, str(item), (FONT_SIZE * 8, round(FONT_SIZE * -0.1)), scale=FONT_SIZE / 45)
+        _put_text(vis, str(item), (FONT_SIZE * 8, round(FONT_SIZE * -0.1)), scale=FONT_SIZE / 40)
+        # if len(item.objs) > 1:
+        vis = np.concatenate([vis, np.zeros((vis.shape[0] // 2, vis.shape[1], 3), dtype=np.uint8)])
         _put_text(vis, str(len(item.objs)) + ' | ' + ' | '.join((o.name for o in item.objs)),
-                  (FONT_SIZE * 2, round(FONT_SIZE * 0.3)), scale=FONT_SIZE / 45)
+                  (0, round(FONT_SIZE * 0.8)), scale=FONT_SIZE / 40)
+
+        _draw_frame(vis, color=(80, 80, 80), thickness=2)
+
         if item.equipped:
-            cv2.rectangle(vis, (0, 0), (int(FONT_SIZE * 1.8), vis.shape[0] - 1), (0, 255, 255), 6)
+            cv2.rectangle(vis, (0, 0), (int(FONT_SIZE * 1.4), vis.shape[0] - 1), (0, 255, 255), 6)
+
         return vis
 
     def _draw_inventory(self, height):
-        width = 600
-        vis = np.zeros((height, width, 3)).astype(np.uint8)
+        width = 800
+        vis = np.zeros((height, width, 3), dtype=np.uint8)
         if self.env.agent:
             item_h = round(FONT_SIZE * 1.4)
+            tiles = []
             for i, (letter, item) in enumerate(zip(self.env.agent.inventory.items.all_letters,
                                                    self.env.agent.inventory.items.all_items)):
-                vis[i * item_h:(i + 1) * item_h] = self._draw_item(letter, item, width, item_h)
+                tiles.append(self._draw_item(letter, item, width, item_h))
+            if tiles:
+                vis = np.concatenate(tiles, axis=0)
+                if vis.shape[0] < height:
+                    vis = np.concatenate([vis, np.zeros((height - vis.shape[0], width, 3), dtype=np.uint8)], axis=0)
+                else:
+                    vis = cv2.resize(vis, (width, height))
         _draw_frame(vis)
         return vis
 
