@@ -93,9 +93,12 @@ class ItemPriority(ItemPriorityBase):
 
 
 class Milestone(IntEnum):
-    FIND_GNOMISH_MINES = auto()
+    BE_ON_FIRST_LEVEL = auto()
     FIND_SOKOBAN = auto()
+    FIND_GNOMISH_MINES = auto()
+    FIND_MINETOWN = auto()
     SOLVE_SOKOBAN = auto()
+    FIND_MINES_END = auto()
     GO_DOWN = auto() # TODO
 
 
@@ -106,6 +109,23 @@ class GlobalLogic:
         self.step_completion_log = {}  # Milestone -> (step, turn)
 
         self.item_priority = ItemPriority(self.agent)
+
+        self.oracle_level = None
+        self.minetown_level = None
+
+    def update(self):
+        if utils.isin(self.agent.glyphs, G.ORACLE).any():
+            if self.oracle_level is None:
+                self.oracle_level = self.agent.current_level().key()
+            else:
+                assert self.oracle_level == self.agent.current_level().key()
+
+        if self.agent.current_level().dungeon_number == Level.GNOMISH_MINES and \
+                utils.isin(self.agent.glyphs, G.SHOPKEEPER).any():
+            if self.minetown_level is None:
+                self.minetown_level = self.agent.current_level().key()
+            else:
+                assert self.minetown_level == self.agent.current_level().key()
 
     @utils.debug_log('solving sokoban')
     @Strategy.wrap
@@ -144,8 +164,8 @@ class GlobalLogic:
                 else:
                     return
 
-            # TODO: not sure what to do
-            self.agent.exploration.explore(None).run()
+                # TODO: not sure what to do
+                self.agent.exploration.explore1(None).run()
 
         while 1:
             wall_map = utils.isin(self.agent.current_level().objects, G.WALL)
@@ -310,64 +330,81 @@ class GlobalLogic:
 
     @Strategy.wrap
     def current_strategy(self):
-        if self.milestone == Milestone.FIND_GNOMISH_MINES and \
-                self.agent.current_level().dungeon_number == Level.GNOMISH_MINES:
-            #self.milestone = Milestone(int(self.milestone) + 1)
-            pass
-        elif self.milestone == Milestone.FIND_SOKOBAN and \
-                self.agent.current_level().dungeon_number == Level.SOKOBAN:
-            self.milestone = Milestone(int(self.milestone) + 1)
-        elif self.milestone == Milestone.SOLVE_SOKOBAN and \
-                self.agent.current_level().key() == (Level.SOKOBAN, 1) and \
-                not utils.isin(self.agent.current_level().objects, G.DOOR_CLOSED).any():
-            self.milestone = Milestone(int(self.milestone) + 1)
+        yield True
+        while 1:
+            if self.milestone == Milestone.BE_ON_FIRST_LEVEL:
+                condition = lambda: self.agent.blstats.score > 1400 or \
+                                    self.agent.character.role in [Character.VALKYRIE, Character.BARBARIAN,
+                                                                  Character.SAMURAI]
+                level = (Level.DUNGEONS_OF_DOOM, 1)
 
-        if self.milestone == Milestone.FIND_GNOMISH_MINES:
-            level = (Level.GNOMISH_MINES, 9)
-        elif self.milestone == Milestone.FIND_SOKOBAN:
-            level = (Level.SOKOBAN, 4)
-        elif self.milestone == Milestone.SOLVE_SOKOBAN:
-            level = (Level.SOKOBAN, 1)
-        else:
-            level = (Level.GNOMISH_MINES, 10)
+            elif self.milestone == Milestone.FIND_SOKOBAN:
+                condition = lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN
+                level = (Level.SOKOBAN, 4)
 
-        exploration_strategy = lambda level: (
-            Strategy(lambda: self.agent.exploration.explore1(level, trap_search_offset=1,
-                kick_doors=self.agent.current_level().dungeon_number != Level.GNOMISH_MINES).strategy())
-            .preempt(self.agent, [
-                self.identify_items_on_altar().every(50),
-                self.dip_for_excalibur().condition(lambda: self.agent.blstats.score > 1400 and
-                                                           self.agent.blstats.experience_level >= 7).every(10),
-            ])
-        )
+            elif self.milestone == Milestone.FIND_GNOMISH_MINES:
+                condition = lambda: self.agent.current_level().dungeon_number == Level.GNOMISH_MINES
+                level = (Level.GNOMISH_MINES, 1)
 
-        go_to_strategy = lambda y, x: (
-            exploration_strategy(None)
-            .preempt(self.agent, [
-                self.agent.exploration.go_to_strategy(y, x).preempt(self.agent, [
-                    self.agent.inventory.gather_items(),
-                    self.identify_items_on_altar(),
-                    self.dip_for_excalibur().condition(lambda: self.agent.blstats.score > 1400 and
-                                                               self.agent.blstats.experience_level >= 7),
+            elif self.milestone == Milestone.FIND_MINETOWN:
+                condition = lambda: self.minetown_level is not None
+                level = (Level.GNOMISH_MINES, 4)  # TODO
+
+            elif self.milestone == Milestone.SOLVE_SOKOBAN:
+                # TODO: fix the condition, monster can destroy doors
+                condition = lambda: self.agent.current_level().key() == (Level.SOKOBAN, 1) and \
+                                    not utils.isin(self.agent.current_level().objects, G.DOOR_CLOSED).any()
+                level = (Level.SOKOBAN, 1)
+
+            elif self.milestone == Milestone.FIND_MINES_END:
+                condition = lambda: False  # TODO
+                level = (Level.GNOMISH_MINES, 9)  # TODO
+
+            else:
+                # TODO
+                condition = lambda: False
+                level = (Level.DUNGEONS_OF_DOOM, 100)
+
+            if condition():
+                self.milestone = Milestone(int(self.milestone) + 1)
+                continue
+
+
+            exploration_strategy = lambda level: (
+                Strategy(lambda: self.agent.exploration.explore1(level, trap_search_offset=1,
+                    kick_doors=self.agent.current_level().dungeon_number != Level.GNOMISH_MINES).strategy())
+                .preempt(self.agent, [
+                    self.identify_items_on_altar().every(100),
+                    self.dip_for_excalibur().condition(lambda: self.agent.blstats.experience_level >= 7).every(10),
                 ])
-            ])
-            .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
-        )
+            )
 
-        yield from (
-            self.agent.exploration.go_to_level_strategy(*level, go_to_strategy, exploration_strategy(None))
-            .before(self.agent.exploration.explore1(None, trap_search_offset=1))
-            .preempt(self.agent, [
-                exploration_strategy(0),
+            go_to_strategy = lambda y, x: (
                 exploration_strategy(None)
-                .until(self.agent, lambda: self.agent.blstats.score > 1200 and
-                                           self.agent.blstats.hitpoints >= 0.8 * self.agent.blstats.max_hitpoints)
-            ])
-        ).strategy()
+                .preempt(self.agent, [
+                    self.agent.exploration.go_to_strategy(y, x).preempt(self.agent, [
+                        self.agent.inventory.gather_items(),
+                        self.identify_items_on_altar(),
+                        self.dip_for_excalibur().condition(lambda: self.agent.blstats.experience_level >= 7),
+                    ])
+                ])
+                .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
+            )
+
+            (
+                self.agent.exploration.go_to_level_strategy(*level, go_to_strategy, exploration_strategy(None))
+                .before(self.agent.exploration.explore1(None, trap_search_offset=1))
+                .preempt(self.agent, [
+                    exploration_strategy(0),
+                    exploration_strategy(None)
+                    .until(self.agent, lambda: self.agent.blstats.hitpoints >= 0.8 * self.agent.blstats.max_hitpoints)
+                ])
+                .until(self.agent, condition)
+            ).run()
 
     def global_strategy(self):
         return (
-            self.current_strategy()
+            self.current_strategy().repeat()
             .preempt(self.agent, [
                 self.solve_sokoban_strategy()
                 .condition(lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN)
@@ -378,9 +415,14 @@ class GlobalLogic:
             .preempt(self.agent, [
                 self.agent.eat1().every(5).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 self.agent.eat_from_inventory().every(5),
-            ]).preempt(self.agent, [
+            ])
+            .preempt(self.agent, [
                 self.agent.fight2(),
-            ]).preempt(self.agent, [
+            ])
+            .preempt(self.agent, [
+                self.agent.engulfed_fight(),
+            ])
+            .preempt(self.agent, [
                 self.agent.emergency_strategy(),
             ])
         )

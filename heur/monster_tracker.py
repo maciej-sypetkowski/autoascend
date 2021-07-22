@@ -57,8 +57,8 @@ class MonsterTracker:
                 x, y, char, name = r.groups()
                 y, x = int(y), int(x) - 1
 
-                char_on_map = self.agent.last_observation['chars'][y, x]
-                assert ord(char) == char_on_map, (char, chr(char_on_map))
+                # char_on_map = self.agent.last_observation['chars'][y, x]
+                # assert ord(char) == char_on_map, (char, chr(char_on_map))
 
                 monsters[y, x] = name
         return monsters

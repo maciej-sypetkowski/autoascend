@@ -68,6 +68,7 @@ class ExplorationLogic:
                               if (Level.DUNGEONS_OF_DOOM, i) in achievable_levels})
 
         if dungeon_number == Level.SOKOBAN:
+            # TODO: one level below oracle
             return set.union(*[self.levels_to_explore_to_get_to(Level.DUNGEONS_OF_DOOM, i, achievable_levels)
                                for i in range(6, 11)],
                              {(Level.DUNGEONS_OF_DOOM, i) for i in range(6, 11)
@@ -101,6 +102,12 @@ class ExplorationLogic:
 
         go_to_strategy(y, x).run()
         assert (self.agent.blstats.y, self.agent.blstats.x) == (y, x)
+        while self.agent.has_pet:
+            if utils.any_in(self.agent.glyphs[max(self.agent.blstats.y - 1, 0) : self.agent.blstats.y + 2,
+                                              max(self.agent.blstats.x - 1, 0) : self.agent.blstats.x + 2],
+                            G.PETS):
+                break
+            self.agent.move('.')
         self.agent.move(dir)
 
     @Strategy.wrap
@@ -111,6 +118,12 @@ class ExplorationLogic:
         for (y, x), _, dir in path:
             go_to_strategy(y, x).run()
             assert (self.agent.blstats.y, self.agent.blstats.x) == (y, x)
+            while self.agent.has_pet:
+                if utils.any_in(self.agent.glyphs[max(self.agent.blstats.y - 1, 0) : self.agent.blstats.y + 2,
+                                                max(self.agent.blstats.x - 1, 0) : self.agent.blstats.x + 2],
+                                G.PETS):
+                    break
+                self.agent.move('.')
             self.agent.move(dir)
 
     @Strategy.wrap

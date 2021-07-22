@@ -38,6 +38,8 @@ class Agent:
         self.popup = []
         self._message_history = []
 
+        self._last_pet_seen = 0
+
         self.inventory = Inventory(self)
         self.character = Character(self)
         self.exploration = ExplorationLogic(self)
@@ -58,6 +60,10 @@ class Agent:
 
         self._is_reading_message_or_popup = False
         self._last_terrain_check = None
+
+    @property
+    def has_pet(self):
+        return (self.blstats.time - self._last_pet_seen) <= 16
 
     ######## CONVENIENCE FUNCTIONS
 
@@ -393,7 +399,8 @@ class Agent:
         try:
             # functions that are allowed to call state unchanging steps
             for func in [self.inventory.update, self.monster_tracker.update,
-                         partial(self.check_terrain, force=False), self.update_level]:
+                         partial(self.check_terrain, force=False), self.update_level,
+                         self.global_logic.update]:
                 func()
                 self.message = message
                 self.popup = popup
@@ -461,6 +468,12 @@ class Agent:
             level.shop_interior[mask & ~utils.dilate(entry, radius=1, with_diagonal=False)] = True
 
     def update_level(self):
+        if utils.isin(self.glyphs, G.SWALLOW).any():
+            return
+
+        if utils.any_in(self.glyphs, G.PETS):
+            self._last_pet_seen = self.blstats.time
+
         level = self.current_level()
 
         # if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
@@ -567,9 +580,10 @@ class Agent:
             self.current_level().door_open_count[y, x] += 1
             return self.glyphs[y, x] not in G.DOOR_CLOSED
 
-    def fight(self, y, x=None):
+    def fight(self, y, x):
         with self.panic_if_position_changes():
-            assert self.glyphs[y, x] in G.MONS.union([nh.GLYPH_INVISIBLE])
+            assert self.glyphs[y, x] in G.MONS or self.glyphs[y, x] in G.INVISIBLE_MON or \
+                   self.glyphs[y, x] in G.SWALLOW
             self.direction(y, x)
         return True
 
@@ -976,6 +990,15 @@ class Agent:
                 and self.glyphs[target_y, target_x] - nh.GLYPH_BODY_OFF == nh.glyph_to_mon(mon_glyph):
             self.current_level().corpse_age[target_y, target_x] = self.blstats.time
 
+    @utils.debug_log('engulfed_fight')
+    @Strategy.wrap
+    def engulfed_fight(self):
+        if not utils.any_in(self.glyphs, G.SWALLOW):
+            yield False
+        yield True
+        while (mask := utils.isin(self.glyphs, G.SWALLOW)).any():
+            assert self.fight(*list(zip(*mask.nonzero()))[0])
+
     @utils.debug_log('fight1')
     @Strategy.wrap
     def fight1(self):
@@ -1058,7 +1081,8 @@ class Agent:
             flags = MON.M1_ACID
         else:
             flags = MON.M1_ACID | MON.M1_POIS
-        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags == 0]
+
+        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags == 0 and ord(MON.permonst(b).mlet) != MON.S_COCKATRICE]
         mask = utils.isin(self.glyphs, editable_bodies) & \
                ((self.blstats.time - level.corpse_age <= 50) |
                 utils.isin(self.glyphs, [MON.body_from_name('lizard'), MON.body_from_name('lichen')]))

@@ -108,7 +108,7 @@ class Strategy:
             def f2():
                 try:
                     next(gen)
-                    assert 0
+                    assert 0, gen
                 except StopIteration as e:
                     return e.value
 

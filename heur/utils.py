@@ -108,6 +108,11 @@ def isin(array, *elems):
     return _isin_kernel(array, mi, ma, mask)
 
 
+def any_in(array, *elems):
+    # TODO: optimize
+    return isin(array, *elems).any()
+
+
 @toolz.curry
 def debug_log(txt, fun, color=(255, 255, 255)):
     @wraps(fun)
