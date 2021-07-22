@@ -639,7 +639,7 @@ def run_simulations(args):
         return q.get()
 
     for seed_offset in range(args.episodes):
-        if args.visualize_ends is None or seed_offset in args.visualize_ends:
+        if args.visualize_ends is None or seed_offset in [k % 10 ** 9 for k in args.visualize_ends]:
             refs.append(remote_simulation.remote(args, seed_offset))
 
     count = 0
