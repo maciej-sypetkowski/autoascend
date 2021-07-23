@@ -161,12 +161,27 @@ def melee_monster_priority(agent, monsters, monster):
     return ret
 
 
-def ranged_monster_priority(agent, y, x, mon):
+def _line_dis_from(agent, y, x):
+    return max(abs(agent.blstats.x - x), abs(agent.blstats.y - y))
+
+
+def ranged_monster_priority(agent, y, x, taret_monster, monsters):
     ret = 0
     if not (agent.blstats.y == y or agent.blstats.x == x or abs(agent.blstats.y - y) == abs(agent.blstats.x - x)):
         return None
 
-    dis = max(abs(agent.blstats.x - x), abs(agent.blstats.y - y))
+    closest_mon_dis = float('inf')
+    for monster in monsters:
+        if monster is taret_monster:
+            continue
+        _, my, mx, mon, _ = monster
+        if mon not in WEAK_MONSTERS + ONLY_RANGED_SLOW_MONSTERS:
+            closest_mon_dis = min(closest_mon_dis, _line_dis_from(agent, my, mx))
+
+    if closest_mon_dis == 1:
+        ret -= 5
+
+    dis = _line_dis_from(agent, y, x)
     if dis in (1, 2):
         ret -= 5
     if dis == 1:
@@ -182,15 +197,14 @@ def ranged_monster_priority(agent, y, x, mon):
     if launcher is not None and not launcher.equipped:
         ret -= 5
 
-
     # search for obstacles along the line of shot
     assert y != agent.blstats.y or x != agent.blstats.x
     dir_y = np.sign(y - agent.blstats.y)
     dir_x = np.sign(x - agent.blstats.x)
     y1, x1 = agent.blstats.y + dir_y, agent.blstats.x + dir_x
     while y1 != y or x1 != x:
-        if agent.glyphs[y1, x1] in G.PETS or agent.monster_tracker.peaceful_monster_mask[y1, x1] or \
-                not agent.current_level().walkable[y1, x1]:
+        if agent.glyphs[y1, x1] in G.PETS or agent.glyphs[y1, x1] in G.MONS \
+                or not agent.current_level().walkable[y1, x1]:
             ret -= 100
         y1 += dir_y
         x1 += dir_x
@@ -211,7 +225,7 @@ def get_available_actions(agent, monsters):
             priority = melee_monster_priority(agent, monsters, monster)
             actions.append((priority, 'melee', y, x, monster))
 
-        ranged_pr = ranged_monster_priority(agent, y, x, mon)
+        ranged_pr = ranged_monster_priority(agent, y, x, monster, monsters)
         if ranged_pr is not None:
             actions.append((ranged_pr, 'ranged', y, x, monster))
     return actions

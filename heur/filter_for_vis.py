@@ -4,7 +4,7 @@ import pandas as pd
 
 
 def interesting_reason(txt):
-    return ('food' in txt or 'fainted' in txt or 'starved' in txt)
+    # return ('food' in txt or 'fainted' in txt or 'starved' in txt)
     return ('food' not in txt
             and 'shop' not in txt
             and 'falling rock' not in txt

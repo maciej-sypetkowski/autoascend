@@ -563,10 +563,10 @@ class Agent:
                 self.type_text('y')
             if "You don't have anything to eat." in self.message:
                 return False
-            self.type_text('y')
             if "You don't have that object." in self.message:
-                self.step(A.Command.ESC)
-                return False
+                assert 0, self.message
+                # self.step(A.Command.ESC)
+                # return False
         return True
 
     def pray(self):
