@@ -75,7 +75,9 @@ class ExplorationLogic:
                               if (Level.DUNGEONS_OF_DOOM, i) in achievable_levels})
 
         if all((dun == Level.GNOMISH_MINES for dun, lev in achievable_levels)):
-            return self.levels_to_explore_to_get_to(Level.GNOMISH_MINES, 1)
+            return self.levels_to_explore_to_get_to(Level.GNOMISH_MINES, 1).union(
+                ({(Level.GNOMISH_MINES, 1)} if (Level.GNOMISH_MINES, 1) in achievable_levels else set())
+            )
 
         # TODO: more dungeons
 
@@ -136,7 +138,6 @@ class ExplorationLogic:
 
             @Strategy.wrap
             def go_to_least_explored_level():
-                # TODO: change from random to least explored
                 levels_to_search = self.levels_to_explore_to_get_to(dungeon_number, level_number)
                 if not levels_to_search:
                     yield False

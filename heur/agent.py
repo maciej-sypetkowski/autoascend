@@ -588,7 +588,11 @@ class Agent:
         return True
 
     def fire(self, item, direction):
-        # TODO: throwing is not possible if you don't have hands
+        if self.character.prop.polymorph:
+            # TODO: throwing is not possible if you don't have hands
+            # it may be possible depending on creature
+            return False
+
         with self.atom_operation():
             self.step(A.Command.THROW)
             self.type_text(self.inventory.items.get_letter(item))
@@ -819,7 +823,8 @@ class Agent:
                     # TODO: limited range
                     with self.env.debug_tiles([[y, x]], (0, 0, 255, 100)):
                         dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
-                        self.fire(ammo, dir)
+                        if not self.fire(ammo, dir):
+                            return False
                         break
             else:
                 return False
@@ -930,6 +935,9 @@ class Agent:
             best_move_score = None
             if best_y is not None:
                 best_move_score = priority[best_y, best_x]
+
+            if self.character.prop.polymorph:
+                actions = list(filter(lambda x: x[1] != 'ranged', actions))
             best_action = max(actions) if actions else None
 
             if best_y is None and best_action is None:
@@ -976,7 +984,7 @@ class Agent:
                     dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
                                               allow_nonunit_distance=True)
                     try:
-                        self.fire(ammo, dir)
+                        assert self.fire(ammo, dir)
                     finally:
                         self._track_hunted_corpse(monster, target_x, target_y)
                     return wait_counter
