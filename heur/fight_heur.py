@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import signal
 
 import utils
 from glyph import G
@@ -231,6 +232,15 @@ def get_available_actions(agent, monsters):
     return actions
 
 
+def get_corridors_priority_map(walkable):
+    k = np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
+    wall_count = signal.convolve2d((~walkable).astype(int), k, boundary='symm', mode='same')
+    corridor_mask = (wall_count == 6).astype(int)
+    corridor_mask[~walkable] = 0
+    corridor_dilated = signal.convolve2d(corridor_mask.astype(int), k, boundary='symm', mode='same')
+    return corridor_mask + corridor_dilated >= 1
+
+
 def build_priority_map(agent):
     walkable = agent.current_level().walkable
     priority = np.zeros(walkable.shape, dtype=float)
@@ -240,6 +250,8 @@ def build_priority_map(agent):
     for m in monsters:
         draw_monster_priority_negative(agent, m, priority, walkable)
     priority[~walkable] = float('nan')
+
+    priority += get_corridors_priority_map(walkable)
 
     # use relative priority to te current position
     priority -= priority[agent.blstats.y, agent.blstats.x]
