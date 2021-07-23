@@ -1,11 +1,17 @@
 import re
 
-import numba as nb
 import numpy as np
 from nle.nethack import actions as A
 
 import utils
 from glyph import C, G
+
+try:
+    import numba as nb
+except ImportError:
+    class nb:
+        b1 = bool
+        njit = lambda *a, **k: (lambda f: f)
 
 
 @nb.njit('optional(b1[:,:])(i2[:,:],i2[:,:],i2[:,:],i4)', cache=True)

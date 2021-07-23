@@ -996,7 +996,10 @@ class Agent:
         if not utils.any_in(self.glyphs, G.SWALLOW):
             yield False
         yield True
-        while (mask := utils.isin(self.glyphs, G.SWALLOW)).any():
+        while True:
+            mask = utils.isin(self.glyphs, G.SWALLOW)
+            if not mask.any():
+                break
             assert self.fight(*list(zip(*mask.nonzero()))[0])
 
     @utils.debug_log('fight1')

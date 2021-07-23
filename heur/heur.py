@@ -130,7 +130,8 @@ class EnvWrapper:
     def fork(self):
         fork_again = True
         while fork_again:
-            if (pid := fork_with_nethack_env(self.env)) != 0:
+            pid = fork_with_nethack_env(self.env)
+            if pid != 0:
                 # parent
                 print('freezing parent')
                 while 1:
@@ -458,6 +459,8 @@ def run_profiling(args):
         import cProfile, pstats
     elif args.profiler == 'pyinstrument':
         from pyinstrument import Profiler
+    elif args.profiler == 'none':
+        pass
     else:
         assert 0
 
@@ -465,6 +468,8 @@ def run_profiling(args):
         pr = cProfile.Profile()
     elif args.profiler == 'pyinstrument':
         profiler = Profiler()
+    elif args.profiler == 'none':
+        pass
     else:
         assert 0
 
@@ -472,6 +477,8 @@ def run_profiling(args):
         pr.enable()
     elif args.profiler == 'pyinstrument':
         profiler.start()
+    elif args.profiler == 'none':
+        pass
     else:
         assert 0
 
@@ -487,6 +494,8 @@ def run_profiling(args):
         pr.disable()
     elif args.profiler == 'pyinstrument':
         session = profiler.stop()
+    elif args.profiler == 'none':
+        pass
     else:
         assert 0
 
@@ -543,6 +552,8 @@ def run_profiling(args):
         print('Total time:')
         profiler.last_session = session
         print(profiler.output_text(unicode=True, color=True, show_all=True))
+    elif args.profiler == 'none':
+        pass
     else:
         assert 0
 
@@ -710,7 +721,7 @@ def parse_args():
     parser.add_argument('--no-plot', action='store_true')
     parser.add_argument('--visualize-ends', type=Path, default=None,
                         help='Path to json file with dict: seed -> visualization_start_step')
-    parser.add_argument('--profiler', choices=('cProfile', 'pyinstrument'), default='pyinstrument')
+    parser.add_argument('--profiler', choices=('cProfile', 'pyinstrument', 'none'), default='pyinstrument')
 
     args = parser.parse_args()
     if args.seed is None:

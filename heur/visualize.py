@@ -145,6 +145,8 @@ class Visualizer:
         self.start_visualize = start_visualize
         self.output_dir = output_dir
 
+        self.last_obs = None
+
         self.tileset = cv2.imread(tileset_path)[..., ::-1]
         if self.tileset is None:
             raise FileNotFoundError(f'Tileset {tileset_path} not found')

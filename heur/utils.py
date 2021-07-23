@@ -3,11 +3,17 @@ import functools
 from functools import partial, wraps
 from itertools import chain
 
-import numba as nb
 import numpy as np
 import toolz
 
 from strategy import Strategy
+
+try:
+    import numba as nb
+except ImportError:
+    class nb:
+        b1 = bool
+        njit = lambda *a, **k: (lambda f: f)
 
 
 @nb.njit(cache=True)
