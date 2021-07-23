@@ -377,6 +377,8 @@ class EnvWrapper:
             'steps': self.env._steps,
             'turns': self.agent.blstats.time,
             'level_num': len(self.agent.levels),
+            'experience_level': self.agent.blstats.experience_level,
+            'milestone': self.agent.global_logic.milestone,
             'panic_num': len(self.agent.all_panics),
             'character': str(self.agent.character).split()[0],
             'end_reason': self.end_reason,
@@ -387,14 +389,14 @@ class EnvWrapper:
 def prepare_env(args, seed, step_limit=None):
     seed += args.seed
 
-    if args.role is not None:
+    if args.role:
         while 1:
             env = gym.make('NetHackChallenge-v0')
             env.seed(seed, seed)
             obs = env.reset()
             blstats = agent_lib.BLStats(*obs['blstats'])
             character_glyph = obs['glyphs'][blstats.y, blstats.x]
-            if nh.permonst(nh.glyph_to_mon(character_glyph)).mname.startswith(args.role):
+            if any([nh.permonst(nh.glyph_to_mon(character_glyph)).mname.startswith(role) for role in args.role]):
                 break
             seed += 10 ** 9
             env.close()
@@ -407,7 +409,7 @@ def prepare_env(args, seed, step_limit=None):
                            show=args.mode == 'run',
                            output_dir=Path('/workspace/vis/') / str(seed),
                            frame_skipping=None if args.visualize_ends is None else 1)
-    env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=200),
+    env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=1000),
                      to_skip=args.skip_to, visualizer_args=visualizer_args,
                      agent_args=dict(panic_on_errors=args.panic_on_errors,
                                      verbose=args.mode == 'run'),
@@ -586,7 +588,7 @@ def run_simulations(args):
 
             fig.clear()
 
-            histogram_keys = ['score', 'steps', 'turns', 'level_num']
+            histogram_keys = ['score', 'steps', 'turns', 'level_num', 'experience_level', 'milestone']
             spec = fig.add_gridspec(len(histogram_keys) + 2, 2)
 
             for i, k in enumerate(histogram_keys):
@@ -596,12 +598,15 @@ def run_simulations(args):
                     counter = Counter(res[k])
                     sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
                 else:
-                    if k == 'level_num':
+                    if k in ['level_num', 'experience_level', 'milestone']:
                         bins = [b + 0.5 for b in range(max(res[k]) + 1)]
                     else:
                         bins = np.quantile(res[k],
                                            np.linspace(0, 1, min(len(res[k]) // (20 + len(res[k]) // 50) + 2, 50)))
-                    sns.histplot(res[k], bins=bins, kde=np.var(res[k]) > 1e-6, stat='density', ax=ax)
+                    sns.histplot(res[k], bins=bins, stat='density', ax=ax)
+                    if k == 'milestone':
+                        ticks = sorted(set([(int(m), m.name) for m in res[k]]))
+                        plt.xticks(ticks=[t[0] for t in ticks], labels=[t[1] for t in ticks])
 
             ax = fig.add_subplot(spec[:len(histogram_keys) // 2, 1])
             sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
@@ -617,7 +622,7 @@ def run_simulations(args):
             res['race-alignment'] = [f'{r}-{a}' for r, a in zip(res['race'], res['alignment'])]
             sns.violinplot(x='role', y='score', color='white', hue='gender',
                            hue_order=sorted(set(res['gender'])), split=len(set(res['gender'])) == 2,
-                           order=sorted(set(res['role'])), inner='quartile', bw=10 / len(res['role']) ** 0.7,
+                           order=sorted(set(res['role'])), inner='quartile',
                            data=res, ax=ax)
 
             palette = ['#ff7043', '#cc3311', '#ee3377', '#0077bb', '#33bbee', '#009988', '#bbbbbb']
@@ -716,7 +721,8 @@ def parse_args():
     parser.add_argument('-n', '--episodes', type=int, default=1)
     parser.add_argument('--role', choices=('arc', 'bar', 'cav', 'hea', 'kni',
                                            'mon', 'pri', 'ran', 'rog', 'sam',
-                                           'tou', 'val', 'wiz'))
+                                           'tou', 'val', 'wiz'),
+                        action='append')
     parser.add_argument('--panic-on-errors', action='store_true')
     parser.add_argument('--no-plot', action='store_true')
     parser.add_argument('--visualize-ends', type=Path, default=None,

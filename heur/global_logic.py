@@ -94,9 +94,9 @@ class ItemPriority(ItemPriorityBase):
 
 class Milestone(IntEnum):
     BE_ON_FIRST_LEVEL = auto()
-    FIND_SOKOBAN = auto()
     FIND_GNOMISH_MINES = auto()
     FIND_MINETOWN = auto()
+    FIND_SOKOBAN = auto()
     SOLVE_SOKOBAN = auto()
     FIND_MINES_END = auto()
     GO_DOWN = auto() # TODO
@@ -114,18 +114,19 @@ class GlobalLogic:
         self.minetown_level = None
 
     def update(self):
-        if utils.isin(self.agent.glyphs, G.ORACLE).any():
-            if self.oracle_level is None:
-                self.oracle_level = self.agent.current_level().key()
-            else:
-                assert self.oracle_level == self.agent.current_level().key()
+        if not self.agent.character.prop.hallu:
+            if utils.isin(self.agent.glyphs, G.ORACLE).any():
+                if self.oracle_level is None:
+                    self.oracle_level = self.agent.current_level().key()
+                else:
+                    assert self.oracle_level == self.agent.current_level().key()
 
-        if self.agent.current_level().dungeon_number == Level.GNOMISH_MINES and \
-                utils.isin(self.agent.glyphs, G.SHOPKEEPER).any():
-            if self.minetown_level is None:
-                self.minetown_level = self.agent.current_level().key()
-            else:
-                assert self.minetown_level == self.agent.current_level().key()
+            if self.agent.current_level().dungeon_number == Level.GNOMISH_MINES and \
+                    utils.isin(self.agent.glyphs, G.SHOPKEEPER).any():
+                if self.minetown_level is None:
+                    self.minetown_level = self.agent.current_level().key()
+                else:
+                    assert self.minetown_level == self.agent.current_level().key()
 
     @utils.debug_log('solving sokoban')
     @Strategy.wrap
@@ -144,7 +145,8 @@ class GlobalLogic:
                     message = self.agent.message
 
                 if (self.agent.blstats.y, self.agent.blstats.x) == (ty, tx):
-                    assert 'You hear a monster behind the boulder.' in message, message
+                    assert 'You hear a monster behind the boulder.' in message or \
+                           'You try to move the boulder, but in vain.' in message, message
                     if self.agent.bfs()[ty + dy, tx + dx] != -1:
                         self.agent.go_to(ty + dy, tx + dx, debug_tiles_args=dict(color=(255, 255, 255), is_path=True))
                         continue
@@ -302,6 +304,9 @@ class GlobalLogic:
     def dip_for_excalibur(self):
         if self.agent.character.alignment != Character.LAWFUL or self.agent.blstats.experience_level < 5:
             yield False
+        if self.agent.current_level().dungeon_number == Level.GNOMISH_MINES and \
+                (self.minetown_level is None or self.agent.current_level().key() == self.minetown_level):
+            yield False
 
         dis = self.agent.bfs()
         mask = utils.isin(self.agent.current_level().objects, G.FOUNTAIN) & (dis != -1)
@@ -333,9 +338,7 @@ class GlobalLogic:
         yield True
         while 1:
             if self.milestone == Milestone.BE_ON_FIRST_LEVEL:
-                condition = lambda: self.agent.blstats.score > 1400 or \
-                                    self.agent.character.role in [Character.VALKYRIE, Character.BARBARIAN,
-                                                                  Character.SAMURAI]
+                condition = lambda: self.agent.blstats.experience_level >= 7
                 level = (Level.DUNGEONS_OF_DOOM, 1)
 
             elif self.milestone == Milestone.FIND_SOKOBAN:
@@ -357,7 +360,7 @@ class GlobalLogic:
                 level = (Level.SOKOBAN, 1)
 
             elif self.milestone == Milestone.FIND_MINES_END:
-                condition = lambda: False  # TODO
+                condition = lambda: self.agent.current_level().key() == (Level.GNOMISH_MINES, 9)  # TODO
                 level = (Level.GNOMISH_MINES, 9)  # TODO
 
             else:
@@ -407,7 +410,8 @@ class GlobalLogic:
             self.current_strategy().repeat()
             .preempt(self.agent, [
                 self.solve_sokoban_strategy()
-                .condition(lambda: self.agent.current_level().dungeon_number == Level.SOKOBAN)
+                .condition(lambda: self.milestone == Milestone.SOLVE_SOKOBAN and
+                                   self.agent.current_level().dungeon_number == Level.SOKOBAN)
             ])
             .preempt(self.agent, [
                 self.wait_out_unexpected_state_strategy(),
