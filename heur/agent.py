@@ -843,7 +843,8 @@ class Agent:
                 if self.glyphs[y][x] == nh.GLYPH_INVISIBLE:
                     if utils.adjacent((self.blstats.y, self.blstats.x), (y, x)):
                         class dummy_permonst:
-                            mname='unknown'
+                            mname = 'unknown'
+                            mlet = '0'
                         ret.append((dis[y][x], y, x, dummy_permonst(), self.glyphs[y][x]))
                 else:
                     ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))

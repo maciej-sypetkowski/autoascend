@@ -1,8 +1,9 @@
 import numpy as np
 from scipy import signal
+from itertools import chain
 
 import utils
-from glyph import G
+from glyph import G, MON
 
 ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold']
 # COLD_MONSTERS = ['brown mold']
@@ -251,7 +252,13 @@ def build_priority_map(agent):
         draw_monster_priority_negative(agent, m, priority, walkable)
     priority[~walkable] = float('nan')
 
-    priority += get_corridors_priority_map(walkable)
+    # TODO: figure out how to use corridors priority so that it improves the score
+    # if len([m for m in monsters if m[3].mname not in chain(ONLY_RANGED_SLOW_MONSTERS, WEAK_MONSTERS)]) >= 4:
+    #     priority += get_corridors_priority_map(walkable)
+    # for _, _, _, mon, _ in monsters:
+    #     if ord(mon.mlet) == MON.S_ANT:
+    #         priority += get_corridors_priority_map(walkable)
+    #         break
 
     # use relative priority to te current position
     priority -= priority[agent.blstats.y, agent.blstats.x]
