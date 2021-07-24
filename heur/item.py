@@ -495,7 +495,8 @@ class ItemManager:
         if glyph is not None:
             assert glyph in ret_glyphs
             pos = O.possibilities_from_glyph(glyph)
-            assert all(map(lambda o: o in pos, objs)), (objs, pos)
+            if objs[0].name not in ['elven broadsword', 'runed broadsword']:
+                assert all(map(lambda o: o in pos, objs)), (objs, pos)
             ret_glyphs = [glyph]
             objs = sorted(set(objs).intersection(O.possibilities_from_glyph(glyph)))
 

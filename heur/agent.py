@@ -561,13 +561,11 @@ class Agent:
             if ' eat it? [ynq]' in self.message or \
                     ' eat one? [ynq]' in self.message:
                 self.type_text('y')
-            if "You don't have anything to eat." in self.message:
-                return False
-            if "You don't have that object." in self.message:
-                assert 0, self.message
-                # self.step(A.Command.ESC)
-                # return False
-        return True
+                return True
+            if "What do you want to eat?" in self.message or \
+                    "You don't have anything to eat." in self.message:
+                raise AgentPanic('no food is lying here')
+            assert 0, self.message
 
     def pray(self):
         self.step(A.Command.PRAY)
