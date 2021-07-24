@@ -353,6 +353,12 @@ class Agent:
         self._is_reading_message_or_popup = False
         self._message_history.append(self.message)
 
+        if "You may wish for an object." in self.message:
+            # TODO: wishing strategy
+            # TODO: assume wished item as blessed
+            self.step('b', iter('lessed greased +2 gray dragon scale mail\r'))
+            return
+
         if observation['misc'][1]:  # entering text
             self.step(A.Command.ESC)
             return

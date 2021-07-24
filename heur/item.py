@@ -1,7 +1,6 @@
 import contextlib
 import functools
 import re
-from collections import namedtuple
 from functools import partial
 
 import nle.nethack as nh
@@ -12,7 +11,7 @@ import objects as O
 import utils
 from character import Character
 from exceptions import AgentPanic
-from glyph import WEA, G, C, MON
+from glyph import WEA, G, MON
 from strategy import Strategy
 
 
@@ -60,14 +59,14 @@ class Item:
             return [nh.GLYPH_STATUE_OFF + self.monster_id]
         return self.glyphs
 
-    def is_ambiguous(self):
+    def is_unambiguous(self):
         return len(self.objs) == 1
 
     def can_be_dropped_from_inventory(self):
         return not (
-            (isinstance(self.objs[0], (O.Weapon, O.WepTool)) and self.status == Item.CURSED and self.equipped) or
-            (isinstance(self.objs[0], O.Armor) and self.equipped) or
-            (self.is_ambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED)
+                (isinstance(self.objs[0], (O.Weapon, O.WepTool)) and self.status == Item.CURSED and self.equipped) or
+                (isinstance(self.objs[0], O.Armor) and self.equipped) or
+                (self.is_unambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED)
         )
 
     def weight(self):
@@ -75,7 +74,7 @@ class Item:
 
     def unit_weight(self):
         if self.objs[0] == O.from_name('corpse'):
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return 10000  # TODO: take weight from monster
         if self.objs[0] in [
             O.from_name("glob of gray ooze"),
@@ -83,7 +82,7 @@ class Item:
             O.from_name("glob of green slime"),
             O.from_name("glob of black pudding"),
         ]:
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return 10000  # weight is unknown
 
         weight = max((obj.wt for obj in self.objs))
@@ -91,7 +90,7 @@ class Item:
 
     @property
     def object(self):
-        assert self.is_ambiguous()
+        assert self.is_unambiguous()
         return self.objs[0]
 
     ######## WEAPON
@@ -121,19 +120,19 @@ class Item:
         return min(hits), min(dmgs)
 
     def is_launcher(self):
-        if not self.is_weapon() or not self.is_ambiguous():
+        if not self.is_weapon() or not self.is_unambiguous():
             return False
 
         return self.object.name in ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
 
     def is_fired_projectile(self, launcher=None):
-        if not self.is_weapon() or not self.is_ambiguous():
+        if not self.is_weapon() or not self.is_unambiguous():
             return False
 
         arrows = ['arrow', 'elven arrow', 'orcish arrow', 'silver arrow', 'ya']
 
         if launcher is None:
-            return self.object.name in (arrows + ['crossbow bolt']) # TODO: sling ammo
+            return self.object.name in (arrows + ['crossbow bolt'])  # TODO: sling ammo
         else:
             launcher_name = launcher.object.name
             if launcher_name == 'crossbow':
@@ -146,7 +145,7 @@ class Item:
                 return self.object.name in arrows
 
     def is_thrown_projectile(self):
-        if not self.is_weapon() or not self.is_ambiguous():
+        if not self.is_weapon() or not self.is_unambiguous():
             return False
 
         # TODO: boomerang
@@ -181,7 +180,7 @@ class Item:
 
     def is_food(self):
         if isinstance(self.objs[0], O.Food):
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return True
 
     def nutrition_per_weight(self):
@@ -191,7 +190,7 @@ class Item:
 
     def is_corpse(self):
         if self.objs[0] == O.from_name('corpse'):
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return True
         return False
 
@@ -199,7 +198,7 @@ class Item:
 
     def is_statue(self):
         if self.objs[0] == O.from_name('statue'):
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return True
         return False
 
@@ -211,6 +210,8 @@ class ItemManager:
         self.glyph_to_object = {}
         self._last_object_glyph_mapping_update_step = None
         self._glyph_to_price_range = {}
+        self._glyph_to_possible_wand_types = {}
+        self._already_engraved_glyphs = set()
 
     def on_panic(self):
         self.update_object_glyph_mapping()
@@ -226,8 +227,8 @@ class ItemManager:
             for line in self.agent.popup:
                 if line.startswith('*'):
                     assert line[1] == ' ' and line[-1] == ')' and line.count('(') == 1 and line.count(')') == 1, line
-                    name = line[1 : line.find('(')].strip()
-                    desc = line[line.find('(') + 1 : -1].strip()
+                    name = line[1: line.find('(')].strip()
+                    desc = line[line.find('(') + 1: -1].strip()
 
                     n_objs, n_glyphs = ItemManager.parse_name(name)
                     d_glyphs = O.desc_to_glyphs(desc, O.get_category(n_objs[0]))
@@ -266,7 +267,7 @@ class ItemManager:
         if (self.agent.character.role == Character.TOURIST and self.agent.blstats.experience_level < 15) or \
                 (self.agent.inventory.items.shirt is not None and self.agent.inventory.items.suit is None and
                  self.agent.inventory.items.cloak is None) or \
-                (self.agent.inventory.items.helm is not None and self.agent.inventory.items.helm.is_ambiguous() and
+                (self.agent.inventory.items.helm is not None and self.agent.inventory.items.helm.is_unambiguous() and
                  self.agent.inventory.items.helm.object == O.from_name('dunce cap')):
             dupe_multiplier = (4 / 3, 4 / 3)
         elif self.agent.inventory.items.helm is not None and \
@@ -276,7 +277,7 @@ class ItemManager:
             dupe_multiplier = (1, 1)
 
         for item in self.agent.inventory.items_below_me:
-            if item.shop_status == Item.FOR_SALE and not item.is_ambiguous() and len(item.glyphs) == 1 and \
+            if item.shop_status == Item.FOR_SALE and not item.is_unambiguous() and len(item.glyphs) == 1 and \
                     isinstance(item.objs[0], (O.Armor, O.Ring, O.Wand, O.Scroll, O.Potion, O.Tool)):
                 # TODO: not an artifact
                 # TODO: Base price of partly eaten food, uncursed water, and (x:-1) wands is 0.
@@ -306,12 +307,13 @@ class ItemManager:
             glyph = None
 
         objs, glyphs, count, status, modifier, *args = \
-                self.parse_text(text, category, glyph)
+            self.parse_text(text, category, glyph)
         category = O.get_category(objs[0])
 
         possibilities_from_glyphs = set.union(*(set(self.possible_objects_from_glyph(glyph)) for glyph in glyphs))
         objs = [o for o in objs if o in possibilities_from_glyphs]
-        assert len(objs), ([O.objects[g - nh.GLYPH_OBJ_OFF].desc for g in glyphs], [o.name for o in possibilities_from_glyphs])
+        assert len(objs), ([O.objects[g - nh.GLYPH_OBJ_OFF].desc for g in glyphs],
+                           [o.name for o in possibilities_from_glyphs], text)
 
         if status == Item.UNKNOWN and (
                 self.agent.character.role == Character.PRIEST or
@@ -340,14 +342,23 @@ class ItemManager:
         return Item(objs, glyphs, count, status, modifier, *args, text)
 
     def possible_objects_from_glyph(self, glyph):
+        """ Get possible objects and update glyph_to_object and object_to_glyph when object isn't unambiguous.
+        """
         assert nh.glyph_is_object(glyph)
         if glyph in self.glyph_to_object:
             return [self.glyph_to_object[glyph]]
-        objs = [obj for obj in O.possibilities_from_glyph(glyph)
-                if obj not in self.object_to_glyph and
-                   (glyph not in self._glyph_to_price_range or not hasattr(obj, 'cost') or
-                    self._glyph_to_price_range[glyph][0] <= obj.cost <= self._glyph_to_price_range[glyph][1])
-        ]
+
+        objs = []
+        for obj in O.possibilities_from_glyph(glyph):
+            if obj in self.object_to_glyph:
+                continue
+            if glyph in self._glyph_to_price_range and hasattr(obj, 'cost') and \
+                    not self._glyph_to_price_range[glyph][0] <= obj.cost <= self._glyph_to_price_range[glyph][1]:
+                continue
+            if glyph in self._glyph_to_possible_wand_types and obj not in self._glyph_to_possible_wand_types[glyph]:
+                continue
+            objs.append(obj)
+
         if len(objs) == 1:
             self.glyph_to_object[glyph] = objs[0]
             assert objs[0] not in self.object_to_glyph
@@ -375,7 +386,7 @@ class ItemManager:
             r'^(a|an|the|\d+)'
             r'( empty)?'
             r'( (cursed|uncursed|blessed))?'
-            r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used|diluted))*'
+            r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used|diluted|greased))*'
             r'( ([+-]\d+))? '
             r"([a-zA-z0-9-!' ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
@@ -386,7 +397,8 @@ class ItemManager:
         assert len(matches) <= 1, text
         assert len(matches), text
 
-        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, _, _, shop_price = matches[0]
+        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, _, _, shop_price = \
+            matches[0]
         # TODO: effects, uses
 
         if info in {'being worn', 'being worn; slippery', 'wielded'} or info.startswith('weapon in ') or \
@@ -472,7 +484,8 @@ class ItemManager:
                 mon_name = mon_name[3:]
             monster_id = nh.glyph_to_mon(MON.from_name(mon_name))
             name = 'figurine'
-        elif name.startswith('paperback book named ') or name.startswith('paperback books named ') or name in ['novel', 'paperback']:
+        elif name.startswith('paperback book named ') \
+                or name.startswith('paperback books named ') or name in ['novel', 'paperback']:
             name = 'spellbook of novel'
         elif name.endswith(' egg') or name.endswith(' eggs'):
             monster_id = nh.glyph_to_mon(MON.from_name(name[:-len(' egg')].strip()))
@@ -505,7 +518,6 @@ class ItemManager:
             objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, shop_status, shop_price,
             dmg_bonus, to_hit_bonus,
         )
-
 
     @staticmethod
     @utils.copy_result
@@ -589,7 +601,6 @@ class ItemManager:
                                       name == obj_name.split()[0] + suf + ' ' + ' '.join(obj_name.split()[1:]))):
                         obj_ids.add(i)
 
-
         # object unidentified (look on descriptions)
         appearance_ids = set()
         prefixes = [
@@ -653,7 +664,7 @@ class ItemManager:
             objs = sorted(set.union(*[set(O.possibilities_from_glyph(i)) for i in glyphs]))
             assert name == 'runed broadsword' or \
                    all(map(lambda i: sorted(O.possibilities_from_glyph(i + nh.GLYPH_OBJ_OFF)) == objs, appearance_ids)), \
-                   name
+                name
 
         return objs, glyphs
 
@@ -685,61 +696,63 @@ class InventoryItems:
 
     def __str__(self):
         return (
-            f'main_hand: {self.main_hand}\n'
-            f'off_hand : {self.off_hand}\n'
-            f'suit     : {self.suit}\n'
-            f'helm     : {self.helm}\n'
-            f'gloves   : {self.gloves}\n'
-            f'boots    : {self.boots}\n'
-            f'cloak    : {self.cloak}\n'
-            f'shirt    : {self.shirt}\n'
-            f'Items:\n' +
-            '\n'.join([f' {l} - {i}' for l, i in zip(self.all_letters, self.all_items)])
+                f'main_hand: {self.main_hand}\n'
+                f'off_hand : {self.off_hand}\n'
+                f'suit     : {self.suit}\n'
+                f'helm     : {self.helm}\n'
+                f'gloves   : {self.gloves}\n'
+                f'boots    : {self.boots}\n'
+                f'cloak    : {self.cloak}\n'
+                f'shirt    : {self.shirt}\n'
+                f'Items:\n' +
+                '\n'.join([f' {l} - {i}' for l, i in zip(self.all_letters, self.all_items)])
         )
 
     def update(self):
-        if not (self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all()):
-            self._clear()
+        if not (self._previous_inv_strs is not None and (
+                self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all()):
+            self.update_no_check()
 
-            for item_name, category, glyph, letter in zip(
-                    self.agent.last_observation['inv_strs'],
-                    self.agent.last_observation['inv_oclasses'],
-                    self.agent.last_observation['inv_glyphs'],
-                    self.agent.last_observation['inv_letters']):
-                item_name = bytes(item_name).decode().strip('\0')
-                letter = chr(letter)
-                if not item_name:
-                    continue
-                item = self.agent.inventory.item_manager.get_item_from_text(item_name, category=category,
-                        glyph=glyph if not nh.glyph_is_body(glyph) and not nh.glyph_is_statue(glyph) else None)
+    def update_no_check(self):
+        self._clear()
+        for item_name, category, glyph, letter in zip(
+                self.agent.last_observation['inv_strs'],
+                self.agent.last_observation['inv_oclasses'],
+                self.agent.last_observation['inv_glyphs'],
+                self.agent.last_observation['inv_letters']):
+            item_name = bytes(item_name).decode().strip('\0')
+            letter = chr(letter)
+            if not item_name:
+                continue
+            glyph = glyph if not nh.glyph_is_body(glyph) and not nh.glyph_is_statue(glyph) else None
+            item = self.agent.inventory.item_manager.get_item_from_text(item_name, category=category, glyph=glyph)
 
-                self.total_weight += item.weight()
-                # weight is sometimes unambiguous for unidentified items. All exceptions:
-                # {'helmet': 30, 'helm of brilliance': 50, 'helm of opposite alignment': 50, 'helm of telepathy': 50}
-                # {'leather gloves': 10, 'gauntlets of fumbling': 10, 'gauntlets of power': 30, 'gauntlets of dexterity': 10}
-                # {'speed boots': 20, 'water walking boots': 15, 'jumping boots': 20, 'elven boots': 15, 'fumble boots': 20, 'levitation boots': 15}
-                # {'luckstone': 10, 'loadstone': 500, 'touchstone': 10, 'flint': 10}
+            self.total_weight += item.weight()
+            # weight is sometimes unambiguous for unidentified items. All exceptions:
+            # {'helmet': 30, 'helm of brilliance': 50, 'helm of opposite alignment': 50, 'helm of telepathy': 50}
+            # {'leather gloves': 10, 'gauntlets of fumbling': 10, 'gauntlets of power': 30, 'gauntlets of dexterity': 10}
+            # {'speed boots': 20, 'water walking boots': 15, 'jumping boots': 20, 'elven boots': 15, 'fumble boots': 20, 'levitation boots': 15}
+            # {'luckstone': 10, 'loadstone': 500, 'touchstone': 10, 'flint': 10}
 
-                self.all_items.append(item)
-                self.all_letters.append(letter)
+            self.all_items.append(item)
+            self.all_letters.append(letter)
 
-                if item.equipped:
-                    for types, sub, name in [
-                        ((O.Weapon, O.WepTool), None,         'main_hand'),
-                        (O.Armor,               O.ARM_SHIELD, 'off_hand'), # TODO: twoweapon support
-                        (O.Armor,               O.ARM_SUIT,   'suit'),
-                        (O.Armor,               O.ARM_HELM,   'helm'),
-                        (O.Armor,               O.ARM_GLOVES, 'gloves'),
-                        (O.Armor,               O.ARM_BOOTS,  'boots'),
-                        (O.Armor,               O.ARM_CLOAK,  'cloak'),
-                        (O.Armor,               O.ARM_SHIRT,  'shirt'),
-                    ]:
-                        if isinstance(item.objs[0], types) and (sub is None or sub == item.objs[0].sub):
-                            assert getattr(self, name) is None
-                            setattr(self, name, item)
-                            break
-
-            self._previous_inv_strs = self.agent.last_observation['inv_strs']
+            if item.equipped:
+                for types, sub, name in [
+                    ((O.Weapon, O.WepTool), None, 'main_hand'),
+                    (O.Armor, O.ARM_SHIELD, 'off_hand'),  # TODO: twoweapon support
+                    (O.Armor, O.ARM_SUIT, 'suit'),
+                    (O.Armor, O.ARM_HELM, 'helm'),
+                    (O.Armor, O.ARM_GLOVES, 'gloves'),
+                    (O.Armor, O.ARM_BOOTS, 'boots'),
+                    (O.Armor, O.ARM_CLOAK, 'cloak'),
+                    (O.Armor, O.ARM_SHIRT, 'shirt'),
+                ]:
+                    if isinstance(item.objs[0], types) and (sub is None or sub == item.objs[0].sub):
+                        assert getattr(self, name) is None
+                        setattr(self, name, item)
+                        break
+        self._previous_inv_strs = self.agent.last_observation['inv_strs']
 
     def get_letter(self, item):
         assert item in self.all_items, (item, self.all_items)
@@ -771,6 +784,8 @@ class Inventory:
         self.items_below_me = None
         self.letters_below_me = None
 
+        self.skip_engrave_counter = 0
+
     def on_panic(self):
         self.items_below_me = None
         self.letters_below_me = None
@@ -787,7 +802,6 @@ class Inventory:
                  self._previous_blstats.level_number, self._previous_blstats.dungeon_number) != \
                 (self.agent.blstats.y, self.agent.blstats.x, \
                  self.agent.blstats.level_number, self.agent.blstats.dungeon_number):
-
             assume_appropriate_message = self._previous_blstats is not None
 
             self._previous_blstats = self.agent.blstats
@@ -805,8 +819,8 @@ class Inventory:
 
         def f(self):
             if (
-                [(l, i.text) for i, l in zip(old_items_below_me, old_letters_below_me)] !=
-                [(l, i.text) for i, l in zip(self.items_below_me, self.letters_below_me)]
+                    [(l, i.text) for i, l in zip(old_items_below_me, old_letters_below_me)] !=
+                    [(l, i.text) for i, l in zip(self.items_below_me, self.letters_below_me)]
             ):
                 raise AgentPanic('items below me changed')
 
@@ -823,7 +837,7 @@ class Inventory:
     ####### ACTIONS
 
     def wield(self, item):
-        if item is None: # fists
+        if item is None:  # fists
             letter = '-'
         else:
             letter = self.items.get_letter(item)
@@ -895,7 +909,7 @@ class Inventory:
             assert 'You finish taking off ' in self.agent.message or \
                    'You were wearing ' in self.agent.message or \
                    'You feel that monsters no longer have difficulty pinpointing your location.' in self.agent.message \
-                   , self.agent.message
+                , self.agent.message
 
         return True
 
@@ -922,7 +936,7 @@ class Inventory:
                         items = []
                         letters = []
                 else:
-                    self.agent.step(A.Command.PICKUP) # FIXME: parse LOOK output, add this fragment to pickup method
+                    self.agent.step(A.Command.PICKUP)  # FIXME: parse LOOK output, add this fragment to pickup method
                     if 'Pick up what?' not in self.agent.popup:
                         if 'You cannot reach the bottom of the pit.' in self.agent.message or \
                                 'You cannot reach the floor.' in self.agent.message or \
@@ -1041,7 +1055,7 @@ class Inventory:
                 yield 'a'
                 yield A.MiscAction.MORE
             assert 'What would you like to drop?' in '\n'.join(self.agent.popup), \
-                   (self.agent.message, self.agent.popup)
+                (self.agent.message, self.agent.popup)
             while texts_to_type:
                 for text in list(texts_to_type):
                     letter = text[-1]
@@ -1058,7 +1072,6 @@ class Inventory:
         self.get_items_below_me()
 
         return True
-
 
     ######## STRATEGIES helpers
 
@@ -1134,36 +1147,217 @@ class Inventory:
         best_items = [None] * O.ARM_NUM
         best_ac = [None] * O.ARM_NUM
         for item in items:
-            if item.is_armor() and item.is_ambiguous() and \
-                    (item.status in [Item.UNCURSED, Item.BLESSED] or
-                     (allow_unknown_status and item.status == Item.UNKNOWN)):
-                slot = item.object.sub
-                ac = item.get_ac()
+            if not item.is_armor() or not item.is_unambiguous():
+                continue
 
-                if self.agent.character.role == Character.MONK and slot == O.ARM_SUIT:
-                    continue
+            # TODO: consider other always allowed items than dragon hide
+            is_dragonscale_armor = item.object.metal == O.DRAGON_HIDE
 
-                if best_ac[slot] is None or best_ac[slot] > ac:
-                    best_ac[slot] = ac
-                    best_items[slot] = item
+            allowed_statuses = [Item.UNCURSED, Item.BLESSED] + ([Item.UNKNOWN] if allow_unknown_status else [])
+            if item.status not in allowed_statuses and not is_dragonscale_armor:
+                continue
+
+            slot = item.object.sub
+            ac = item.get_ac()
+
+            if self.agent.character.role == Character.MONK and slot == O.ARM_SUIT:
+                continue
+
+            if best_ac[slot] is None or best_ac[slot] > ac:
+                best_ac[slot] = ac
+                best_items[slot] = item
 
         if return_ac:
             return best_items, best_ac
         return best_items
-
 
     ######## LOW-LEVEL STRATEGIES
 
     def gather_items(self):
         return (
             self.pickup_and_drop_items()
-            .before(self.wear_best_stuff())
-            .before(self.go_to_item_to_pickup()
-                    .before(self.check_items()).repeat().every(5)
-                    .preempt(self.agent, [
-                        self.pickup_and_drop_items()
-                    ])).repeat()
+                .before(self.wand_engrave_identify())
+                .before(self.wear_best_stuff())
+                .before(self.go_to_item_to_pickup()
+                        .before(self.check_items()).repeat().every(5)
+                        .preempt(self.agent, [
+                self.pickup_and_drop_items()
+            ])).repeat()
         )
+
+    def _determine_possible_wands(self, message, glyph):
+
+        wand_regex = '[a-zA-Z ]+'
+        floor_regex = '[a-zA-Z]+'
+        mapping = {
+            f"The engraving on the {floor_regex} vanishes!": ['cancellation', 'teleportation', 'make invisible'],
+            # TODO?: cold,  # (if the existing engraving is a burned one)
+
+            "A few ice cubes drop from the wand.": ['cold'],
+            f"The bugs on the {floor_regex} stop moving": ['death', 'sleep'],
+            f"This {wand_regex} is a wand of digging!": ['digging'],
+            "Gravel flies up from the floor!": ['digging'],
+            f"This {wand_regex} is a wand of fire!": ['fire'],
+            "Lightning arcs from the wand. You are blinded by the flash!": ['lighting'],
+            f"This {wand_regex} is a wand of lightning!": ['lightning'],
+            f"The {floor_regex} is riddled by bullet holes!": ['magic missile'],
+            f'The engraving now reads:': ['polymorph'],
+            f"The bugs on the {floor_regex} slow down!": ['slow monster'],
+            f"The bugs on the {floor_regex} speed up!": ['speed monster'],
+            "The wand unsuccessfully fights your attempt to write!": ['striking'],
+
+            # activated effects:
+            "A lit field surrounds you!": ['light'],
+            "You may wish for an object.": ['wishing'],
+            "You feel self-knowledgeable...": ['enlightenment']  # TODO: parse the effect
+            # TODO: "The wand is too worn out to engrave.": [None],  # wand is exhausted
+        }
+
+        for msg, wand_types in mapping.items():
+            res = re.findall(msg, message)
+            if len(res) > 0:
+                assert len(res) == 1
+                return [O.from_name(w, nh.WAND_CLASS) for w in wand_types]
+
+        # TODO: "wand is cancelled (x:-1)" ?
+        # TODO: "secret door detection self-identifies if secrets are detected" ?
+
+        res = re.findall(f'Your {wand_regex} suddenly explodes!', self.agent.message)
+        if len(res) > 0:
+            assert len(res) == 1
+            return None
+
+        res = re.findall(f'{wand_regex} glows, then fades.', self.agent.message)
+        if len(res) > 0:
+            assert len(res) == 1
+            return [p for p in O.possibilities_from_glyph(glyph)
+                    if p.name not in ['light', 'wishing']]
+            # TODO: wiki says this:
+            # return [O.from_name('opening', nh.WAND_CLASS),
+            #         O.from_name('probing', nh.WAND_CLASS),
+            #         O.from_name('undead turning', nh.WAND_CLASS),
+            #         O.from_name('nothing', nh.WAND_CLASS),
+            #         O.from_name('secret door detection', nh.WAND_CLASS),
+            #         ]
+
+        assert 0, message
+
+    @utils.debug_log('inventory.wand_engrave_identify')
+    @Strategy.wrap
+    def wand_engrave_identify(self):
+        self.skip_engrave_counter -= 1
+        if self.agent.character.prop.blind or self.skip_engrave_counter > 0:
+            yield False
+            return
+        yielded = False
+        for item in self.agent.inventory.items:
+            if not isinstance(item.objs[0], O.Wand):
+                continue
+            if len(self.item_manager.possible_objects_from_glyph(item.glyphs[0])) == 1:
+                continue
+            if self.agent.current_level().objects[self.agent.blstats.y, self.agent.blstats.x] not in G.FLOOR:
+                continue
+            if item.glyphs[0] in self.item_manager._already_engraved_glyphs:
+                continue
+
+            if not yielded:
+                yield True
+            yielded = True
+            self.skip_engrave_counter = 8
+
+            wand_types = self._engrave_single_wand(item)
+            if wand_types is None:
+                # there is a problem with engraving on this tile
+                continue
+
+            self.item_manager._glyph_to_possible_wand_types[item.glyphs[0]] = wand_types
+            self.item_manager._already_engraved_glyphs.add(item.glyphs[0])
+            self.item_manager.possible_objects_from_glyph(item.glyphs[0])
+            # print(len(self.item_manager.possible_objects_from_glyph(item.glyphs[0])))
+            # print(self.item_manager._glyph_to_possible_wand_types)
+            # input('==================3')
+
+        self.agent.inventory.items.update_no_check()
+
+        if not yielded:
+            yield False
+
+    def _engrave_single_wand(self, item):
+        """ Returns possible objects or None if current tile not suitable for identification."""
+
+        def msg():
+            return self.agent.message
+
+        self.agent.step(A.Command.LOOK)
+        if 'written' in msg() or 'engraved' in msg() or 'see' not in msg() and 'read' not in msg():
+            return None
+
+        skip_engraving = [False]
+
+        def action_generator():
+            assert msg().startswith('What do you want to write with?'), msg()
+            yield '-'
+            if 'Do you want to add to the current engraving' in msg():
+                yield 'q'
+                skip_engraving[0] = True
+                return
+            assert msg().startswith('You write in the dust with your fingertip.'), msg()
+            yield ' '
+            assert msg().startswith('What do you want to write in the dust here?'), msg()
+            yield 'x'
+            assert msg().startswith('What do you want to write in the dust here?'), msg()
+            yield '\r'
+
+        for _ in range(5):
+            # write 'x' with finger in the dust
+            self.agent.step(A.Command.ENGRAVE, additional_action_iterator=iter(action_generator()))
+
+            if skip_engraving[0]:
+                assert msg().strip() == 'Never mind.', msg()
+                return None
+
+            # this is usually true, but something unrelated like: "You hear crashing rock." may happen
+            # assert msg().strip() in '', msg()
+
+            # check if the written 'x' is visible when looking
+            self.agent.step(A.Command.LOOK)
+            if 'Something is written here in the dust.' in msg() \
+                    and 'You read: "x"' in msg():
+                break
+            else:
+                # this is usually true, but something unrelated like:
+                #   "There is a doorway here.  Something is written here in the dust. You read: "4".
+                #    You see here a giant rat corpse."
+                # may happen
+                # assert "You see no objects here" in msg(), msg()
+                return None
+        else:
+            assert 0, msg()
+
+        # try engraving with the wand
+        letter = self.agent.inventory.items.get_letter(item)
+        possible_wand_types = []
+
+        def action_generator():
+            assert msg().startswith('What do you want to write with?'), msg()
+            yield letter
+            if 'Do you want to add to the current engraving' in msg():
+                self.agent.type_text('y')
+                # assert 'You add to the writing in the dust with' in msg(), msg()
+                # self.agent.type_text(' ')
+            r = self._determine_possible_wands(msg(), item.glyphs[0])
+            if r is not None:
+                possible_wand_types.extend(r)
+            else:
+                # wand exploded
+                skip_engraving[0] = True
+
+        self.agent.step(A.Command.ENGRAVE, additional_action_iterator=iter(action_generator()))
+
+        if skip_engraving[0]:
+            return None
+
+        return possible_wand_types
 
     @utils.debug_log('inventory.wear_best_stuff')
     @Strategy.wrap
@@ -1173,8 +1367,9 @@ class Inventory:
             best_armorset = self.get_best_armorset()
 
             # TODO: twoweapon
-            for slot, name in [(O.ARM_SHIELD, 'off_hand'), (O.ARM_HELM, 'helm'), (O.ARM_GLOVES, 'gloves'), (O.ARM_BOOTS, 'boots'), \
-                               (O.ARM_SHIRT, 'shirt'), (O.ARM_SUIT, 'suit'), (O.ARM_CLOAK, 'cloak')]:
+            for slot, name in [(O.ARM_SHIELD, 'off_hand'), (O.ARM_HELM, 'helm'), (O.ARM_GLOVES, 'gloves'),
+                               (O.ARM_BOOTS, 'boots'), (O.ARM_SHIRT, 'shirt'), (O.ARM_SUIT, 'suit'),
+                               (O.ARM_CLOAK, 'cloak')]:
                 if best_armorset[slot] == getattr(self.items, name) or \
                         (getattr(self.items, name) is not None and getattr(self.items, name).status == Item.CURSED):
                     continue
@@ -1209,7 +1404,6 @@ class Inventory:
 
         if not yielded:
             yield False
-
 
     @utils.debug_log('inventory.check_items')
     @Strategy.wrap
@@ -1262,8 +1456,8 @@ class Inventory:
         free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(), self.items))
         forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), self.items))
         counts = self.agent.global_logic.item_priority.split(
-                free_items + list(items.keys()), forced_items,
-                self.agent.character.carrying_capacity)
+            free_items + list(items.keys()), forced_items,
+            self.agent.character.carrying_capacity)
 
         counts = counts[len(free_items):]
         assert len(counts) == len(items)
@@ -1299,8 +1493,8 @@ class Inventory:
             free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(), self.items))
             forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), self.items))
             counts = self.agent.global_logic.item_priority.split(
-                    free_items + self.items_below_me, forced_items,
-                    self.agent.character.carrying_capacity)
+                free_items + self.items_below_me, forced_items,
+                self.agent.character.carrying_capacity)
             to_drop = [item.count - count for item, count in zip(free_items, counts)]
             if sum(to_drop) > 0:
                 if not yielded:

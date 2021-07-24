@@ -1,4 +1,5 @@
 import multiprocessing
+import nle.nethack as nh
 import queue
 import time
 
@@ -476,8 +477,12 @@ class Visualizer:
 
     def _draw_item(self, letter, item, width, height):
         from item import Item
-
+        bg_color = {
+            nh.WAND_CLASS : np.array([0, 50, 50], dtype=np.uint8),
+        }
         vis = np.zeros((round(height * 0.9), width, 3)).astype(np.uint8)
+        if item.category in bg_color:
+            vis += bg_color[item.category]
         _put_text(vis, str(letter), (0, 0))
         status_str, status_col = {
             Item.UNKNOWN: (' ', (255, 255, 255)),

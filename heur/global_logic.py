@@ -54,7 +54,7 @@ class ItemPriority(ItemPriorityBase):
                         add_item(item)
 
         for item in items:
-            if item.is_ambiguous():
+            if item.is_unambiguous():
                 if item.object in [
                         O.from_name('healing', nh.POTION_CLASS),
                         O.from_name('extra healing', nh.POTION_CLASS),
@@ -153,7 +153,7 @@ class GlobalLogic:
                     else:
                         pickaxe = None
                         for item in self.agent.inventory.items:
-                            if item.is_ambiguous() and \
+                            if item.is_unambiguous() and \
                                     item.object in [O.from_name('pick-axe'), O.from_name('dwarvish mattock')]:
                                 pickaxe = item
                                 break
@@ -315,7 +315,7 @@ class GlobalLogic:
 
         candidate = None
         for item in self.agent.inventory.items:
-            if item.is_ambiguous() and item.object == O.from_name('long sword'):
+            if item.is_unambiguous() and item.object == O.from_name('long sword'):
                 if item.dmg_bonus is not None: # TODO: better condition for excalibur existance
                     yield False
                 candidate = item
