@@ -418,7 +418,7 @@ def prepare_env(args, seed, step_limit=None):
     return env
 
 
-def single_simulation(args, seed_offset, timeout=360):
+def single_simulation(args, seed_offset, timeout=720):
     start_time = time.time()
     env = prepare_env(args, seed_offset)
 
