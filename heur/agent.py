@@ -81,6 +81,7 @@ class Agent:
 
     @contextlib.contextmanager
     def atom_operation(self):
+        assert not self._no_step_calls
         if self.turns_in_atom_operation is not None:
             # already in an atom operation
             yield
@@ -390,6 +391,7 @@ class Agent:
             self.update_state()
 
     def update_state(self):
+        assert not self._no_step_calls
         if self._is_updating_state:
             return
         self._is_updating_state = True
@@ -496,6 +498,10 @@ class Agent:
 
         self._update_level_items()
         self._update_level_shops()
+
+        for y, x in zip(*utils.isin(level.objects, G.ALTAR).nonzero()):
+            if (y, x) not in level.altars:
+                level.altars[y, x] = Character.UNKNOWN
 
         level.was_on[self.blstats.y, self.blstats.x] = True
 
@@ -838,7 +844,8 @@ class Agent:
         ret = []
         for y, x in zip(*mask.nonzero()):
             if (dis[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2] != -1).any():
-                if self.glyphs[y][x] == nh.GLYPH_INVISIBLE:
+                if self.glyphs[y, x] == nh.GLYPH_INVISIBLE or \
+                        not MON.is_monster(self.glyphs[y, x]):  # TODO: some ghost are not visible in glyphs (?)
                     if utils.adjacent((self.blstats.y, self.blstats.x), (y, x)):
                         class dummy_permonst:
                             mname='unknown'
@@ -1157,21 +1164,20 @@ class Agent:
 
     @Strategy.wrap
     def eat_from_inventory(self):
-        if not (self.blstats.hunger_state >= Hunger.WEAK and any(
-                map(lambda item: item.category == nh.FOOD_CLASS,
-                    self.inventory.items))):
+        if self.blstats.hunger_state < Hunger.HUNGRY:
             yield False
-        yield True
-        with self.atom_operation():
-            self.step(A.Command.EAT)
-            while re.search('There (is|are)[a-zA-z0-9 ]* here; eat (it|one)\?', self.message):
-                self.type_text('n')
-            for item in self.inventory.items:
-                if item.category == nh.FOOD_CLASS:
+        for item in self.inventory.items:
+            if item.category == nh.FOOD_CLASS and \
+                    (not item.is_corpse() or
+                     item.monster_id in [MON.from_name(n) - nh.GLYPH_MON_OFF for n in ['lizard', 'lichen']]):
+                yield True
+                with self.atom_operation():
+                    self.step(A.Command.EAT)
+                    while re.search('There (is|are)[a-zA-z0-9 ]* here; eat (it|one)\?', self.message):
+                        self.type_text('n')
                     self.type_text(self.inventory.items.get_letter(item))
-                    break
-            else:
-                assert 0
+                return
+        yield False
 
     ####### MAIN
 

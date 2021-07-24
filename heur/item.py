@@ -29,7 +29,8 @@ class Item:
     UNPAID = 2
 
     def __init__(self, objs, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False,
-                 monster_id=None, shop_status=NOT_SHOP, price=0, dmg_bonus=None, to_hit_bonus=None, text=None):
+                 monster_id=None, shop_status=NOT_SHOP, price=0, dmg_bonus=None, to_hit_bonus=None,
+                 naming='', comment='', text=None):
         assert isinstance(objs, list) and len(objs) >= 1
         assert isinstance(glyphs, list) and len(glyphs) >= 1 and all((nh.glyph_is_object(g) for g in glyphs))
         assert isinstance(count, int)
@@ -46,6 +47,8 @@ class Item:
         self.price = price
         self.dmg_bonus = dmg_bonus
         self.to_hit_bonus = to_hit_bonus
+        self.naming = naming
+        self.comment = comment
         self.text = text
 
         self.category = O.get_category(self.objs[0])
@@ -74,9 +77,9 @@ class Item:
         return self.count * self.unit_weight()
 
     def unit_weight(self):
-        if self.objs[0] == O.from_name('corpse'):
-            assert self.is_ambiguous()
-            return 10000  # TODO: take weight from monster
+        if self.is_corpse():
+            return MON.permonst(self.monster_id).cwt
+
         if self.objs[0] in [
             O.from_name("glob of gray ooze"),
             O.from_name("glob of brown pudding"),
@@ -242,12 +245,7 @@ class ItemManager:
 
             self._last_object_glyph_mapping_update_step = self.agent.step_count
 
-    def price_identification(self):
-        if self.agent.character.prop.hallu:
-            return
-        if not self.agent.current_level().shop_interior[self.agent.blstats.y, self.agent.blstats.x]:
-            return
-
+    def _buy_price_identification(self):
         if self.agent.blstats.charisma <= 5:
             charisma_multiplier = 2
         elif self.agent.blstats.charisma <= 7:
@@ -297,7 +295,14 @@ class ItemManager:
 
                 # update mapping for that object
                 self.possible_objects_from_glyph(item.glyphs[0])
-                # TODO: update dependent objects
+
+    def price_identification(self):
+        if self.agent.character.prop.hallu:
+            return
+        if not self.agent.current_level().shop_interior[self.agent.blstats.y, self.agent.blstats.x]:
+            return
+
+        self._buy_price_identification()
 
     def get_item_from_text(self, text, category=None, glyph=None):
         # TODO: when blind, it may not work as expected, e.g. "a shield", "a gem", "a potion", etc
@@ -377,16 +382,27 @@ class ItemManager:
             r'( (cursed|uncursed|blessed))?'
             r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used|diluted))*'
             r'( ([+-]\d+))? '
-            r"([a-zA-z0-9-!' ]+)"
+            r"([a-zA-z0-9-!'# ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
-            r'( \(([a-zA-Z0-9; ]+)\))?'
+            r'( \(((, flickering|[a-zA-Z0-9; ])+)\))?'
             r'( \((for sale|unpaid), (\d+ aum, )?((\d+)[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
         assert len(matches) <= 1, text
         assert len(matches), text
 
-        count, _, effects1, status, effects2, _, _, _, modifier, name, _, uses, _, info, _, shop_status, _, _, shop_price = matches[0]
+        (
+            count,
+            _,
+            effects1,
+            status,
+            effects2, _, _, _,
+            modifier,
+            name,
+            _, uses, _,
+            info, _, _,
+            shop_status, _, _, shop_price
+        ) = matches[0]
         # TODO: effects, uses
 
         if info in {'being worn', 'being worn; slippery', 'wielded'} or info.startswith('weapon in ') or \
@@ -411,6 +427,20 @@ class ItemManager:
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
         monster_id = None
+
+        comment = ''
+        naming = ''
+        if ' named ' in name:
+            # TODO: many of these are artifacts
+            naming = name[name.index(' named ') + len(' named '):]
+            name = name[:name.index(' named ')]
+            if '#' in naming:
+                # all given names by the bot, starts with #
+                pos = naming.index('#')
+                comment = naming[pos + 1:]
+                naming = naming[:pos]
+            else:
+                comment = ''
 
         if shop_status == '':
             shop_status = Item.NOT_SHOP
@@ -444,7 +474,7 @@ class ItemManager:
             else:
                 monster_id = nh.glyph_to_mon(MON.from_name(mon_name))
             name = 'tin'
-        elif name.endswith(' corpse') or name.endswith(' corpses') or ' corpse named ' in name:
+        elif name.endswith(' corpse') or name.endswith(' corpses'):
             mon_name = name[:name.index('corpse')].strip()
             if mon_name.startswith('a '):
                 mon_name = mon_name[2:]
@@ -472,7 +502,7 @@ class ItemManager:
                 mon_name = mon_name[3:]
             monster_id = nh.glyph_to_mon(MON.from_name(mon_name))
             name = 'figurine'
-        elif name.startswith('paperback book named ') or name.startswith('paperback books named ') or name in ['novel', 'paperback']:
+        elif name in ['novel', 'paperback', 'paperback book']:
             name = 'spellbook of novel'
         elif name.endswith(' egg') or name.endswith(' eggs'):
             monster_id = nh.glyph_to_mon(MON.from_name(name[:-len(' egg')].strip()))
@@ -480,13 +510,55 @@ class ItemManager:
 
         dmg_bonus, to_hit_bonus = None, None
 
-        if ' named ' in name:
-            # TODO: many of these are artifacts
-            name = name[:name.index(' named ')]
+        if naming:
+            if naming in ['Hachi', 'Idefix', 'Slasher', 'Sirius']:  # pet names
+                pass
+            elif name == 'corpse':
+                pass
+            elif name == 'spellbook of novel':
+                pass
+            else:
+                name = naming
 
         if name == 'Excalibur':
             name = 'long sword'
             dmg_bonus = 5.5  # 1d10
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Mjollnir':
+            name = 'war hammer'
+            dmg_bonus = 12.5  # 1d24
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Cleaver':
+            name = 'battle-axe'
+            dmg_bonus = 3.5  # 1d6
+            to_hit_bonus = 2  # 1d3
+        elif name == 'Sting':
+            name = 'elven dagger'
+            dmg_bonus = 2.5  # TODO: x2
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Grimtooth':
+            name = 'orcish dagger'
+            dmg_bonus = 3.5  # +1d6
+            to_hit_bonus = 1.5  # 1d2
+        elif name in ['Sunsword', 'Frost Brand', 'Fire Brand', 'Demonbane', 'Giantslayer']:
+            name = 'long sword'
+            dmg_bonus = 5.5  # TODO: x2
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Vorpal Blade':
+            name = 'long sword'
+            dmg_bonus = 1
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Orcrist':
+            name = 'elven broadsword'
+            dmg_bonus = 6  # TODO: x2
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Magicbane':
+            name = 'athame'
+            dmg_bonus = 7.25  # TODO
+            to_hit_bonus = 2  # 1d3
+        elif name == 'Grayswandir':
+            name = 'silver saber'
+            dmg_bonus = 15  # TODO: x2 + 1d20
             to_hit_bonus = 3  # 1d5
 
         objs, ret_glyphs = ItemManager.parse_name(name)
@@ -503,7 +575,7 @@ class ItemManager:
         # TODO: Item should be returned here, but I don't want to memoize them
         return (
             objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, shop_status, shop_price,
-            dmg_bonus, to_hit_bonus,
+            dmg_bonus, to_hit_bonus, naming, comment,
         )
 
 
@@ -1057,6 +1129,13 @@ class Inventory:
             self.agent.step(A.Command.DROPTYPE, key_gen())
         self.get_items_below_me()
 
+        return True
+
+    def call_item(self, item, name):
+        assert item in self.items.all_items, item
+        letter = self.items.get_letter(item)
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.CALL, iter(f'i{letter}#{name}\r'))
         return True
 
 

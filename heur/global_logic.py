@@ -9,7 +9,7 @@ import soko_solver
 import utils
 from character import Character
 from exceptions import AgentPanic
-from glyph import Hunger, G
+from glyph import Hunger, G, MON
 from item import Item, ItemPriorityBase
 from level import Level
 from strategy import Strategy
@@ -19,6 +19,7 @@ class ItemPriority(ItemPriorityBase):
     MAX_NUMBER_OF_ITEMS = 26 * 2  # + coin slot
     def __init__(self, agent):
         self.agent = agent
+        self._take_sacrificial_corpses = False
 
     def split(self, items, forced_items, weight_capacity):
         remaining_weight = weight_capacity
@@ -66,12 +67,23 @@ class ItemPriority(ItemPriorityBase):
                         (item.is_launcher() or item.is_fired_projectile()):
                     add_item(item)
 
+        if self.agent.character.alignment == Character.LAWFUL:
+            for item in sorted(filter(lambda i: i.objs[0].name == 'long sword', items),
+                               key=lambda i: -utils.calc_dps(*self.agent.character.get_melee_bonus(i))):
+                add_item(item)
+                break
+
         for item in sorted(filter(lambda i: i.is_thrown_projectile(), items),
-                           key=lambda i: -utils.calc_dps(*self.agent.character.get_melee_bonus(i))):
+                           key=lambda i: -utils.calc_dps(*self.agent.character.get_ranged_bonus(None, i))):
             add_item(item)
 
-        for item in sorted(filter(lambda i: i.is_food(), items), key=lambda x: -x.nutrition_per_weight()):
+        for item in sorted(filter(lambda i: i.is_food() and not i.is_corpse(), items),
+                           key=lambda x: -x.nutrition_per_weight()):
             add_item(item)
+
+        if self._take_sacrificial_corpses:
+            for item in filter(self.agent.global_logic.can_sacrify, items):
+                add_item(item)
 
         # TODO: take nh.COIN_CLASS once shopping is implemented.
         # You have to drop all coins not to be attacked by a vault guard
@@ -79,13 +91,14 @@ class ItemPriority(ItemPriorityBase):
         for item in sorted(items, key=lambda i: i.unit_weight()):
             if item.category in [nh.POTION_CLASS, nh.RING_CLASS, nh.AMULET_CLASS, nh.WAND_CLASS, nh.SCROLL_CLASS,
                                  nh.TOOL_CLASS]:
-                if not isinstance(item.objs[0], O.Container) or item.objs[0].desc is not None:
+                # TODO: containers
+                if not isinstance(item.objs[0], O.Container): # or item.objs[0].desc is not None:
                     add_item(item)
 
         categories = [nh.WEAPON_CLASS, nh.ARMOR_CLASS, nh.TOOL_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.AMULET_CLASS,
                       nh.RING_CLASS, nh.POTION_CLASS, nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.WAND_CLASS]
         for item in sorted(items, key=lambda i: i.unit_weight()):
-            if item.category in categories and (not isinstance(item.objs[0], O.Container) or item.objs[0].desc is not None):
+            if item.category in categories and not isinstance(item.objs[0], O.Container) and not item.is_corpse():
                 if item.status == Item.UNKNOWN:
                     add_item(item)
 
@@ -112,6 +125,8 @@ class GlobalLogic:
 
         self.oracle_level = None
         self.minetown_level = None
+
+        self._got_artifact = False
 
     def update(self):
         if not self.agent.character.prop.hallu:
@@ -313,18 +328,24 @@ class GlobalLogic:
         if not mask.any():
             yield False
 
-        candidate = None
-        for item in self.agent.inventory.items:
-            if item.is_ambiguous() and item.object == O.from_name('long sword'):
-                if item.dmg_bonus is not None: # TODO: better condition for excalibur existance
-                    yield False
-                candidate = item
+        def excalibur_candidate():
+            candidate = None
+            for item in self.agent.inventory.items:
+                if item.is_ambiguous() and item.object == O.from_name('long sword'):
+                    if item.dmg_bonus is not None: # TODO: better condition for excalibur existance
+                        return None
+                    candidate = item
+            return candidate
 
-        if candidate is None:
+        if excalibur_candidate() is None:
             yield False
         yield True
 
         self.agent.go_to(*list(zip(*mask.nonzero()))[0])
+
+        candidate = excalibur_candidate()
+        if candidate is None:
+            return
 
         # TODO: refactor
         with self.agent.atom_operation():
@@ -332,6 +353,80 @@ class GlobalLogic:
             self.agent.type_text(self.agent.inventory.items.get_letter(candidate))
             if 'What do you want to dip ' in self.agent.message and 'into?' in self.agent.message:
                 raise AgentPanic('no fountain here')
+
+    def can_sacrify(self, item):
+        if not item.is_corpse() or item.comment == 'old':
+            return False
+
+        mname = MON.permonst(item.monster_id + nh.GLYPH_MON_OFF).mname
+        if (mname == 'pony' and self.agent.character.role in [Character.KNIGHT, Character.BARBARIAN]) or \
+                (mname == 'kitten' and self.agent.character.role == [Character.BARBARIAN, Character.WIZARD]) or \
+                (mname == 'little dog' and item.naming):  # little dogs are always named
+            # sufficient condition for being an initial pet
+            return False
+
+        if self.agent.character.alignment != Character.CHAOTIC:
+            mapping = {
+                Character.HUMAN: MON.M2_HUMAN | MON.M2_WERE,
+                Character.DWARF: MON.M2_DWARF,
+                Character.ELF: MON.M2_ELF,
+                Character.GNOME: MON.M2_GNOME,
+                Character.ORC: MON.M2_ORC,
+            }
+            f2 = MON.permonst(item.monster_id + nh.GLYPH_MON_OFF).mflags2
+            if (f2 & mapping[self.agent.character.race]) > 0:
+                return False
+
+        return True
+
+    @utils.debug_log('offer_corpses')
+    @Strategy.wrap
+    def offer_corpses(self):
+        self.item_priority._take_sacrificial_corpses = False
+
+        if self._got_artifact:
+            yield False
+
+        altars = [p for p, alignment in self.agent.current_level().altars.items()
+                  if alignment == self.agent.character.alignment]
+
+        if not altars:
+            yield False
+
+        dis = self.agent.bfs()
+        altars = [(y, x) for y, x in altars if dis[y, x] != -1]
+
+        if not altars:
+            yield False
+
+        self.item_priority._take_sacrificial_corpses = True
+
+        if not any((self.can_sacrify(item) for item in self.agent.inventory.items if item)):
+            yield False
+
+        yield True
+
+        y, x = min(altars, key=lambda p: dis[p])
+        self.agent.go_to(y, x)
+        with self.agent.panic_if_position_changes():
+            for item in self.agent.inventory.items:
+                if self.can_sacrify(item):
+                    with self.agent.atom_operation():
+                        self.agent.step(A.Command.OFFER)
+                        while 'There is ' in self.agent.message and 'sacrifice it?' in self.agent.message:
+                            self.agent.type_text('n')
+                        assert 'What do you want to sacrifice?' in self.agent.message, self.agent.message
+                        self.agent.type_text(self.agent.inventory.items.get_letter(item))
+                        if 'Nothing happens.' in self.agent.message:
+                            self.agent.inventory.call_item(item, 'old')
+                            return
+                        if 'Use my gift wisely' in self.agent.message:
+                            self._got_artifact = True
+                            self.agent.inventory.get_items_below_me()
+                            return
+                        assert 'Your sacrifice is consumed in a flash of light' in self.agent.message or \
+                               'Your sacrifice is consumed in a burst of flame' in self.agent.message, \
+                               self.agent.message
 
     @Strategy.wrap
     def current_strategy(self):
@@ -378,6 +473,8 @@ class GlobalLogic:
                     kick_doors=self.agent.current_level().dungeon_number != Level.GNOMISH_MINES).strategy())
                 .preempt(self.agent, [
                     self.identify_items_on_altar().every(100),
+                    self.identify_items_on_altar().condition(
+                        lambda: self.agent.current_level().objects[self.agent.blstats.y, self.agent.blstats.x] in G.ALTAR),
                     self.dip_for_excalibur().condition(lambda: self.agent.blstats.experience_level >= 7).every(10),
                 ])
             )
@@ -390,13 +487,16 @@ class GlobalLogic:
                         self.identify_items_on_altar(),
                         self.dip_for_excalibur().condition(lambda: self.agent.blstats.experience_level >= 7),
                     ])
+                    .condition(lambda: self._got_artifact or
+                                       not any([alignment == self.agent.character.alignment
+                                                for _, alignment in self.agent.current_level().altars.items()]))
                 ])
                 .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
             )
 
             (
                 self.agent.exploration.go_to_level_strategy(*level, go_to_strategy, exploration_strategy(None))
-                .before(self.agent.exploration.explore1(None, trap_search_offset=1))
+                .before(exploration_strategy(None))
                 .preempt(self.agent, [
                     exploration_strategy(0),
                     exploration_strategy(None)
@@ -412,6 +512,11 @@ class GlobalLogic:
                 self.solve_sokoban_strategy()
                 .condition(lambda: self.milestone == Milestone.SOLVE_SOKOBAN and
                                    self.agent.current_level().dungeon_number == Level.SOKOBAN)
+            ])
+            .preempt(self.agent, [
+                self.offer_corpses().preempt(self.agent, [
+                    self.agent.eat1().condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
+                ]),
             ])
             .preempt(self.agent, [
                 self.wait_out_unexpected_state_strategy(),

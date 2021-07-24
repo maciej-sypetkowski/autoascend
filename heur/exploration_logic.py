@@ -1,7 +1,10 @@
 import numpy as np
+import re
 from nle import nethack as nh
+from nle.nethack import actions as A
 
 import utils
+from character import Character
 from glyph import G, C
 from level import Level
 from strategy import Strategy
@@ -213,8 +216,26 @@ class ExplorationLogic:
         for _ in range(search_count):
             self.agent.search()
 
+    @Strategy.wrap
+    def check_altar(self):
+        level = self.agent.current_level()
+        pos = (self.agent.blstats.y, self.agent.blstats.x)
+        if pos in level.altars and level.altars[pos] == Character.UNKNOWN:
+            yield True
+            with self.agent.atom_operation():
+                self.agent.step(A.Command.LOOK)
+                r = re.search(r'There is an altar to [a-zA-Z- ]+ \(([a-z]+)\) here.', self.agent.message or self.agent.popup[0])
+                assert r is not None, (self.agent.message, self.agent.popup)
+                alignment = r.groups()[0]
+                assert alignment in Character.name_to_alignment, (alignment, self.agent.message)
+                alignment = Character.name_to_alignment[alignment]
+                level.altars[pos] = alignment
+                return
+
+        yield False
+
     @utils.debug_log('explore1')
-    def explore1(self, search_prio_limit=0, door_open_count=4, kick_doors=True, trap_search_offset=0):
+    def explore1(self, search_prio_limit=0, door_open_count=4, kick_doors=True, trap_search_offset=0, check_altar_alignment=True):
         # TODO: refactor entire function
 
 
@@ -298,6 +319,13 @@ class ExplorationLogic:
         def open_visit_search(search_prio_limit):
             yielded = False
             while 1:
+                if check_altar_alignment and self.check_altar().check_condition():
+                    if not yielded:
+                        yielded = True
+                        yield True
+                    self.check_altar().run()
+                    continue
+
                 if open_neighbor_doors().check_condition():
                     if not yielded:
                         yielded = True
@@ -307,6 +335,11 @@ class ExplorationLogic:
 
                 to_visit = to_visit_func()
                 to_search = to_search_func(search_prio_limit if search_prio_limit is not None else 0)
+
+                if check_altar_alignment:
+                    for (y, x), alignment in self.agent.current_level().altars.items():
+                        if alignment == Character.UNKNOWN:
+                            to_visit[y, x] = True
 
                 # consider exploring tile only when there is a path to it
                 dis = self.agent.bfs()
