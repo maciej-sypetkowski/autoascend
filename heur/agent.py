@@ -848,7 +848,8 @@ class Agent:
                         not MON.is_monster(self.glyphs[y, x]):  # TODO: some ghost are not visible in glyphs (?)
                     if utils.adjacent((self.blstats.y, self.blstats.x), (y, x)):
                         class dummy_permonst:
-                            mname='unknown'
+                            mname = 'unknown'
+                            mlet = '0'
                         ret.append((dis[y][x], y, x, dummy_permonst(), self.glyphs[y][x]))
                 else:
                     ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))

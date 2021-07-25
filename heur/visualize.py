@@ -195,6 +195,8 @@ class Visualizer:
 
         self.start_display_thread()
 
+        self.last_obs = None
+
     def _display_thread(self):
         cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
 
