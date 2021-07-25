@@ -51,6 +51,9 @@ class Item:
         self.comment = comment
         self.text = text
 
+        self.content = None  # for checked containers it will be set after the constructor
+        self.container_id = None  # for containers and possible containers it will be set after the constructor
+
         self.category = O.get_category(self.objs[0])
         assert all((ord(nh.objclass(nh.glyph_to_obj(g)).oc_class) == self.category for g in self.glyphs))
 
@@ -63,14 +66,14 @@ class Item:
             return [nh.GLYPH_STATUE_OFF + self.monster_id]
         return self.glyphs
 
-    def is_ambiguous(self):
+    def is_unambiguous(self):
         return len(self.objs) == 1
 
     def can_be_dropped_from_inventory(self):
         return not (
             (isinstance(self.objs[0], (O.Weapon, O.WepTool)) and self.status == Item.CURSED and self.equipped) or
             (isinstance(self.objs[0], O.Armor) and self.equipped) or
-            (self.is_ambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED)
+            (self.is_unambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED)
         )
 
     def weight(self):
@@ -80,21 +83,28 @@ class Item:
         if self.is_corpse():
             return MON.permonst(self.monster_id).cwt
 
+        if self.is_possible_container():
+            return 100000
+
         if self.objs[0] in [
             O.from_name("glob of gray ooze"),
             O.from_name("glob of brown pudding"),
             O.from_name("glob of green slime"),
             O.from_name("glob of black pudding"),
         ]:
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return 10000  # weight is unknown
 
         weight = max((obj.wt for obj in self.objs))
+
+        if self.is_container():
+            weight += self.content.weight()  # TODO: bag of holding
+
         return weight
 
     @property
     def object(self):
-        assert self.is_ambiguous()
+        assert self.is_unambiguous()
         return self.objs[0]
 
     ######## WEAPON
@@ -124,13 +134,13 @@ class Item:
         return min(hits), min(dmgs)
 
     def is_launcher(self):
-        if not self.is_weapon() or not self.is_ambiguous():
+        if not self.is_weapon() or not self.is_unambiguous():
             return False
 
         return self.object.name in ['bow', 'elven bow', 'orcish bow', 'yumi', 'crossbow', 'sling']
 
     def is_fired_projectile(self, launcher=None):
-        if not self.is_weapon() or not self.is_ambiguous():
+        if not self.is_weapon() or not self.is_unambiguous():
             return False
 
         arrows = ['arrow', 'elven arrow', 'orcish arrow', 'silver arrow', 'ya']
@@ -149,7 +159,7 @@ class Item:
                 return self.object.name in arrows
 
     def is_thrown_projectile(self):
-        if not self.is_weapon() or not self.is_ambiguous():
+        if not self.is_weapon() or not self.is_unambiguous():
             return False
 
         # TODO: boomerang
@@ -184,17 +194,17 @@ class Item:
 
     def is_food(self):
         if isinstance(self.objs[0], O.Food):
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return True
 
     def nutrition_per_weight(self):
         # TODO: corpses/tins
         assert self.is_food()
-        return self.object.nutrition / max(self.weight() / self.count, 1)
+        return self.object.nutrition / max(self.unit_weight(), 1)
 
     def is_corpse(self):
         if self.objs[0] == O.from_name('corpse'):
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return True
         return False
 
@@ -202,9 +212,45 @@ class Item:
 
     def is_statue(self):
         if self.objs[0] == O.from_name('statue'):
-            assert self.is_ambiguous()
+            assert self.is_unambiguous()
             return True
         return False
+
+    ######## CONTAINER
+
+    def is_container(self):
+        # bag of tricks is not considered to be a container.
+        # If the identifier doesn't exist yet, it's not consider a container
+        return self.content is not None
+
+    def is_possible_container(self):
+        if self.is_container():
+            return False
+
+        if self.is_unambiguous() and self.object.name == 'bag of tricks':
+            return False
+        return any((isinstance(obj, O.Container) for obj in self.objs))
+
+    def content(self):
+        assert self.is_container()
+        return self.content
+
+
+class ContainerContent:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.items = []
+        self.locked = False
+
+    def __iter__(self):
+        return iter(self.items)
+
+    def weight(self):
+        if self.locked:
+            return 100000
+        return sum((item.weight() for item in self.items))
 
 
 class ItemManager:
@@ -214,6 +260,12 @@ class ItemManager:
         self.glyph_to_object = {}
         self._last_object_glyph_mapping_update_step = None
         self._glyph_to_price_range = {}
+        self._is_not_bag_of_tricks = set()
+
+        # the container content should be edited instead of creating new one if exists.
+        # Item.content keeps reference to it
+        self.container_contents = {}  # container_id -> ContainerContent
+        self._last_container_identifier = 0
 
     def on_panic(self):
         self.update_object_glyph_mapping()
@@ -245,6 +297,11 @@ class ItemManager:
 
             self._last_object_glyph_mapping_update_step = self.agent.step_count
 
+    def _get_new_container_identifier(self):
+        ret = self._last_container_identifier
+        self._last_container_identifier += 1
+        return str(ret)
+
     def _buy_price_identification(self):
         if self.agent.blstats.charisma <= 5:
             charisma_multiplier = 2
@@ -264,7 +321,7 @@ class ItemManager:
         if (self.agent.character.role == Character.TOURIST and self.agent.blstats.experience_level < 15) or \
                 (self.agent.inventory.items.shirt is not None and self.agent.inventory.items.suit is None and
                  self.agent.inventory.items.cloak is None) or \
-                (self.agent.inventory.items.helm is not None and self.agent.inventory.items.helm.is_ambiguous() and
+                (self.agent.inventory.items.helm is not None and self.agent.inventory.items.helm.is_unambiguous() and
                  self.agent.inventory.items.helm.object == O.from_name('dunce cap')):
             dupe_multiplier = (4 / 3, 4 / 3)
         elif self.agent.inventory.items.helm is not None and \
@@ -274,7 +331,7 @@ class ItemManager:
             dupe_multiplier = (1, 1)
 
         for item in self.agent.inventory.items_below_me:
-            if item.shop_status == Item.FOR_SALE and not item.is_ambiguous() and len(item.glyphs) == 1 and \
+            if item.shop_status == Item.FOR_SALE and not item.is_unambiguous() and len(item.glyphs) == 1 and \
                     isinstance(item.objs[0], (O.Armor, O.Ring, O.Wand, O.Scroll, O.Potion, O.Tool)):
                 # TODO: not an artifact
                 # TODO: Base price of partly eaten food, uncursed water, and (x:-1) wands is 0.
@@ -304,7 +361,13 @@ class ItemManager:
 
         self._buy_price_identification()
 
-    def get_item_from_text(self, text, category=None, glyph=None):
+    def update_possible_objects(self, item):
+        possibilities_from_glyphs = set.union(*(set(self.possible_objects_from_glyph(glyph)) for glyph in item.glyphs))
+        item.objs = [o for o in item.objs if o in possibilities_from_glyphs]
+        assert len(item.objs)
+
+    def get_item_from_text(self, text, category=None, glyph=None, *, position):
+        # position acts as a container identifier if the container is not called. If the item is in inventory set it to None
         # TODO: when blind, it may not work as expected, e.g. "a shield", "a gem", "a potion", etc
 
         if self.agent.character.prop.hallu:
@@ -342,7 +405,24 @@ class ItemManager:
             elif len(glyphs) == 1 and glyphs[0] in self.glyph_to_object:
                 objs = [self.glyph_to_object[glyphs[0]]]
 
-        return Item(objs, glyphs, count, status, modifier, *args, text)
+        item = Item(objs, glyphs, count, status, modifier, *args, text)
+
+        if item.is_possible_container() or item.is_container():
+            if item.comment:
+                identifier = item.comment
+            else:
+                if position is not None:
+                    identifier = position
+                else:
+                    identifier = self._get_new_container_identifier()
+            item.container_id = identifier
+            if identifier in self.container_contents:
+                item.content = self.container_contents[identifier]
+                if len(item.glyphs) == 1 and item.glyphs[0] not in self._is_not_bag_of_tricks:
+                    self._is_not_bag_of_tricks.add(item.glyphs[0])
+                    self.update_possible_objects(item)
+
+        return item
 
     def possible_objects_from_glyph(self, glyph):
         assert nh.glyph_is_object(glyph)
@@ -353,6 +433,7 @@ class ItemManager:
                    (glyph not in self._glyph_to_price_range or not hasattr(obj, 'cost') or
                     self._glyph_to_price_range[glyph][0] <= obj.cost <= self._glyph_to_price_range[glyph][1])
         ]
+        objs = [obj for obj in objs if glyph not in self._is_not_bag_of_tricks or obj.name != 'bag of tricks']
         if len(objs) == 1:
             self.glyph_to_object[glyph] = objs[0]
             assert objs[0] not in self.object_to_glyph
@@ -380,7 +461,7 @@ class ItemManager:
             r'^(a|an|the|\d+)'
             r'( empty)?'
             r'( (cursed|uncursed|blessed))?'
-            r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used|diluted))*'
+            r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used|diluted|unlocked|locked))*'
             r'( ([+-]\d+))? '
             r"([a-zA-z0-9-!'# ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
@@ -508,6 +589,10 @@ class ItemManager:
             monster_id = nh.glyph_to_mon(MON.from_name(name[:-len(' egg')].strip()))
             name = 'egg'
 
+        if ' containing ' in name:
+            # TODO: use number of items for verification
+            name = name[:name.index(' containing ')]
+
         dmg_bonus, to_hit_bonus = None, None
 
         if naming:
@@ -592,7 +677,6 @@ class ItemManager:
             ret_glyphs = [glyph]
             objs = sorted(set(objs).intersection(O.possibilities_from_glyph(glyph)))
 
-        # TODO: Item should be returned here, but I don't want to memoize them
         return (
             objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, shop_status, shop_price,
             dmg_bonus, to_hit_bonus, naming, comment,
@@ -772,6 +856,8 @@ class InventoryItems:
         self.all_items = []
         self.all_letters = []
 
+        self._recheck_containers = True
+
     def __iter__(self):
         return iter(self.all_items)
 
@@ -789,6 +875,16 @@ class InventoryItems:
             '\n'.join([f' {l} - {i}' for l, i in zip(self.all_letters, self.all_items)])
         )
 
+    def total_nutrition(self):
+        ret = 0
+        for item in self:
+            if item.is_food():
+                ret += item.object.nutrition * item.count
+        return ret
+
+    def on_panic(self):
+        self._recheck_containers = True
+
     def update(self):
         if not (self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all()):
             self._clear()
@@ -803,14 +899,8 @@ class InventoryItems:
                 if not item_name:
                     continue
                 item = self.agent.inventory.item_manager.get_item_from_text(item_name, category=category,
-                        glyph=glyph if not nh.glyph_is_body(glyph) and not nh.glyph_is_statue(glyph) else None)
-
-                self.total_weight += item.weight()
-                # weight is sometimes unambiguous for unidentified items. All exceptions:
-                # {'helmet': 30, 'helm of brilliance': 50, 'helm of opposite alignment': 50, 'helm of telepathy': 50}
-                # {'leather gloves': 10, 'gauntlets of fumbling': 10, 'gauntlets of power': 30, 'gauntlets of dexterity': 10}
-                # {'speed boots': 20, 'water walking boots': 15, 'jumping boots': 20, 'elven boots': 15, 'fumble boots': 20, 'levitation boots': 15}
-                # {'luckstone': 10, 'loadstone': 500, 'touchstone': 10, 'flint': 10}
+                        glyph=glyph if not nh.glyph_is_body(glyph) and not nh.glyph_is_statue(glyph) else None,
+                        position=None)
 
                 self.all_items.append(item)
                 self.all_letters.append(letter)
@@ -831,7 +921,18 @@ class InventoryItems:
                             setattr(self, name, item)
                             break
 
+                if item.is_possible_container() or (item.is_container() and self._recheck_containers):
+                    self.agent.inventory.check_container_content(item)
+
+                self.total_weight += item.weight()
+                # weight is sometimes unambiguous for unidentified items. All exceptions:
+                # {'helmet': 30, 'helm of brilliance': 50, 'helm of opposite alignment': 50, 'helm of telepathy': 50}
+                # {'leather gloves': 10, 'gauntlets of fumbling': 10, 'gauntlets of power': 30, 'gauntlets of dexterity': 10}
+                # {'speed boots': 20, 'water walking boots': 15, 'jumping boots': 20, 'elven boots': 15, 'fumble boots': 20, 'levitation boots': 15}
+                # {'luckstone': 10, 'loadstone': 500, 'touchstone': 10, 'flint': 10}
+
             self._previous_inv_strs = self.agent.last_observation['inv_strs']
+            self._recheck_containers = False
 
     def get_letter(self, item):
         assert item in self.all_items, (item, self.all_items)
@@ -991,6 +1092,75 @@ class Inventory:
 
         return True
 
+    def check_container_content(self, item):
+        assert not self.agent.character.prop.polymorph  # TODO: only handless
+        assert item.is_possible_container() or item.is_container()
+        assert item in self.items.all_items or item in self.items_below_me
+
+        is_bag_of_tricks = False
+        if item.content is not None:
+            content = item.content
+            content.reset()
+        else:
+            content = ContainerContent()
+
+        def gen():
+            nonlocal content, is_bag_of_tricks
+
+            if 'You carefully open ' in self.agent.message or 'You open ' in self.agent.message:
+                yield ' '
+
+            if 'It develops a huge set of teeth and bites you!' in self.agent.message:
+                is_bag_of_tricks = True
+                return
+
+            if 'Hmmm, it turns out to be locked.' in self.agent.message or 'It is locked.' in self.agent.message:
+                content.locked = True
+                return
+
+            yield ':'
+
+            if ' is empty' in self.agent.message:
+                return
+
+            if self.agent.popup and 'Contents of ' in self.agent.popup[0]:
+                for text in self.agent.popup[1:]:
+                    if not text:
+                        continue
+                    content.items.append(self.item_manager.get_item_from_text(text, position=None))
+                return
+
+            assert 0, (self.agent.message, self.agent.popup)
+
+        with self.agent.atom_operation():
+            if item in self.items.all_items:
+                self.agent.step(A.Command.APPLY)
+                self.agent.step(self.items.get_letter(item), gen())
+            else:
+                self.agent.step(A.Command.LOOT)
+                while self.agent.message != f'There is {item.text} here, loot it? [ynq] (q)':
+                    assert 'There is ' in self.agent.message and ', loot it?' in self.agent.message, self.agent.message
+                    self.agent.step('n')
+                self.agent.step('y', gen())
+
+            if is_bag_of_tricks:
+                assert item.content is None
+                raise AgentPanic('bag of tricks bites')
+
+            if item in self.items.all_items and item.comment != item.container_id:
+                self.call_item(item, item.container_id)
+
+            if item.content is None:
+                assert item.container_id is not None
+                assert item.container_id not in self.item_manager.container_contents
+                self.item_manager.container_contents[item.container_id] = content
+                item.content = content
+
+            # TODO: make it more elegant
+            if len(item.glyphs) == 1 and item.glyphs[0] not in self.item_manager._is_not_bag_of_tricks:
+                self.item_manager._is_not_bag_of_tricks.add(item.glyphs[0])
+                self.item_manager.update_possible_objects(item)
+
     def get_items_below_me(self, assume_appropriate_message=False):
         with self.agent.panic_if_position_changes():
             with self.agent.atom_operation():
@@ -1008,7 +1178,8 @@ class Inventory:
                     elif 'You see here ' in self.agent.message:
                         item_str = self.agent.message[self.agent.message.index('You see here ') + len('You see here '):]
                         item_str = item_str[:item_str.index('.')]
-                        items = [self.item_manager.get_item_from_text(item_str)]
+                        items = [self.item_manager.get_item_from_text(item_str,
+                            position=(*self.agent.current_level().key(), self.agent.blstats.y, self.agent.blstats.x))]
                         letters = [None]
                     else:
                         items = []
@@ -1054,7 +1225,8 @@ class Inventory:
                             assert line[1:4] == ' - ', line
                             letter, line = line[0], line[4:]
                             letters.append(letter)
-                            items.append(self.item_manager.get_item_from_text(line, category))
+                            items.append(self.item_manager.get_item_from_text(line, category,
+                                position=(*self.agent.current_level().key(), self.agent.blstats.y, self.agent.blstats.x)))
 
                 self.items_below_me = items
                 self.letters_below_me = letters
@@ -1233,7 +1405,7 @@ class Inventory:
         best_items = [None] * O.ARM_NUM
         best_ac = [None] * O.ARM_NUM
         for item in items:
-            if item.is_armor() and item.is_ambiguous() and \
+            if item.is_armor() and item.is_unambiguous() and \
                     (item.status in [Item.UNCURSED, Item.BLESSED] or
                      (allow_unknown_status and item.status == Item.UNKNOWN)):
                 slot = item.object.sub
@@ -1256,11 +1428,14 @@ class Inventory:
     def gather_items(self):
         return (
             self.pickup_and_drop_items()
+            .before(self.check_containers())
             .before(self.wear_best_stuff())
+            .before(self.go_to_unchecked_containers())
             .before(self.go_to_item_to_pickup()
                     .before(self.check_items()).repeat().every(5)
                     .preempt(self.agent, [
-                        self.pickup_and_drop_items()
+                        self.pickup_and_drop_items(),
+                        self.check_containers(),
                     ])).repeat()
         )
 
@@ -1317,14 +1492,13 @@ class Inventory:
         if not mask.any():
             yield False
 
-        level = self.agent.current_level()
         dis = self.agent.bfs()
 
-        mask &= dis > 0
+        mask &= self.agent.current_level().item_count == 0
         if not mask.any():
             yield False
 
-        mask[mask] = self.agent.current_level().item_count[mask] == 0
+        mask &= dis > 0
         if not mask.any():
             yield False
         yield True
@@ -1335,6 +1509,48 @@ class Inventory:
 
         with self.agent.env.debug_tiles(mask, color=(255, 0, 0, 128)):
             self.agent.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
+
+    @utils.debug_log('inventory.go_to_unchecked_containers')
+    @Strategy.wrap
+    def go_to_unchecked_containers(self):
+        mask = self.agent.current_level().item_count != 0
+        if not mask.any():
+            yield False
+
+        dis = self.agent.bfs()
+        mask &= dis > 0
+        if not mask.any():
+            yield False
+
+        for y, x in zip(*mask.nonzero()):
+            for item in self.agent.current_level().items[y, x]:
+                if not item.is_possible_container():
+                    mask[y, x] = False
+
+        if not mask.any():
+            yield False
+        yield True
+
+        nonzero_y, nonzero_x = (mask & (dis == dis[mask].min())).nonzero()
+        i = self.agent.rng.randint(len(nonzero_y))
+        target_y, target_x = nonzero_y[i], nonzero_x[i]
+
+        with self.agent.env.debug_tiles(mask, color=(255, 0, 0, 128)):
+            self.agent.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
+
+    @utils.debug_log('inventory.check_containers')
+    @Strategy.wrap
+    def check_containers(self):
+        yielded = False
+        for item in self.agent.inventory.items_below_me:
+            if item.is_possible_container():
+                if not yielded:
+                    yielded = True
+                    yield True
+                self.check_container_content(item)
+
+        if not yielded:
+            yield False
 
     @utils.debug_log('inventory.go_to_item_to_pickup')
     @Strategy.wrap

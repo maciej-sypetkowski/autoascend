@@ -371,9 +371,9 @@ class Agent:
 
         if self.turns_in_atom_operation is not None:
             should_update = False
-            if any([(self.last_observation[key] != observation[key]).any()
-                    for key in ['glyphs', 'blstats', 'inv_strs', 'inv_letters', 'inv_oclasses', 'inv_glyphs']]):
-                self.turns_in_atom_operation += 1
+            # if any([(self.last_observation[key] != observation[key]).any()
+            #         for key in ['glyphs', 'blstats', 'inv_strs', 'inv_letters', 'inv_oclasses', 'inv_glyphs']]):
+            #     self.turns_in_atom_operation += 1
             # assert self.turns_in_atom_operation in [0, 1]
 
         self.last_observation = observation
@@ -1182,17 +1182,37 @@ class Agent:
 
     ####### MAIN
 
-    def main(self):
-        self.step(A.Command.ESC)
-        self.current_level().stair_destination[self.blstats.y, self.blstats.x] = \
-            ((Level.PLANE, 1), (None, None))  # TODO: check level num
-        self.character.parse()
-        self.character.parse_enhance_view()
-        self.step(A.Command.AUTOPICKUP)
-        if 'Autopickup: ON' in self.message:
-            self.step(A.Command.AUTOPICKUP)
+    def handle_exception(self, exc):
+        if isinstance(exc, (KeyboardInterrupt, AgentFinished)):
+            raise exc
+        if isinstance(exc, BaseException):
+            if not isinstance(exc, AgentPanic) and not self.panic_on_errors:
+                raise exc
+            self.all_panics.append(exc)
+            if self.verbose:
+                print(f'PANIC!!!! : {exc}')
 
+    def main(self):
         try:
+            init_finished = False
+            try:
+                with self.atom_operation():
+                    self.step(A.Command.ESC)
+                    self.step(A.Command.ESC)
+
+                    self.current_level().stair_destination[self.blstats.y, self.blstats.x] = \
+                        ((Level.PLANE, 1), (None, None))  # TODO: check level num
+                    self.character.parse()
+                    self.character.parse_enhance_view()
+                    self.step(A.Command.AUTOPICKUP)
+                    if 'Autopickup: ON' in self.message:
+                        self.step(A.Command.AUTOPICKUP)
+                    init_finished = True
+            except BaseException as e:
+                self.handle_exception(e)
+
+            assert init_finished
+
             last_step = self.step_count
             inactivity_counter = 0
             while 1:
@@ -1210,19 +1230,7 @@ class Agent:
 
                     self.global_logic.global_strategy().run()
                     assert 0
-                except AgentPanic as e:
-                    self.all_panics.append(e)
-                    if self.verbose:
-                        print(f'PANIC!!!! : {e}')
-                except AgentFinished:
-                    raise
-                except KeyboardInterrupt:
-                    raise
                 except BaseException as e:
-                    if not self.panic_on_errors:
-                        raise
-                    self.all_panics.append(e)
-                    if self.verbose:
-                        print(f'PANIC!!!! : {e}')
+                    self.handle_exception(e)
         except AgentFinished:
             pass

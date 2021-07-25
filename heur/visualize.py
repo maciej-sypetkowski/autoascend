@@ -474,18 +474,22 @@ class Visualizer:
         _draw_frame(vis)
         return vis
 
-    def _draw_item(self, letter, item, width, height):
+    def _draw_item(self, letter, item, width, height, indent=0):
         from item import Item
 
-        vis = np.zeros((round(height * 0.9), width, 3)).astype(np.uint8)
-        _put_text(vis, str(letter), (0, 0))
+        indent = int((width - 1) * (1 - 0.9 ** indent))
+
+        vis = np.zeros((round(height * 0.9), width - indent, 3)).astype(np.uint8)
+        if letter is not None:
+            _put_text(vis, str(letter), (0, 0))
         status_str, status_col = {
             Item.UNKNOWN: (' ', (255, 255, 255)),
             Item.CURSED: ('C', (255, 0, 0)),
             Item.UNCURSED: ('U', (0, 255, 255)),
             Item.BLESSED: ('B', (0, 255, 0)),
         }[item.status]
-        _put_text(vis, str(letter), (0, 0), color=(255, 255, 255))
+        if letter is not None:
+            _put_text(vis, str(letter), (0, 0), color=(255, 255, 255))
         _put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)
 
         if item.modifier is not None:
@@ -514,6 +518,9 @@ class Visualizer:
         if item.equipped:
             cv2.rectangle(vis, (0, 0), (int(FONT_SIZE * 1.4), vis.shape[0] - 1), (0, 255, 255), 6)
 
+        if indent != 0:
+            vis = np.concatenate([np.zeros((vis.shape[0], width - vis.shape[1], 3), dtype=np.uint8), vis], 1)
+
         return vis
 
     def _draw_inventory(self, height):
@@ -524,7 +531,14 @@ class Visualizer:
             tiles = []
             for i, (letter, item) in enumerate(zip(self.env.agent.inventory.items.all_letters,
                                                    self.env.agent.inventory.items.all_items)):
-                tiles.append(self._draw_item(letter, item, width, item_h))
+
+                def rec_draw(item, letter, indent=0):
+                    tiles.append(self._draw_item(letter, item, width, item_h, indent=indent))
+                    if item.is_container():
+                        for it in item.content:
+                            rec_draw(it, None, indent + 1)
+
+                rec_draw(item, letter, 0)
             if tiles:
                 vis = np.concatenate(tiles, axis=0)
                 if vis.shape[0] < height:

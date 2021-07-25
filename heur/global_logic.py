@@ -55,7 +55,7 @@ class ItemPriority(ItemPriorityBase):
                         add_item(item)
 
         for item in items:
-            if item.is_ambiguous():
+            if item.is_unambiguous():
                 if item.object in [
                         O.from_name('healing', nh.POTION_CLASS),
                         O.from_name('extra healing', nh.POTION_CLASS),
@@ -91,8 +91,8 @@ class ItemPriority(ItemPriorityBase):
         for item in sorted(items, key=lambda i: i.unit_weight()):
             if item.category in [nh.POTION_CLASS, nh.RING_CLASS, nh.AMULET_CLASS, nh.WAND_CLASS, nh.SCROLL_CLASS,
                                  nh.TOOL_CLASS]:
-                # TODO: containers
-                if not isinstance(item.objs[0], O.Container): # or item.objs[0].desc is not None:
+                if (not isinstance(item.objs[0], O.Container) or item.objs[0].desc is not None) and \
+                        not item.is_possible_container():
                     add_item(item)
 
         categories = [nh.WEAPON_CLASS, nh.ARMOR_CLASS, nh.TOOL_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.AMULET_CLASS,
@@ -168,7 +168,7 @@ class GlobalLogic:
                     else:
                         pickaxe = None
                         for item in self.agent.inventory.items:
-                            if item.is_ambiguous() and \
+                            if item.is_unambiguous() and \
                                     item.object in [O.from_name('pick-axe'), O.from_name('dwarvish mattock')]:
                                 pickaxe = item
                                 break
@@ -331,7 +331,7 @@ class GlobalLogic:
         def excalibur_candidate():
             candidate = None
             for item in self.agent.inventory.items:
-                if item.is_ambiguous() and item.object == O.from_name('long sword'):
+                if item.is_unambiguous() and item.object == O.from_name('long sword'):
                     if item.dmg_bonus is not None: # TODO: better condition for excalibur existance
                         return None
                     candidate = item
@@ -433,8 +433,11 @@ class GlobalLogic:
     def current_strategy(self):
         yield True
         while 1:
+            explore_stairs_condition = lambda: False
             if self.milestone == Milestone.BE_ON_FIRST_LEVEL:
                 condition = lambda: self.agent.blstats.experience_level >= 7
+                # explore_stairs_condition = lambda: self.agent.inventory.items.total_nutrition() == 0 and \
+                #                                    self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY
                 level = (Level.DUNGEONS_OF_DOOM, 1)
 
             elif self.milestone == Milestone.FIND_SOKOBAN:
@@ -469,31 +472,35 @@ class GlobalLogic:
                 continue
 
 
-            exploration_strategy = lambda level: (
-                Strategy(lambda: self.agent.exploration.explore1(level, trap_search_offset=1,
-                    kick_doors=self.agent.current_level().dungeon_number != Level.GNOMISH_MINES).strategy())
-                .preempt(self.agent, [
-                    self.identify_items_on_altar().every(100),
-                    self.identify_items_on_altar().condition(
-                        lambda: self.agent.current_level().objects[self.agent.blstats.y, self.agent.blstats.x] in G.ALTAR),
-                    self.dip_for_excalibur().condition(lambda: self.agent.blstats.experience_level >= 7).every(10),
-                ])
-            )
-
-            go_to_strategy = lambda y, x: (
-                exploration_strategy(None)
-                .preempt(self.agent, [
-                    self.agent.exploration.go_to_strategy(y, x).preempt(self.agent, [
-                        self.agent.inventory.gather_items(),
-                        self.identify_items_on_altar(),
-                        self.dip_for_excalibur().condition(lambda: self.agent.blstats.experience_level >= 7),
+            def exploration_strategy(level):
+                return (
+                    Strategy(lambda: self.agent.exploration.explore1(level, trap_search_offset=1,
+                        kick_doors=self.agent.current_level().dungeon_number != Level.GNOMISH_MINES).strategy())
+                    .preempt(self.agent, [
+                        self.identify_items_on_altar().every(100),
+                        self.identify_items_on_altar().condition(
+                            lambda: self.agent.current_level().objects[self.agent.blstats.y,
+                                                                       self.agent.blstats.x] in G.ALTAR),
+                        self.dip_for_excalibur().condition(
+                            lambda: self.agent.blstats.experience_level >= 7).every(10),
                     ])
-                    .condition(lambda: self._got_artifact or
-                                       not any([alignment == self.agent.character.alignment
-                                                for _, alignment in self.agent.current_level().altars.items()]))
-                ])
-                .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
-            )
+                )
+
+            def go_to_strategy(y, x):
+                return (
+                    exploration_strategy(None)
+                    .preempt(self.agent, [
+                        self.agent.exploration.go_to_strategy(y, x).preempt(self.agent, [
+                            self.agent.inventory.gather_items(),
+                            self.identify_items_on_altar(),
+                            self.dip_for_excalibur().condition(lambda: self.agent.blstats.experience_level >= 7),
+                        ])
+                        .condition(lambda: self._got_artifact or
+                                           not any([alignment == self.agent.character.alignment
+                                                    for _, alignment in self.agent.current_level().altars.items()]))
+                    ])
+                    .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
+                )
 
             (
                 self.agent.exploration.go_to_level_strategy(*level, go_to_strategy, exploration_strategy(None))
@@ -502,6 +509,9 @@ class GlobalLogic:
                     exploration_strategy(0),
                     exploration_strategy(None)
                     .until(self.agent, lambda: self.agent.blstats.hitpoints >= 0.8 * self.agent.blstats.max_hitpoints)
+                ])
+                .preempt(self.agent, [
+                    self.agent.exploration.explore_stairs(go_to_strategy, all=True).condition(explore_stairs_condition),
                 ])
                 .until(self.agent, condition)
             ).run()
