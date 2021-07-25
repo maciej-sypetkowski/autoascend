@@ -35,6 +35,8 @@ class Property:
 
 
 class Character:
+    UNKNOWN = -1  # for everything, e.g. alignment
+
     ARCHEOLOGIST = 0
     BARBARIAN = 1
     CAVEMAN = 2
@@ -70,11 +72,13 @@ class Character:
     CHAOTIC = 0
     NEUTRAL = 1
     LAWFUL = 2
+    UNALIGNED = 3
 
     name_to_alignment = {
         'chaotic': CHAOTIC,
         'neutral': NEUTRAL,
         'lawful': LAWFUL,
+        'unaligned': UNALIGNED,
     }
 
     HUMAN = 0

@@ -394,7 +394,7 @@ class MON: # monsters, pets
         elif nh.glyph_is_body(glyph):
             return nh.permonst(glyph - nh.GLYPH_BODY_OFF)
         else:
-            assert 0
+            assert 0, glyph
 
     @staticmethod
     def find(glyph):

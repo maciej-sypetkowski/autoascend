@@ -39,6 +39,7 @@ class Level:
         self.item_count = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=np.int32)
 
         self.stair_destination = {}  # {(y, x) -> ((dungeon, level), (y, x))}
+        self.altars = {}  # {(y, x) -> alignment}
 
     def key(self):
         return (self.dungeon_number, self.level_number)
