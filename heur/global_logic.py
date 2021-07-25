@@ -413,7 +413,8 @@ class GlobalLogic:
                 if self.can_sacrify(item):
                     with self.agent.atom_operation():
                         self.agent.step(A.Command.OFFER)
-                        while 'There is ' in self.agent.message and 'sacrifice it?' in self.agent.message:
+                        while ('There is ' in self.agent.message or 'There are ' in self.agent.message) and \
+                                ('sacrifice it?' in self.agent.message or 'sacrifice one?' in self.agent.message):
                             self.agent.type_text('n')
                         assert 'What do you want to sacrifice?' in self.agent.message, self.agent.message
                         self.agent.type_text(self.agent.inventory.items.get_letter(item))

@@ -384,7 +384,7 @@ class ItemManager:
             r'( ([+-]\d+))? '
             r"([a-zA-z0-9-!'# ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
-            r'( \(((, flickering|[a-zA-Z0-9; ])+)\))?'
+            r'( \(([a-zA-Z0-9; ]+(, flickering)?[a-zA-Z0-9; ]+)\))?'
             r'( \((for sale|unpaid), (\d+ aum, )?((\d+)[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
@@ -559,6 +559,26 @@ class ItemManager:
         elif name == 'Grayswandir':
             name = 'silver saber'
             dmg_bonus = 15  # TODO: x2 + 1d20
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Stormbringer':
+            name = 'runesword'
+            dmg_bonus = 6  # 1d2+1d8
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Snickersnee':
+            name = 'katana'
+            dmg_bonus = 4.5  # 1d8
+            to_hit_bonus = 1  # +1
+        elif name == 'Trollsbane':
+            name = 'morning star'
+            dmg_bonus = 5.25  # TODO: x2
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Ogresmasher':
+            name = 'war hammer'
+            dmg_bonus = 3  # TODO: x2
+            to_hit_bonus = 3  # 1d5
+        elif name == 'Dragonbane':
+            name = 'broadsword'
+            dmg_bonus = 4.75  # TODO: x2
             to_hit_bonus = 3  # 1d5
 
         objs, ret_glyphs = ItemManager.parse_name(name)
