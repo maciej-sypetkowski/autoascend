@@ -1362,14 +1362,18 @@ class Inventory:
             yielded = True
             self.skip_engrave_counter = 8
 
-            wand_types = self._engrave_single_wand(item)
-            if wand_types is None:
-                # there is a problem with engraving on this tile
-                continue
+            with self.agent.atom_operation():
+                wand_types = self._engrave_single_wand(item)
 
-            self.item_manager._glyph_to_possible_wand_types[item.glyphs[0]] = wand_types
-            self.item_manager._already_engraved_glyphs.add(item.glyphs[0])
-            self.item_manager.possible_objects_from_glyph(item.glyphs[0])
+                if wand_types is None:
+                    # there is a problem with engraving on this tile
+                    continue
+
+                self.item_manager._glyph_to_possible_wand_types[item.glyphs[0]] = wand_types
+                self.item_manager._already_engraved_glyphs.add(item.glyphs[0])
+                self.item_manager.possible_objects_from_glyph(item.glyphs[0])
+
+            # uncomment for debugging (stopping when there is a new wand being identified)
             # print(len(self.item_manager.possible_objects_from_glyph(item.glyphs[0])))
             # print(self.item_manager._glyph_to_possible_wand_types)
             # input('==================3')
@@ -1453,6 +1457,10 @@ class Inventory:
 
         if skip_engraving[0]:
             return None
+
+        if 'Do you want to add to the current engraving' in msg():
+            self.agent.type_text('q')
+            assert msg().strip() == 'Never mind.', msg()
 
         return possible_wand_types
 
