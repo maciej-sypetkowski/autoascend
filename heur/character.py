@@ -194,6 +194,7 @@ class Character:
         SKILL_LEVEL_GRAND_MASTER: (3, 3),
     }
     martial_bonus = {
+        SKILL_LEVEL_RESTRICTED: (1, 0),  #  no one has it restricted
         SKILL_LEVEL_UNSKILLED: (2, 1),
         SKILL_LEVEL_BASIC: (3, 3),
         SKILL_LEVEL_SKILLED: (4, 4),

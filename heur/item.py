@@ -1282,7 +1282,7 @@ class Inventory:
             ])).repeat()
         )
 
-    def _determine_possible_wands(self, message, glyph):
+    def _determine_possible_wands(self, message, item):
 
         wand_regex = '[a-zA-Z ]+'
         floor_regex = '[a-zA-Z]+'
@@ -1324,10 +1324,16 @@ class Inventory:
             assert len(res) == 1
             return None
 
+        res = re.findall('The wand is too worn out to engrave.', self.agent.message)
+        if len(res) > 0:
+            assert len(res) == 1
+            self.agent.inventory.call_item(item, 'EMPT')
+            return None
+
         res = re.findall(f'{wand_regex} glows, then fades.', self.agent.message)
         if len(res) > 0:
             assert len(res) == 1
-            return [p for p in O.possibilities_from_glyph(glyph)
+            return [p for p in O.possibilities_from_glyph(item.glyphs[0])
                     if p.name not in ['light', 'wishing']]
             # TODO: wiki says this:
             # return [O.from_name('opening', nh.WAND_CLASS),
@@ -1350,11 +1356,15 @@ class Inventory:
         for item in self.agent.inventory.items:
             if not isinstance(item.objs[0], O.Wand):
                 continue
-            if len(self.item_manager.possible_objects_from_glyph(item.glyphs[0])) == 1:
+            if item.is_unambiguous():
                 continue
             if self.agent.current_level().objects[self.agent.blstats.y, self.agent.blstats.x] not in G.FLOOR:
                 continue
             if item.glyphs[0] in self.item_manager._already_engraved_glyphs:
+                continue
+            if len(item.glyphs) > 1:
+                continue
+            if item.comment == 'EMPT':
                 continue
 
             if not yielded:
@@ -1378,7 +1388,8 @@ class Inventory:
             # print(self.item_manager._glyph_to_possible_wand_types)
             # input('==================3')
 
-        self.agent.inventory.items.update_no_check()
+        if yielded:
+            self.agent.inventory.items.update_no_check()
 
         if not yielded:
             yield False
@@ -1398,8 +1409,16 @@ class Inventory:
         def action_generator():
             assert msg().startswith('What do you want to write with?'), msg()
             yield '-'
-            if 'Do you want to add to the current engraving' in msg():
-                yield 'q'
+            # if 'Do you want to add to the current engraving' in msg():
+            #     yield 'q'
+            #     assert msg().strip() == 'Never mind.', msg()
+            #     skip_engraving[0] = True
+            #     return
+            if msg().startswith('You wipe out the message that was written'):
+                yield ' '
+                skip_engraving[0] = True
+                return
+            if msg().startswith('You cannot wipe out the message that is burned into the floor here.'):
                 skip_engraving[0] = True
                 return
             assert msg().startswith('You write in the dust with your fingertip.'), msg()
@@ -1414,7 +1433,8 @@ class Inventory:
             self.agent.step(A.Command.ENGRAVE, additional_action_iterator=iter(action_generator()))
 
             if skip_engraving[0]:
-                assert msg().strip() == 'Never mind.', msg()
+                assert msg().strip() == 'Never mind.' \
+                       or 'You cannot wipe out the message that is burned into the floor here.' in msg(), msg()
                 return None
 
             # this is usually true, but something unrelated like: "You hear crashing rock." may happen
@@ -1446,7 +1466,7 @@ class Inventory:
                 self.agent.type_text('y')
                 # assert 'You add to the writing in the dust with' in msg(), msg()
                 # self.agent.type_text(' ')
-            r = self._determine_possible_wands(msg(), item.glyphs[0])
+            r = self._determine_possible_wands(msg(), item)
             if r is not None:
                 possible_wand_types.extend(r)
             else:
