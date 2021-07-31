@@ -983,12 +983,9 @@ class Agent:
                     wait_counter = 0
                     return wait_counter
             elif action_name == 'ranged':
+                _, _, target_y, target_x, monster = best_action
                 launcher, ammo = self.inventory.get_best_ranged_set()
                 assert ammo is not None
-                # if ammo is None:
-                #     assert len(self.inventory.get_ranged_combinations()) == 0
-                #     self.wield_best_melee_weapon()
-                #     return wait_counter
                 if launcher is not None and not launcher.equipped:
                     if self.inventory.wield(launcher):
                         return wait_counter

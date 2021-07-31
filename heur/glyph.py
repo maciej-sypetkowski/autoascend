@@ -501,7 +501,8 @@ class G:  # Glyphs
 
     MONS = frozenset(MON.ALL_MONS)
     PETS = frozenset(MON.ALL_PETS)
-    INVISIBLE_MON = frozenset({nh.GLYPH_INVISIBLE})
+    WARNING = frozenset({nh.GLYPH_WARNING_OFF + i for i in range(nh.WARNCOUNT)})
+    INVISIBLE_MON = frozenset({nh.GLYPH_INVISIBLE, *WARNING})
 
     SHOPKEEPER = frozenset({MON.fn('shopkeeper')})
     ORACLE = frozenset({MON.fn('Oracle')})

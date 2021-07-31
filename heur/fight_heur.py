@@ -1,9 +1,10 @@
+from itertools import product
+
 import numpy as np
 from scipy import signal
-from itertools import chain
 
 import utils
-from glyph import G, MON
+from glyph import G
 
 ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold']
 # COLD_MONSTERS = ['brown mold']
@@ -167,69 +168,78 @@ def _line_dis_from(agent, y, x):
     return max(abs(agent.blstats.x - x), abs(agent.blstats.y - y))
 
 
-def ranged_monster_priority(agent, y, x, taret_monster, monsters):
-    ret = 0
-    if not (agent.blstats.y == y or agent.blstats.x == x or abs(agent.blstats.y - y) == abs(agent.blstats.x - x)):
-        return None
+def ranged_priority(agent, dy, dx, monsters):
+    ret = 11
 
     closest_mon_dis = float('inf')
     for monster in monsters:
-        if monster is taret_monster:
-            continue
         _, my, mx, mon, _ = monster
-        if mon not in WEAK_MONSTERS + ONLY_RANGED_SLOW_MONSTERS:
+        assert my != agent.blstats.y or mx != agent.blstats.x
+        if mon.mname not in WEAK_MONSTERS + ONLY_RANGED_SLOW_MONSTERS:
             closest_mon_dis = min(closest_mon_dis, _line_dis_from(agent, my, mx))
 
     if closest_mon_dis == 1:
         ret -= 5
 
-    dis = _line_dis_from(agent, y, x)
-    if dis in (1, 2):
-        ret -= 5
-    if dis == 1:
-        ret -= 6
-
     launcher, ammo = agent.inventory.get_best_ranged_set()
     if ammo is None:
-        return None
-
-    if dis > agent.character.get_range(launcher, ammo):
         return None
 
     if launcher is not None and not launcher.equipped:
         ret -= 5
 
-    # search for obstacles along the line of shot
-    assert y != agent.blstats.y or x != agent.blstats.x
-    dir_y = np.sign(y - agent.blstats.y)
-    dir_x = np.sign(x - agent.blstats.x)
-    y1, x1 = agent.blstats.y + dir_y, agent.blstats.x + dir_x
-    while y1 != y or x1 != x:
-        if agent.glyphs[y1, x1] in G.PETS or agent.glyphs[y1, x1] in G.MONS \
-                or not agent.current_level().walkable[y1, x1]:
-            ret -= 100
-        y1 += dir_y
-        x1 += dir_x
-        assert 0 <= y1 < agent.glyphs.shape[0]
-        assert 0 <= x1 < agent.glyphs.shape[1]
+    y, x = agent.blstats.y, agent.blstats.x
+    while True:
+        y += dy
+        x += dx
+        if not 0 <= y < agent.glyphs.shape[0] or not 0 <= x < agent.glyphs.shape[1]:
+            return None
 
-    # TODO: limited range
-    ret += 11
+        if agent.glyphs[y, x] in G.PETS or not agent.current_level().walkable[y, x]:
+            return None
 
-    return ret
+        if agent.glyphs[y, x] in G.MONS:
+            monster = [m for m in monsters if m[1] == y and m[2] == x]
+            if not monster:
+                # there is a monster that shouldn't be attacked
+                return None
+            assert len(monster) == 1
+            _, _, _, mon, _ = monster[0]
+            dis = _line_dis_from(agent, y, x)
+            if dis > agent.character.get_range(launcher, ammo):
+                return None
+            if dis in (1, 2):
+                ret -= 5
+            if dis == 1:
+                ret -= 6
+                # if mon.mname in EXPLODING_MONSTERS:
+                #     ret -= 20
+            return ret, y, x, monster[0]
+
+
+def get_potential_wand_usages(agent, monsters, dy, dx):
+    # TODO
+    return []
 
 
 def get_available_actions(agent, monsters):
     actions = []
+
     for monster in monsters:
         _, y, x, mon, _ = monster
         if utils.adjacent((y, x), (agent.blstats.y, agent.blstats.x)):
             priority = melee_monster_priority(agent, monsters, monster)
             actions.append((priority, 'melee', y, x, monster))
 
-        ranged_pr = ranged_monster_priority(agent, y, x, monster, monsters)
-        if ranged_pr is not None:
-            actions.append((ranged_pr, 'ranged', y, x, monster))
+    for dy, dx in product([-1, 0, 1], [-1, 0, 1]):
+        if dy != 0 or dx != 0:
+            ranged_pr = ranged_priority(agent, dy, dx, monsters)
+            if ranged_pr is not None:
+                pri, y, x, monster = ranged_pr
+                actions.append((pri, 'ranged', y, x, monster))
+
+            actions.extend(get_potential_wand_usages(agent, monsters, dy, dx))
+
     return actions
 
 
