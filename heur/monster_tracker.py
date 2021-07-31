@@ -49,6 +49,9 @@ class MonsterTracker:
 
         self._last_glyphs = None
 
+    def on_panic(self):
+        self._last_glyphs = None
+
     def take_all_monsters(self):
         with self.agent.atom_operation():
             self.agent.step(A.Command.WHATIS, iter(['M']))

@@ -34,6 +34,7 @@ class Agent:
         self.levels = {}
         self.score = 0
         self.step_count = 0
+        self._observation = None  # this should be used in additional_action_iterator generators
         self.message = ''
         self.popup = []
         self._message_history = []
@@ -231,7 +232,8 @@ class Agent:
     def on_panic(self):
         self.check_terrain(force=True)
         self.inventory.on_panic()
-        # TODO: monster_tracker panic
+        self.monster_tracker.on_panic()
+        self.update_state()
 
     @staticmethod
     def _find_marker(lines, regex=re.compile(r"(--More--|\(end\)|\(\d+ of \d+\))")):
@@ -328,6 +330,7 @@ class Agent:
         self.update(observation, additional_action_iterator)
 
     def update(self, observation, additional_action_iterator=None):
+        self._observation = observation
         self.message, self.popup, done = self.get_message_and_popup(observation)
 
         self.message = self.message.strip()

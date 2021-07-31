@@ -16,43 +16,57 @@ from strategy import Strategy
 
 
 class ItemPriority(ItemPriorityBase):
-    MAX_NUMBER_OF_ITEMS = 26 * 2  # + coin slot
+    MAX_NUMBER_OF_ITEMS = 26 * 2 - 1  # + coin slot, one slot should be left for item arranging
     def __init__(self, agent):
         self.agent = agent
         self._take_sacrificial_corpses = False
 
-    def split(self, items, forced_items, weight_capacity):
+    def _split(self, items, forced_items, weight_capacity):
         remaining_weight = weight_capacity
-        ret = {}
+        ret_inv = {}
         for item in forced_items:
             remaining_weight -= item.weight()
-            ret[item] = item.count
+            ret_inv[item] = item.count
 
-        def add_item(item, count=None):
-            nonlocal ret, remaining_weight
+        ret_bag = {}
+        bag = None
+
+        def add_item(item, count=None, to_bag=False):
+            nonlocal ret_inv, ret_bag, remaining_weight
             assert isinstance(item, Item)
-            if remaining_weight < 0 or len(ret) >= ItemPriority.MAX_NUMBER_OF_ITEMS:  # TODO: coin slot
+            if to_bag and bag is not None and item is not bag:
+                ret = ret_bag
+            else:
+                ret = ret_inv
+
+            if remaining_weight < 0 or \
+                    (ret is ret_inv and len(ret) >= ItemPriority.MAX_NUMBER_OF_ITEMS):  # TODO: coin slot
                 return
 
+            how_many_already_total = ret_inv.get(item, 0) + ret_bag.get(item, 0)
             how_many_already = ret.get(item, 0)
-            max_to_add = int(remaining_weight // item.unit_weight())
+            max_to_add = int(remaining_weight // item.unit_weight(with_content=False))
             if count is not None:
                 max_to_add = min(max_to_add, count)
-            ret[item] = min(item.count, how_many_already + max_to_add)
-            remaining_weight -= item.unit_weight() * (ret[item] - how_many_already)
+            ret[item] = min(item.count, how_many_already_total + max_to_add) - (how_many_already_total - how_many_already)
+            remaining_weight -= item.unit_weight(with_content=False) * (ret[item] - how_many_already)
+
+        for item in items:
+            if item.is_container() and item.status in [Item.UNCURSED, Item.BLESSED] and item.objs[0].desc == 'bag':
+                bag = item  # TODO: select the best
+                add_item(bag)
+                break
 
         for allow_unknown_status in [False, True]:
             item = self.agent.inventory.get_best_melee_weapon(items=forced_items + items,
                                                               allow_unknown_status=allow_unknown_status)
             if item is not None:
-                if item not in ret:
-                    add_item(item)
+                add_item(item)
 
             for item in self.agent.inventory.get_best_armorset(items=forced_items + items,
                                                                allow_unknown_status=allow_unknown_status):
                 if item is not None:
-                    if item not in ret:
-                        add_item(item)
+                    add_item(item)
 
         for item in items:
             if item.is_unambiguous():
@@ -88,21 +102,27 @@ class ItemPriority(ItemPriorityBase):
         # TODO: take nh.COIN_CLASS once shopping is implemented.
         # You have to drop all coins not to be attacked by a vault guard
 
-        for item in sorted(items, key=lambda i: i.unit_weight()):
+        for item in sorted(items, key=lambda i: i.unit_weight(with_content=False)):
             if item.category in [nh.POTION_CLASS, nh.RING_CLASS, nh.AMULET_CLASS, nh.WAND_CLASS, nh.SCROLL_CLASS,
                                  nh.TOOL_CLASS]:
-                if (not isinstance(item.objs[0], O.Container) or item.objs[0].desc is not None) and \
+                if (not isinstance(item.objs[0], O.Container) or item.objs[0].desc == 'bag') and \
                         not item.is_possible_container():
-                    add_item(item)
+                    add_item(item, to_bag=True)
 
         categories = [nh.WEAPON_CLASS, nh.ARMOR_CLASS, nh.TOOL_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.AMULET_CLASS,
                       nh.RING_CLASS, nh.POTION_CLASS, nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.WAND_CLASS]
-        for item in sorted(items, key=lambda i: i.unit_weight()):
+        for item in sorted(items, key=lambda i: i.unit_weight(with_content=False)):
             if item.category in categories and not isinstance(item.objs[0], O.Container) and not item.is_corpse():
                 if item.status == Item.UNKNOWN:
-                    add_item(item)
+                    add_item(item, to_bag=True)
 
-        return [ret.get(item, 0) for item in items]
+        r = {None: [ret_inv.get(item, 0) for item in items]}
+        if bag is not None:
+            r[bag] = [ret_bag.get(item, 0) for item in items]
+        for item in items:
+            if item.is_container() and item is not bag:
+                r[item] = [0 for _ in items]
+        return r
 
 
 class Milestone(IntEnum):

@@ -3,6 +3,7 @@ import functools
 import re
 from collections import namedtuple
 from functools import partial
+from itertools import chain
 
 import nle.nethack as nh
 import numpy as np
@@ -76,10 +77,10 @@ class Item:
             (self.is_unambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED)
         )
 
-    def weight(self):
-        return self.count * self.unit_weight()
+    def weight(self, with_content=True):
+        return self.count * self.unit_weight(with_content=with_content)
 
-    def unit_weight(self):
+    def unit_weight(self, with_content=True):
         if self.is_corpse():
             return MON.permonst(self.monster_id).cwt
 
@@ -97,7 +98,7 @@ class Item:
 
         weight = max((obj.wt for obj in self.objs))
 
-        if self.is_container():
+        if self.is_container() and with_content:
             weight += self.content.weight()  # TODO: bag of holding
 
         return weight
@@ -234,6 +235,15 @@ class Item:
     def content(self):
         assert self.is_container()
         return self.content
+
+
+def flatten_items(iterable):
+    ret = []
+    for item in iterable:
+        ret.append(item)
+        if item.is_container():
+            ret.extend(flatten_items(item.content))
+    return ret
 
 
 class ContainerContent:
@@ -882,12 +892,18 @@ class InventoryItems:
                 ret += item.object.nutrition * item.count
         return ret
 
-    def on_panic(self):
-        self._recheck_containers = True
+    def free_slots(self):
+        is_coin = any((isinstance(item, O.Coin) for item in self))
+        return 52 + is_coin - len(self.all_items)
 
-    def update(self):
-        if not (self._previous_inv_strs is not None and (self.agent.last_observation['inv_strs'] == self._previous_inv_strs).all()):
+    def on_panic(self):
+        self._previous_inv_strs = None
+        self._clear()
+
+    def update(self, force=False):
+        if force or self._previous_inv_strs is None or (self.agent.last_observation['inv_strs'] != self._previous_inv_strs).any():
             self._clear()
+            self._previous_inv_strs = self.agent.last_observation['inv_strs']
 
             for item_name, category, glyph, letter in zip(
                     self.agent.last_observation['inv_strs'],
@@ -923,6 +939,9 @@ class InventoryItems:
 
                 if item.is_possible_container() or (item.is_container() and self._recheck_containers):
                     self.agent.inventory.check_container_content(item)
+                    if (self.agent.last_observation['inv_strs'] != self._previous_inv_strs).any():
+                        self.update()
+                        return
 
                 self.total_weight += item.weight()
                 # weight is sometimes unambiguous for unidentified items. All exceptions:
@@ -931,7 +950,6 @@ class InventoryItems:
                 # {'speed boots': 20, 'water walking boots': 15, 'jumping boots': 20, 'elven boots': 15, 'fumble boots': 20, 'levitation boots': 15}
                 # {'luckstone': 10, 'loadstone': 500, 'touchstone': 10, 'flint': 10}
 
-            self._previous_inv_strs = self.agent.last_observation['inv_strs']
             self._recheck_containers = False
 
     def get_letter(self, item):
@@ -940,18 +958,31 @@ class InventoryItems:
 
 
 class ItemPriorityBase:
-    def split(self, items, forced_items, weight_capacity):
+    def _split(self, items, forced_items, weight_capacity):
         '''
-        returns a list of counts to take corresponding to `items`
+        returns a dict (container_item or None for inventory) ->
+                       (list of counts to take corresponding to `items`)
 
-        Order of `items` matter. First items are more important.
+        Order of `items` matters. First items are more important.
         Otherwise the agent will drop and pickup items repeatedly.
 
         The function should motonic (i.e. removing an item from the argument,
-        shouldn't decrease counts of other items). Otherwise the agent will
+        shouldn't decrease counts of other items). Otherwise the agent may
         go to the item, don't take it, and repeat infinitely
+
+        weight capacity can be exceeded. It's only a hint what the agent wants
         '''
         raise NotImplementedError()
+
+    def split(self, items, forced_items, weight_capacity):
+        ret = self._split(items, forced_items, weight_capacity)
+        assert None in ret
+        counts = np.array(list(ret.values())).sum(0)
+        assert all((0 <= count <= item.count for count, item in zip(counts, items)))
+        assert all((0 <= c <= item.count for cs in ret.values() for c, item in zip(cs, items)))
+        assert all((item not in ret or item.is_container() for item in items))
+        assert all((item not in ret or ret[item][i] == 0 for i, item in enumerate(items)))
+        return ret
 
 
 class Inventory:
@@ -970,6 +1001,7 @@ class Inventory:
         self._previous_blstats = None
 
         self.item_manager.on_panic()
+        self.items.on_panic()
 
     def update(self):
         self.item_manager.update()
@@ -1092,6 +1124,58 @@ class Inventory:
 
         return True
 
+    def use_container(self, container, items_to_put, items_to_take, items_to_put_counts=None, items_to_take_counts=None):
+        assert container in self.items.all_items or container in self.items_below_me
+        assert all((item in self.items.all_items for item in items_to_put))
+        assert all((item in container.content.items for item in items_to_take))
+        assert container.is_container()
+        assert len(self.items.all_items) - len(items_to_put) + len(items_to_take) < 52  # TODO: coin slot, TODO: take counts into consideration
+        assert not container.content.locked, container
+
+        def gen():
+            if 'You carefully open ' in self.agent.message or 'You open ' in self.agent.message:
+                yield ' '
+            assert 'Do what with ' in self.agent.popup[0]
+            yield 'r'
+            if 'Put in what type of objects?' in self.agent.popup[0]:
+                yield from 'a\r'
+            assert 'Put in what?' in self.agent.popup[0]
+            yield from self._select_items_in_popup(items_to_put, items_to_put_counts)
+            i = 0
+            while not self.agent.popup or self.agent.popup[0] not in ['Take out what type of objects?', 'Take out what?']:
+                assert i < 10, (self.agent.message, self.agent.popup)
+                yield ' '
+                i += 1
+            if self.agent.popup[0] == 'Take out what type of objects?':
+                yield from 'a\r'
+            assert 'Take out what?' in self.agent.popup[0]
+            yield from self._select_items_in_popup(items_to_take, items_to_take_counts)
+
+        with self.agent.atom_operation():
+            if container in self.items.all_items:
+                self.agent.step(A.Command.APPLY)
+                self.agent.step(self.items.get_letter(container), gen())
+            elif container in self.items_below_me:
+                self.agent.step(A.Command.LOOT)
+                while True:
+                    # TODO: refactor: the same fragment is in check_container_content
+                    assert 'Loot in what direction?' not in self.agent.message
+                    r = re.findall(r'There is ([a-zA-z0-9# ]+) here\, loot it\? \[ynq\] \(q\)', self.agent.message)
+                    assert len(r) == 1, self.agent.message
+                    text = r[0]
+                    it = self.item_manager.get_item_from_text(text,
+                            position=(*self.agent.current_level().key(), self.agent.blstats.y, self.agent.blstats.x))
+                    if it.container_id == container.container_id:
+                        break
+                    self.agent.step('n')
+                self.agent.step('y', gen())
+            else:
+                assert 0
+
+        for item in chain(self.items.all_items, self.items_below_me):
+            if item.is_container() and item.container_id == container.container_id:
+                self.check_container_content(item)
+
     def check_container_content(self, item):
         assert not self.agent.character.prop.polymorph  # TODO: only handless
         assert item.is_possible_container() or item.is_container()
@@ -1116,8 +1200,10 @@ class Inventory:
 
             if 'Hmmm, it turns out to be locked.' in self.agent.message or 'It is locked.' in self.agent.message:
                 content.locked = True
+                yield A.Command.ESC
                 return
 
+            assert self.agent.popup, (self.agent.message)
             yield ':'
 
             if ' is empty' in self.agent.message:
@@ -1138,8 +1224,17 @@ class Inventory:
                 self.agent.step(self.items.get_letter(item), gen())
             else:
                 self.agent.step(A.Command.LOOT)
-                while self.agent.message != f'There is {item.text} here, loot it? [ynq] (q)':
+                while True:
+                    # TODO: refactor: the same fragment is in use_container
                     assert 'There is ' in self.agent.message and ', loot it?' in self.agent.message, self.agent.message
+                    r = re.findall(r'There is ([a-zA-z0-9# ]+) here\, loot it\? \[ynq\] \(q\)', self.agent.message)
+                    assert len(r) == 1, self.agent.message
+                    text = r[0]
+                    it = self.item_manager.get_item_from_text(text,
+                            position=(*self.agent.current_level().key(), self.agent.blstats.y, self.agent.blstats.x))
+                    if (item.container_id is not None and it.container_id == item.container_id) or \
+                            (item.container_id is None and item.text == it.text):
+                        break
                     self.agent.step('n')
                 self.agent.step('y', gen())
 
@@ -1160,6 +1255,38 @@ class Inventory:
             if len(item.glyphs) == 1 and item.glyphs[0] not in self.item_manager._is_not_bag_of_tricks:
                 self.item_manager._is_not_bag_of_tricks.add(item.glyphs[0])
                 self.item_manager.update_possible_objects(item)
+
+    def _select_items_in_popup(self, items, counts=None):
+        assert counts is None or len(counts) == len(items)
+        items = list(items)
+        while 1:
+            assert self.agent.popup, (self.agent.message, items)
+            for line_i in range(len(self.agent.popup)):
+                line = self.agent.popup[line_i]
+                if line[1:4] != ' - ':
+                    continue
+
+                for item in items:
+                    if item.text != line[4:]:
+                        continue
+
+                    i = items.index(item)
+                    letter = line[0]
+
+                    if counts is not None and counts[i] != item.count:
+                        yield from str(counts[i])
+                    yield letter
+
+                    items.pop(i)
+                    if counts is not None:
+                        count = counts.pop(i)
+                    else:
+                        count = None
+
+                if not items:
+                    return
+
+            yield ' '
 
     def get_items_below_me(self, assume_appropriate_message=False):
         with self.agent.panic_if_position_changes():
@@ -1330,7 +1457,6 @@ class Inventory:
             self.agent.step(A.Command.CALL, iter(f'i{letter}#{name}\r'))
         return True
 
-
     ######## STRATEGIES helpers
 
     def get_best_melee_weapon(self, items=None, *, return_dps=False, allow_unknown_status=False):
@@ -1438,6 +1564,101 @@ class Inventory:
                         self.check_containers(),
                     ])).repeat()
         )
+
+    @utils.debug_log('inventory.arrange_items')
+    @Strategy.wrap
+    def arrange_items(self):
+        yielded = False
+        while 1:
+            items_below_me = list(filter(lambda i: i.shop_status == Item.NOT_SHOP, flatten_items(self.items_below_me)))
+            forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), flatten_items(self.items)))
+            assert all((item in self.items.all_items for item in forced_items))
+            free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(),
+                                     flatten_items(sorted(self.items, key=lambda x: x.text))))
+            all_items = free_items + items_below_me
+
+            item_split = self.agent.global_logic.item_priority.split(
+                    all_items, forced_items, self.agent.character.carrying_capacity)
+
+            assert all((container is None or container in self.items_below_me or container in self.items.all_items or \
+                        (sum(item_split[container]) == 0 and not container.content.items)
+                        for container in item_split)), 'TODO: nested containers'
+
+            cont = False
+
+            # put into containers
+            for container in item_split:
+                if container is not None:
+                    counts = item_split[container]
+                    indices = [i for i, item in enumerate(all_items) if item in self.items.all_items and counts[i] > 0]
+                    if not indices:
+                        continue
+                    if not yielded:
+                        yielded = True
+                        yield True
+
+                    self.use_container(container, [all_items[i] for i in indices], [],
+                                       items_to_put_counts=[counts[i] for i in indices])
+                    cont = True
+                    break
+            if cont:
+                continue
+
+            # drop on ground
+            counts = item_split[None]
+            indices = [i for i, item in enumerate(free_items) if item in self.items.all_items and counts[i] != item.count]
+            if indices:
+                if not yielded:
+                    yielded = True
+                    yield True
+                assert self.drop([free_items[i] for i in indices], [free_items[i].count - counts[i] for i in indices])
+                continue
+
+            # take from container
+            for container in item_split:
+                if container is not None:
+                    counts = item_split[container]
+                    indices = [i for i, item in enumerate(all_items) if item in container.content.items and counts[i] != item.count]
+                    if not indices:
+                        continue
+                    if not yielded:
+                        yielded = True
+                        yield True
+
+                    assert self.items.free_slots() > 0
+                    indices = indices[:self.items.free_slots()]
+
+                    self.use_container(container, [], [all_items[i] for i in indices],
+                                       items_to_take_counts=[all_items[i].count - counts[i] for i in indices])
+                    cont = True
+                    break
+            if cont:
+                continue
+
+            # pick up from ground
+            to_pickup = np.array([counts[len(free_items):] for counts in item_split.values()]).sum(0)
+            assert len(to_pickup) == len(items_below_me)
+            assert all((item in self.items_below_me for item, count in zip(items_below_me, to_pickup) if count > 0))
+            indices = [i for i, item in enumerate(items_below_me) if to_pickup[i] > 0]
+            if len(indices) > 0:
+                assert self.items.free_slots() > 0
+                indices = indices[:self.items.free_slots()]
+                if not yielded:
+                    yielded = True
+                    yield True
+                assert self.pickup([items_below_me[i] for i in indices], [to_pickup[i] for i in indices])
+                continue
+
+            break
+
+        for container in item_split:
+            for item, count in zip(all_items, item_split[container]):
+                assert count == 0 or count == item.count
+                assert count == 0 or item in (container.content.items if container is not None else self.items.all_items)
+
+        if not yielded:
+            yield False
+
 
     @utils.debug_log('inventory.wear_best_stuff')
     @Strategy.wrap
@@ -1572,13 +1793,16 @@ class Inventory:
                 items[i] = (y, x)
 
         if not items:
-            yield False  # TODO: what about just dropping items?
+            yield False
 
-        free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(), self.items))
-        forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), self.items))
-        counts = self.agent.global_logic.item_priority.split(
+        items = {i: pos for item, pos in items.items() for i in flatten_items([item])}
+
+        free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(), flatten_items(self.items)))
+        forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), flatten_items(self.items)))
+        item_split = self.agent.global_logic.item_priority.split(
                 free_items + list(items.keys()), forced_items,
                 self.agent.character.carrying_capacity)
+        counts = np.array(list(item_split.values())).sum(0)
 
         counts = counts[len(free_items):]
         assert len(counts) == len(items)
@@ -1606,31 +1830,4 @@ class Inventory:
         if len(self.items_below_me) == 0:
             yield False
 
-        yielded = False
-        while 1:
-            if not self.items_below_me:
-                raise AgentPanic('items below me vanished')
-
-            free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(), self.items))
-            forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), self.items))
-            counts = self.agent.global_logic.item_priority.split(
-                    free_items + self.items_below_me, forced_items,
-                    self.agent.character.carrying_capacity)
-            to_drop = [item.count - count for item, count in zip(free_items, counts)]
-            if sum(to_drop) > 0:
-                if not yielded:
-                    yielded = True
-                    yield True
-                assert self.drop(free_items, to_drop)
-                continue
-
-            to_pickup = counts[len(free_items):]
-            if sum(to_pickup) > 0:
-                if not yielded:
-                    yielded = True
-                    yield True
-                assert self.pickup(self.items_below_me, to_pickup)
-            break
-
-        if not yielded:
-            yield False
+        yield from self.arrange_items().strategy()
