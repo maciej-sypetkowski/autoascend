@@ -925,7 +925,7 @@ class Agent:
                 yield True
                 self.character.parse_enhance_view()
 
-            priority, actions = fight_heur.build_priority_map(self)
+            priority, actions = fight_heur.get_priorities(self)
             mask = ~np.isnan(priority)
             assert mask.any()
             priority[~mask] = np.min(priority[mask]) - 1
@@ -957,7 +957,12 @@ class Agent:
 
             priority[~mask] = float('nan')
             with self.env.debug_tiles(priority, color='turbo', is_heatmap=True):
-                actions_str = '|'.join([f'{a[0]}-{a[1][0]}-{a[2]},{a[3]}' for a in sorted(actions)])
+                def action_str(a):
+                    if a[1] != 'pickup':
+                        return f'{a[0]}{a[1][0]}:{a[2]},{a[3]}'
+                    else:
+                        return f'{a[0]}{a[1][0]}:{len(a[2])}'
+                actions_str = '|'.join([action_str(a) for a in sorted(actions)])
                 with self.env.debug_log(actions_str + f'|{best_move_score}|' + '|'.join(map(str, possible_move_to))):
                     wait_counter = self._fight2_perform_action(best_action, best_move_score, best_x, best_y,
                                                                wait_counter)
@@ -970,8 +975,8 @@ class Agent:
                 wait_counter = 5
                 return wait_counter
         else:
-            _, action_name, target_y, target_x, monster = best_action
-            if action_name == 'melee':
+            if best_action[1] == 'melee':
+                _, _, target_y, target_x, monster = best_action
                 if self.wield_best_melee_weapon():
                     return wait_counter
                 with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
@@ -982,7 +987,8 @@ class Agent:
                         self._track_hunted_corpse(monster, target_x, target_y)
                     wait_counter = 0
                     return wait_counter
-            elif action_name == 'ranged':
+            elif best_action[1] == 'ranged':
+                _, _, target_y, target_x, monster = best_action
                 _, _, target_y, target_x, monster = best_action
                 launcher, ammo = self.inventory.get_best_ranged_set()
                 assert ammo is not None
@@ -997,6 +1003,9 @@ class Agent:
                     finally:
                         self._track_hunted_corpse(monster, target_x, target_y)
                     return wait_counter
+            elif best_action[1] == 'pickup':
+                _, _, items_to_pickup = best_action
+                self.inventory.pickup(items_to_pickup)
             else:
                 raise NotImplementedError()
         return wait_counter

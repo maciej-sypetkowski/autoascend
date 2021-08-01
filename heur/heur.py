@@ -298,7 +298,7 @@ class EnvWrapper:
 
     def step(self, agent_action):
         if self.visualizer is not None:
-            self.visualizer.step(self.last_observation)
+            self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
 
             if self.interactive and self.to_skip <= 1:
                 self.visualizer.force_next_frame()
@@ -332,7 +332,7 @@ class EnvWrapper:
 
         if done:
             if self.visualizer is not None:
-                self.visualizer.step(obs)
+                self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
 
             end_reason = bytes(obs['tty_chars'].reshape(-1)).decode().replace('You made the top ten list!', '').split()
             if end_reason[7].startswith('Agent'):

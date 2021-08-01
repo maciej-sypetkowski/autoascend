@@ -11,7 +11,7 @@ ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold']
 COLD_MONSTERS = []
 
 # TODO
-EXPLODING_MONSTERS = ['yellow light', 'gas spore']
+EXPLODING_MONSTERS = ['yellow light', 'gas spore', 'flaming sphere', 'freezing sphere', 'shocking sphere']
 
 WEAK_MONSTERS = ['lichen', 'newt']
 
@@ -39,7 +39,7 @@ def _draw_ranged(priority, y, x, value, walkable, radius=1, operation='add'):
     for direction_y in (-1, 0, 1):
         for direction_x in (-1, 0, 1):
             if direction_y != 0 or direction_x != 0:
-                for i in range(radius):
+                for i in range(1, radius + 1):
                     y1 = y + direction_y * i
                     x1 = x + direction_x * i
                     if 0 <= y1 < priority.shape[0] and 0 <= x1 < priority.shape[1]:
@@ -68,6 +68,8 @@ def draw_monster_priority_positive(agent, monster, priority, walkable):
             # freely engage in melee
             _draw_around(priority, y, x, 2, radius=1, operation='max')
             _draw_around(priority, y, x, 1, radius=2, operation='max')
+        if len(agent.inventory.get_ranged_combinations()):
+            _draw_ranged(priority, y, x, 1, walkable, radius=7, operation='max')
     # elif mon.mname in COLD_MONSTERS:
     #     if len(agent.inventory.get_ranged_combinations()):
     #         _draw_around(priority, y, x, 1, radius=2, operation='max')
@@ -75,14 +77,14 @@ def draw_monster_priority_positive(agent, monster, priority, walkable):
     #         _draw_around(priority, y, x, 2, radius=1, operation='max')
     #         _draw_around(priority, y, x, 1, radius=2, operation='max')
     elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.inventory.get_ranged_combinations():
-        # ignore
-        pass
+        if len(agent.inventory.get_ranged_combinations()):
+            _draw_ranged(priority, y, x, 1, walkable, radius=7, operation='max')
     else:
         if agent.blstats.hitpoints > 8 and not wielding_ranged_weapon(agent):
             # engage, but ensure striking first if possible
             _draw_around(priority, y, x, 3, radius=2, operation='max')
         if wielding_ranged_weapon(agent):
-            _draw_ranged(priority, y, x, 4, walkable, radius=6, operation='max')
+            _draw_ranged(priority, y, x, 4, walkable, radius=7, operation='max')
 
 
 def is_monster_faster(agent, monster):
@@ -101,11 +103,17 @@ def draw_monster_priority_negative(agent, monster, priority, walkable):
         # stay out of melee range
         _draw_around(priority, y, x, -10, radius=1)
         if not len(agent.inventory.get_ranged_combinations()):
-            _draw_ranged(priority, y, x, -1, walkable, radius=6)
+            # prefer avoiding being in line of fire
+            _draw_ranged(priority, y, x, -1, walkable, radius=7)
+
+    if mon.mname in EXPLODING_MONSTERS:
+        _draw_around(priority, y, x, -10, radius=1)
+        _draw_around(priority, y, x, -5, radius=2)
+        _draw_ranged(priority, y, x, 4, walkable, radius=7)
     elif 'mold' in mon.mname and mon.mname not in COLD_MONSTERS + ONLY_RANGED_SLOW_MONSTERS:
         # prioritize staying in ranged weapons line of fire
         if len(agent.inventory.get_ranged_combinations()):
-            _draw_ranged(priority, y, x, 2, walkable, radius=5)
+            _draw_ranged(priority, y, x, 2, walkable, radius=7)
     # elif mon.mname in COLD_MONSTERS:
     #     if len(agent.inventory.get_ranged_combinations()):
     #         _draw_ranged(priority, y, x, 6, walkable, radius=5)
@@ -117,7 +125,7 @@ def draw_monster_priority_negative(agent, monster, priority, walkable):
         _draw_around(priority, y, x, -10, radius=1)
         # prioritize staying in ranged weapons line of fire
         if len(agent.inventory.get_ranged_combinations()):
-            _draw_ranged(priority, y, x, 6, walkable, radius=5)
+            _draw_ranged(priority, y, x, 6, walkable, radius=7)
     elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.inventory.get_ranged_combinations():
         # ignore
         pass
@@ -126,7 +134,7 @@ def draw_monster_priority_negative(agent, monster, priority, walkable):
             # engage, but ensure striking first if possible
             _draw_around(priority, y, x, -9, radius=1)
             if not len(agent.inventory.get_ranged_combinations()):
-                _draw_ranged(priority, y, x, -1, walkable, radius=6)
+                _draw_ranged(priority, y, x, -1, walkable, radius=7)
 
 
 def wielding_ranged_weapon(agent):
@@ -225,12 +233,14 @@ def get_potential_wand_usages(agent, monsters, dy, dx):
 def get_available_actions(agent, monsters):
     actions = []
 
+    # melee attack actions
     for monster in monsters:
         _, y, x, mon, _ = monster
         if utils.adjacent((y, x), (agent.blstats.y, agent.blstats.x)):
             priority = melee_monster_priority(agent, monsters, monster)
             actions.append((priority, 'melee', y, x, monster))
 
+    # ranged attack actions
     for dy, dx in product([-1, 0, 1], [-1, 0, 1]):
         if dy != 0 or dx != 0:
             ranged_pr = ranged_priority(agent, dy, dx, monsters)
@@ -239,6 +249,17 @@ def get_available_actions(agent, monsters):
                 actions.append((pri, 'ranged', y, x, monster))
 
             actions.extend(get_potential_wand_usages(agent, monsters, dy, dx))
+
+    # pickup items actions
+    projectiles_below_me = [i for i in agent.inventory.items_below_me
+                            if i.is_thrown_projectile() or i.is_fired_projectile()]
+    my_launcher, ammo = agent.inventory.get_best_ranged_set(additional_ammo=[i for i in projectiles_below_me])
+    to_pickup = []
+    for item in agent.inventory.items_below_me:
+        if item.is_thrown_projectile() or (my_launcher is not None and item.is_fired_projectile(launcher=my_launcher)):
+            to_pickup.append(item)
+    if to_pickup:
+        actions.append((15, 'pickup', to_pickup))
 
     return actions
 
@@ -252,7 +273,7 @@ def get_corridors_priority_map(walkable):
     return corridor_mask + corridor_dilated >= 1
 
 
-def build_priority_map(agent):
+def get_priorities(agent):
     walkable = agent.current_level().walkable
     priority = np.zeros(walkable.shape, dtype=float)
     monsters = agent.get_visible_monsters()

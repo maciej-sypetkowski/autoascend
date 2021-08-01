@@ -1195,7 +1195,8 @@ class Inventory:
             return best_item, best_dps
         return best_item
 
-    def get_ranged_combinations(self, items=None, throwing=True, allow_best_melee=False, allow_unknown_status=False):
+    def get_ranged_combinations(self, items=None, throwing=True, allow_best_melee=False,
+                                allow_unknown_status=False, additional_ammo=[]):
         if items is None:
             items = self.items
         launchers = [i for i in items if i.is_launcher()]
@@ -1207,7 +1208,7 @@ class Inventory:
             launchers = [l for l in launchers if l.equipped]
 
         for launcher in launchers:
-            for ammo in ammo_list:
+            for ammo in ammo_list + additional_ammo:
                 if ammo.is_fired_projectile(launcher):
                     if launcher.status in [Item.UNCURSED, Item.BLESSED] or \
                             (allow_unknown_status and launcher.status == Item.UNKNOWN):
@@ -1223,12 +1224,13 @@ class Inventory:
         return valid_combinations
 
     def get_best_ranged_set(self, items=None, *, throwing=True, allow_best_melee=False,
-                            return_dps=False, allow_unknown_status=False):
+                            return_dps=False, allow_unknown_status=False, additional_ammo=[]):
         if items is None:
             items = self.items
         best_launcher, best_ammo = None, None
         best_dps = -float('inf')
-        for launcher, ammo in self.get_ranged_combinations(items, throwing, allow_best_melee, allow_unknown_status):
+        for launcher, ammo in self.get_ranged_combinations(items, throwing, allow_best_melee,
+                                                           allow_unknown_status, additional_ammo):
             to_hit, dmg = self.agent.character.get_ranged_bonus(launcher, ammo)
             dps = utils.calc_dps(to_hit, dmg)
             if dps > best_dps:

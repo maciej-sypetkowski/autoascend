@@ -8,7 +8,7 @@ import numpy as np
 
 # avoid importing agent modules here, because it makes agent reloading less reliable
 
-MSG_HISTORY_COUNT = 13
+HISTORY_SIZE = 13
 FONT_SIZE = 32
 RENDERS_HISTORY_SIZE = 128
 
@@ -170,6 +170,8 @@ class Visualizer:
         if self.show:
             print('Read tileset of size:', self.tileset.shape)
 
+        self.action_history = list()
+
         self.message_history = list()
         self.popup_history = list()
 
@@ -253,8 +255,9 @@ class Visualizer:
     def debug_log(self, txt, color):
         return DebugLogScope(self, txt, color)
 
-    def step(self, obs):
+    def step(self, obs, action):
         self.last_obs = obs
+        self.action_history.append(action)
         self._update_log_message_history()
         self._update_message_history()
         self._update_popup_history()
@@ -400,16 +403,17 @@ class Visualizer:
         return ret
 
     def _draw_topbar(self, width):
+        actions_vis = self._draw_action_history(width // 20)
         messages_vis = self._draw_message_history(width // 3)
         popup_vis = self._draw_popup_history(width // 4)
-        log_messages_vis = self._draw_debug_message_log(width - width // 3 - width // 4)
-        ret = np.concatenate([messages_vis, popup_vis, log_messages_vis], axis=1)
+        log_messages_vis = self._draw_debug_message_log(width - width // 20 - width // 3 - width // 4)
+        ret = np.concatenate([actions_vis, messages_vis, popup_vis, log_messages_vis], axis=1)
         assert ret.shape[1] == width
         return ret
 
     def _draw_debug_message_log(self, width):
-        vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
-        for i in range(MSG_HISTORY_COUNT):
+        vis = np.zeros((FONT_SIZE * HISTORY_SIZE, width, 3)).astype(np.uint8)
+        for i in range(HISTORY_SIZE):
             if i >= len(self.log_messages_history):
                 break
             txt = self.log_messages_history[-i - 1]
@@ -427,9 +431,22 @@ class Visualizer:
         # if txt:
         self.log_messages_history.append(txt)
 
+    def _draw_action_history(self, width):
+        vis = np.zeros((FONT_SIZE * HISTORY_SIZE, width, 3)).astype(np.uint8)
+        for i in range(HISTORY_SIZE):
+            if i >= len(self.action_history):
+                break
+            txt = self.action_history[-i - 1]
+            if i == 0:
+                _put_text(vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+            else:
+                _put_text(vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        _draw_frame(vis)
+        return vis
+
     def _draw_message_history(self, width):
-        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
-        for i in range(MSG_HISTORY_COUNT):
+        messages_vis = np.zeros((FONT_SIZE * HISTORY_SIZE, width, 3)).astype(np.uint8)
+        for i in range(HISTORY_SIZE):
             if i >= len(self.message_history):
                 break
             txt = self.message_history[-i - 1]
@@ -441,8 +458,8 @@ class Visualizer:
         return messages_vis
 
     def _draw_popup_history(self, width):
-        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
-        for i in range(MSG_HISTORY_COUNT):
+        messages_vis = np.zeros((FONT_SIZE * HISTORY_SIZE, width, 3)).astype(np.uint8)
+        for i in range(HISTORY_SIZE):
             if i >= len(self.popup_history):
                 break
             txt = '|'.join(self.popup_history[-i - 1])
