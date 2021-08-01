@@ -519,6 +519,10 @@ class ItemManager:
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
         monster_id = None
 
+        if ' containing ' in name:
+            # TODO: use number of items for verification
+            name = name[:name.index(' containing ')]
+
         comment = ''
         naming = ''
         if ' named ' in name:
@@ -598,10 +602,6 @@ class ItemManager:
         elif name.endswith(' egg') or name.endswith(' eggs'):
             monster_id = nh.glyph_to_mon(MON.from_name(name[:-len(' egg')].strip()))
             name = 'egg'
-
-        if ' containing ' in name:
-            # TODO: use number of items for verification
-            name = name[:name.index(' containing ')]
 
         dmg_bonus, to_hit_bonus = None, None
 
@@ -963,6 +963,9 @@ class ItemPriorityBase:
         returns a dict (container_item or None for inventory) ->
                        (list of counts to take corresponding to `items`)
 
+        Lack of the container in the dict means "don't change the content except for
+        items wanted by other containers"
+
         Order of `items` matters. First items are more important.
         Otherwise the agent will drop and pickup items repeatedly.
 
@@ -986,6 +989,23 @@ class ItemPriorityBase:
 
 
 class Inventory:
+    _name_to_category = {
+        'Amulets': nh.AMULET_CLASS,
+        'Armor': nh.ARMOR_CLASS,
+        'Comestibles': nh.FOOD_CLASS,
+        'Coins': nh.COIN_CLASS,
+        'Gems/Stones': nh.GEM_CLASS,
+        'Potions': nh.POTION_CLASS,
+        'Rings': nh.RING_CLASS,
+        'Scrolls': nh.SCROLL_CLASS,
+        'Spellbooks': nh.SPBOOK_CLASS,
+        'Tools': nh.TOOL_CLASS,
+        'Weapons': nh.WEAPON_CLASS,
+        'Wands': nh.WAND_CLASS,
+        'Boulders/Statues': nh.ROCK_CLASS,
+        'Chains': nh.CHAIN_CLASS,
+    }
+
     def __init__(self, agent):
         self.agent = agent
         self.item_manager = ItemManager(self.agent)
@@ -1133,22 +1153,25 @@ class Inventory:
         assert not container.content.locked, container
 
         def gen():
-            if 'You carefully open ' in self.agent.message or 'You open ' in self.agent.message:
+            if ' vanished!' in self.agent.message:
+                self.item_manager.container_contents.pop(container.container_id)
+                raise AgentPanic('some items from the container vanished')
+            if 'You carefully open ' in self.agent.single_message or 'You open ' in self.agent.single_message:
                 yield ' '
-            assert 'Do what with ' in self.agent.popup[0]
+            assert 'Do what with ' in self.agent.single_popup[0]
             yield 'r'
-            if 'Put in what type of objects?' in self.agent.popup[0]:
+            if 'Put in what type of objects?' in self.agent.single_popup[0]:
                 yield from 'a\r'
-            assert 'Put in what?' in self.agent.popup[0]
+            assert 'Put in what?' in self.agent.single_popup[0]
             yield from self._select_items_in_popup(items_to_put, items_to_put_counts)
             i = 0
-            while not self.agent.popup or self.agent.popup[0] not in ['Take out what type of objects?', 'Take out what?']:
-                assert i < 10, (self.agent.message, self.agent.popup)
+            while not self.agent.single_popup or self.agent.single_popup[0] not in ['Take out what type of objects?', 'Take out what?']:
+                assert i < 100, (self.agent.single_message, self.agent.single_popup)
                 yield ' '
                 i += 1
-            if self.agent.popup[0] == 'Take out what type of objects?':
+            if self.agent.single_popup[0] == 'Take out what type of objects?':
                 yield from 'a\r'
-            assert 'Take out what?' in self.agent.popup[0]
+            assert 'Take out what?' in self.agent.single_popup[0]
             yield from self._select_items_in_popup(items_to_take, items_to_take_counts)
 
         with self.agent.atom_operation():
@@ -1160,6 +1183,7 @@ class Inventory:
                 while True:
                     # TODO: refactor: the same fragment is in check_container_content
                     assert 'Loot in what direction?' not in self.agent.message
+                    assert not self.agent.popup or 'Loot which containers?' not in self.agent.popup[0], self.agent.popup
                     r = re.findall(r'There is ([a-zA-z0-9# ]+) here\, loot it\? \[ynq\] \(q\)', self.agent.message)
                     assert len(r) == 1, self.agent.message
                     text = r[0]
@@ -1168,6 +1192,7 @@ class Inventory:
                     if it.container_id == container.container_id:
                         break
                     self.agent.step('n')
+
                 self.agent.step('y', gen())
             else:
                 assert 0
@@ -1177,7 +1202,6 @@ class Inventory:
                 self.check_container_content(item)
 
     def check_container_content(self, item):
-        assert not self.agent.character.prop.polymorph  # TODO: only handless
         assert item.is_possible_container() or item.is_container()
         assert item in self.items.all_items or item in self.items_below_me
 
@@ -1191,32 +1215,62 @@ class Inventory:
         def gen():
             nonlocal content, is_bag_of_tricks
 
-            if 'You carefully open ' in self.agent.message or 'You open ' in self.agent.message:
+            if 'You carefully open ' in self.agent.single_message or 'You open ' in self.agent.single_message:
                 yield ' '
 
-            if 'It develops a huge set of teeth and bites you!' in self.agent.message:
+            if 'It develops a huge set of teeth and bites you!' in self.agent.single_message:
                 is_bag_of_tricks = True
                 return
 
-            if 'Hmmm, it turns out to be locked.' in self.agent.message or 'It is locked.' in self.agent.message:
+            if 'Hmmm, it turns out to be locked.' in self.agent.single_message or 'It is locked.' in self.agent.single_message:
                 content.locked = True
                 yield A.Command.ESC
                 return
 
-            assert self.agent.popup, (self.agent.message)
-            yield ':'
+            if ('A cloud of ' in self.agent.single_message and ' gas billows from ' in self.agent.single_message) or \
+                    'But luckily the electric charge is grounded!' in self.agent.single_message or \
+                    'Suddenly you are frozen in place!' in self.agent.single_message or \
+                    'A tower of flame bursts from ' in self.agent.single_message or \
+                    'You are jolted by a surge of electricity!' in self.agent.single_message:
+                raise AgentPanic('triggered trap while looting')
 
-            if ' is empty' in self.agent.message:
+            assert self.agent.single_popup, (self.agent.single_message)
+            if '\no - ' not in '\n'.join(self.agent.single_popup):
+                # ':' sometimes doesn't display items correctly if there's >= 22 items (the first page isn't shown)
+                yield ':'
+                if ' is empty' in self.agent.single_message:
+                    return
+                # if self.agent.single_popup and 'Contents of ' in self.agent.single_popup[0]:
+                #     for text in self.agent.single_popup[1:]:
+                #         if not text:
+                #             continue
+                #         content.items.append(self.item_manager.get_item_from_text(text, position=None))
+                #     return
+                assert 0
+
+            yield from 'o'
+            if ' is empty' in self.agent.single_message and not self.agent.single_popup:
                 return
-
-            if self.agent.popup and 'Contents of ' in self.agent.popup[0]:
-                for text in self.agent.popup[1:]:
+            if self.agent.single_popup and self.agent.single_popup[0] == 'Take out what type of objects?':
+                yield from 'a\r'
+            if self.agent.single_popup and 'Take out what?' in self.agent.single_popup[0]:
+                category = None
+                while self.agent._observation['misc'][2]:
+                    yield ' '
+                assert self.agent.popup.count('Take out what?') == 1, self.agent.popup
+                for text in self.agent.popup[self.agent.popup.index('Take out what?') + 1:]:
                     if not text:
                         continue
-                    content.items.append(self.item_manager.get_item_from_text(text, position=None))
+                    if text in self._name_to_category:
+                        category = self._name_to_category[text]
+                        continue
+                    assert category is not None
+                    assert text[1:4] == ' - '
+                    text = text[4:]
+                    content.items.append(self.item_manager.get_item_from_text(text, category=category, position=None))
                 return
 
-            assert 0, (self.agent.message, self.agent.popup)
+            assert 0, (self.agent.single_message, self.agent.single_popup)
 
         with self.agent.atom_operation():
             if item in self.items.all_items:
@@ -1260,9 +1314,9 @@ class Inventory:
         assert counts is None or len(counts) == len(items)
         items = list(items)
         while 1:
-            assert self.agent.popup, (self.agent.message, items)
-            for line_i in range(len(self.agent.popup)):
-                line = self.agent.popup[line_i]
+            assert self.agent.single_popup, (self.agent.single_message, items)
+            for line_i in range(len(self.agent.single_popup)):
+                line = self.agent.single_popup[line_i]
                 if line[1:4] != ' - ':
                     continue
 
@@ -1315,6 +1369,7 @@ class Inventory:
                     self.agent.step(A.Command.PICKUP) # FIXME: parse LOOK output, add this fragment to pickup method
                     if 'Pick up what?' not in self.agent.popup:
                         if 'You cannot reach the bottom of the pit.' in self.agent.message or \
+                                'You cannot reach the bottom of the abyss.' in self.agent.message or \
                                 'You cannot reach the floor.' in self.agent.message or \
                                 'There is nothing here to pick up.' in self.agent.message or \
                                 ' solidly fixed to the floor.' in self.agent.message or \
@@ -1327,27 +1382,12 @@ class Inventory:
                             assert 0, (self.agent.message, self.agent.popup)
                     else:
                         lines = self.agent.popup[self.agent.popup.index('Pick up what?') + 1:]
-                        name_to_category = {
-                            'Amulets': nh.AMULET_CLASS,
-                            'Armor': nh.ARMOR_CLASS,
-                            'Comestibles': nh.FOOD_CLASS,
-                            'Coins': nh.COIN_CLASS,
-                            'Gems/Stones': nh.GEM_CLASS,
-                            'Potions': nh.POTION_CLASS,
-                            'Rings': nh.RING_CLASS,
-                            'Scrolls': nh.SCROLL_CLASS,
-                            'Spellbooks': nh.SPBOOK_CLASS,
-                            'Tools': nh.TOOL_CLASS,
-                            'Weapons': nh.WEAPON_CLASS,
-                            'Wands': nh.WAND_CLASS,
-                            'Boulders/Statues': nh.ROCK_CLASS,
-                        }
                         category = None
                         items = []
                         letters = []
                         for line in lines:
-                            if line in name_to_category:
-                                category = name_to_category[line]
+                            if line in self._name_to_category:
+                                category = self._name_to_category[line]
                                 continue
                             assert line[1:4] == ' - ', line
                             letter, line = line[0], line[4:]
@@ -1428,15 +1468,15 @@ class Inventory:
             return False
 
         def key_gen():
-            if 'Drop what type of items?' in '\n'.join(self.agent.popup):
+            if 'Drop what type of items?' in '\n'.join(self.agent.single_popup):
                 yield 'a'
                 yield A.MiscAction.MORE
-            assert 'What would you like to drop?' in '\n'.join(self.agent.popup), \
-                   (self.agent.message, self.agent.popup)
+            assert 'What would you like to drop?' in '\n'.join(self.agent.single_popup), \
+                   (self.agent.single_message, self.agent.single_popup)
             while texts_to_type:
                 for text in list(texts_to_type):
                     letter = text[-1]
-                    if f'{letter} - ' in '\n'.join(self.agent.popup):
+                    if f'{letter} - ' in '\n'.join(self.agent.single_popup):
                         yield from text
                         texts_to_type.remove(text)
 
@@ -1569,6 +1609,11 @@ class Inventory:
     @Strategy.wrap
     def arrange_items(self):
         yielded = False
+
+        if self.agent.character.prop.polymorph:
+            # TODO: only handless
+            yield False
+
         while 1:
             items_below_me = list(filter(lambda i: i.shop_status == Item.NOT_SHOP, flatten_items(self.items_below_me)))
             forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), flatten_items(self.items)))
@@ -1615,31 +1660,39 @@ class Inventory:
                 continue
 
             # take from container
-            for container in item_split:
-                if container is not None:
+            for container in all_items:
+                if not container.is_container():
+                    continue
+
+                if container in item_split:
                     counts = item_split[container]
                     indices = [i for i, item in enumerate(all_items) if item in container.content.items and counts[i] != item.count]
-                    if not indices:
-                        continue
-                    if not yielded:
-                        yielded = True
-                        yield True
+                    items_to_take_counts = [all_items[i].count - counts[i] for i in indices]
+                else:
+                    counts = np.array(list(item_split.values())).sum(0)
+                    indices = [i for i, item in enumerate(all_items) if item in container.content.items and counts[i] != 0]
+                    items_to_take_counts = [counts[i] for i in indices]
 
-                    assert self.items.free_slots() > 0
-                    indices = indices[:self.items.free_slots()]
+                if not indices:
+                    continue
+                if not yielded:
+                    yielded = True
+                    yield True
 
-                    self.use_container(container, [], [all_items[i] for i in indices],
-                                       items_to_take_counts=[all_items[i].count - counts[i] for i in indices])
-                    cont = True
-                    break
+                assert self.items.free_slots() > 0
+                indices = indices[:self.items.free_slots()]
+
+                self.use_container(container, [], [all_items[i] for i in indices],
+                                   items_to_take_counts=items_to_take_counts)
+                cont = True
+                break
             if cont:
                 continue
 
             # pick up from ground
             to_pickup = np.array([counts[len(free_items):] for counts in item_split.values()]).sum(0)
             assert len(to_pickup) == len(items_below_me)
-            assert all((item in self.items_below_me for item, count in zip(items_below_me, to_pickup) if count > 0))
-            indices = [i for i, item in enumerate(items_below_me) if to_pickup[i] > 0]
+            indices = [i for i, item in enumerate(items_below_me) if to_pickup[i] > 0 and item in self.items_below_me]
             if len(indices) > 0:
                 assert self.items.free_slots() > 0
                 indices = indices[:self.items.free_slots()]

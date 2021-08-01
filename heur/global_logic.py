@@ -120,7 +120,7 @@ class ItemPriority(ItemPriorityBase):
         if bag is not None:
             r[bag] = [ret_bag.get(item, 0) for item in items]
         for item in items:
-            if item.is_container() and item is not bag:
+            if item.is_container() and item is not bag and ret_inv.get(item, 0) != 0:
                 r[item] = [0 for _ in items]
         return r
 
@@ -429,25 +429,31 @@ class GlobalLogic:
         y, x = min(altars, key=lambda p: dis[p])
         self.agent.go_to(y, x)
         with self.agent.panic_if_position_changes():
-            for item in self.agent.inventory.items:
-                if self.can_sacrify(item):
-                    with self.agent.atom_operation():
-                        self.agent.step(A.Command.OFFER)
-                        while ('There is ' in self.agent.message or 'There are ' in self.agent.message) and \
-                                ('sacrifice it?' in self.agent.message or 'sacrifice one?' in self.agent.message):
-                            self.agent.type_text('n')
-                        assert 'What do you want to sacrifice?' in self.agent.message, self.agent.message
-                        self.agent.type_text(self.agent.inventory.items.get_letter(item))
-                        if 'Nothing happens.' in self.agent.message:
-                            self.agent.inventory.call_item(item, 'old')
-                            return
-                        if 'Use my gift wisely' in self.agent.message:
-                            self._got_artifact = True
-                            self.agent.inventory.get_items_below_me()
-                            return
-                        assert 'Your sacrifice is consumed in a flash of light' in self.agent.message or \
-                               'Your sacrifice is consumed in a burst of flame' in self.agent.message, \
-                               self.agent.message
+            while 1:
+                for item in self.agent.inventory.items:
+                    if self.can_sacrify(item):
+                        with self.agent.atom_operation():
+                            self.agent.step(A.Command.OFFER)
+                            while ('There is ' in self.agent.message or 'There are ' in self.agent.message) and \
+                                    ('sacrifice it?' in self.agent.message or 'sacrifice one?' in self.agent.message):
+                                self.agent.type_text('n')
+                            assert 'What do you want to sacrifice?' in self.agent.message, self.agent.message
+                            self.agent.type_text(self.agent.inventory.items.get_letter(item))
+                            if 'Nothing happens.' in self.agent.message:
+                                self.agent.inventory.call_item(item, 'old')
+                                return
+                            if 'Use my gift wisely' in self.agent.message:
+                                self._got_artifact = True
+                                self.agent.inventory.get_items_below_me()
+                                return
+                            assert 'Your sacrifice is consumed in a flash of light' in self.agent.message or \
+                                'Your sacrifice is consumed in a burst of flame' in self.agent.message or \
+                                ('The blood covers the altar!' in self.agent.message and \
+                                 'You have summoned ' in self.agent.message), \
+                                self.agent.message
+                            break
+                else:
+                    break
 
     @Strategy.wrap
     def current_strategy(self):

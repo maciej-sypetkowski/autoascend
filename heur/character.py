@@ -271,7 +271,7 @@ class Character:
                 old_skill_level = self.skill_levels.copy()
                 letter = self.upgradable_skills[to_upgrade]
                 def type_letter():
-                    while f'{letter} - ' not in '\n'.join(self.agent.popup):
+                    while f'{letter} - ' not in '\n'.join(self.agent.single_popup):
                         yield A.TextCharacters.SPACE
                     yield letter
                 self.agent.step(A.Command.ENHANCE, type_letter())

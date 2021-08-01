@@ -35,8 +35,10 @@ class Agent:
         self.score = 0
         self.step_count = 0
         self._observation = None  # this should be used in additional_action_iterator generators
-        self.message = ''
-        self.popup = []
+        # single_{message,popup} should be used in additional_action_itertator generators.
+        # (non-single) message & popup contain cummulated content
+        self.message = self.single_message = ''
+        self.popup = self.single_popup = []
         self._message_history = []
 
         self._last_pet_seen = 0
@@ -268,18 +270,13 @@ class Agent:
             message = message[:-len('--More--')]
 
         # assert '\n' not in message and '\r' not in message
-        if self._is_reading_message_or_popup:
-            message_preffix = self.message + (' ' if self.message else '')
-            popup = self.popup
-        else:
-            message_preffix = ''
-            popup = []
+        popup = []
 
         lines = [bytes(line).decode().replace('\0', ' ').replace('\n', '') for line in obs['tty_chars']]
         marker_pos, marker_type = self._find_marker(lines)
 
         if marker_pos is None:
-            return message_preffix + message, popup, True
+            return message, popup, True
 
         pref = ''
         message_lines_count = 0
@@ -301,7 +298,7 @@ class Agent:
                     elems1 = [s for s in message.split() if s]
                     elems2 = [s for s in pref.split() if s]
                     assert len(elems1) < len(elems2) and elems2[-len(elems1):] == elems1, (elems1, elems2)
-                    return message_preffix + pref, popup, False
+                    return pref, popup, False
                 raise ValueError(f"Message:\n{repr(message)}\ndoesn't match the screen:\n{repr(pref)}")
 
         # cut out popup
@@ -310,7 +307,23 @@ class Agent:
             if l:
                 popup.append(l)
 
-        return message_preffix + message, popup, False
+        return message, popup, False
+
+    def update_message_and_popup(self, obs):
+        if self._is_reading_message_or_popup:
+            message_prefix = self.message + (' ' if self.message else '')
+            popup_prefix = self.popup
+        else:
+            message_prefix = ''
+            popup_prefix = []
+
+        self.single_message, self.single_popup, done = self.get_message_and_popup(obs)
+        self.single_message = self.single_message.strip()
+        self.single_popup = [p.strip() for p in self.single_popup]
+
+        self.message = message_prefix + self.single_message
+        self.popup = popup_prefix + self.single_popup
+        return done
 
     def step(self, action, additional_action_iterator=None):
         if self._no_step_calls:
@@ -331,11 +344,9 @@ class Agent:
 
     def update(self, observation, additional_action_iterator=None):
         self._observation = observation
-        self.message, self.popup, done = self.get_message_and_popup(observation)
+        done = self.update_message_and_popup(observation)
 
-        self.message = self.message.strip()
-        self.popup = [p.strip() for p in self.popup]
-
+        self._is_reading_message_or_popup = True
         if additional_action_iterator is not None:
             is_next_action = True
             try:
@@ -350,7 +361,6 @@ class Agent:
         # FIXME: self.update_state() won't be called on all states sometimes.
         #        Otherwise there are problems with atomic operations.
         if not done or observation['misc'][2]:
-            self._is_reading_message_or_popup = True
             self.step(A.TextCharacters.SPACE)
             return
 

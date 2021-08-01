@@ -55,12 +55,14 @@ class MonsterTracker:
     def take_all_monsters(self):
         with self.agent.atom_operation():
             self.agent.step(A.Command.WHATIS, iter(['M']))
-            assert not self.agent.popup or self.agent.popup[0] == 'All monsters currently shown on the map:', \
-                   (self.agent.message, self.agent.popup)
+            try:
+                index = self.agent.popup.index('All monsters currently shown on the map:')
+            except IndexError:
+                assert 0, (self.agent.message, self.agent.popup)
             regex = re.compile(r"^<(\d+),(\d+)>  ([\x00-\x7F])  ([a-zA-z-,' ]+)$")
 
             monsters = {}
-            for line in self.agent.popup[1:]:
+            for line in self.agent.popup[index + 1:]:
                 r = regex.search(line)
                 assert r is not None, line
                 x, y, char, name = r.groups()
