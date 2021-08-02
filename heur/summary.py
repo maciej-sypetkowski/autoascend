@@ -24,7 +24,7 @@ def load_df(filepath):
 
 
 def give_examples(df, ref_df):
-    return f'{len(df)}x ({len(df) / len(ref_df) * 100:.1f}%) ({sorted([(t.seed, t.steps) for t in df.itertuples()][:5], key=lambda x: x[1])})'
+    return f'{len(df)}x ({len(df) / len(ref_df) * 100:.1f}%) ({sorted([(t.seed, t.steps, t.score) for t in df.itertuples()][:5], key=lambda x: x[1])})'
 
 
 def print_exceptions(df, ref_df):

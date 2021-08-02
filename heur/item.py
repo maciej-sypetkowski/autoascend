@@ -471,28 +471,27 @@ class ItemManager:
             r'^(a|an|the|\d+)'
             r'( empty)?'
             r'( (cursed|uncursed|blessed))?'
-            r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used|diluted|unlocked|locked))*'
+            r'( (very |thoroughly )?(rustproof|poisoned|corroded|rusty|burnt|rotted|partly eaten|partly used|diluted|unlocked|locked|wet))*'
             r'( ([+-]\d+))? '
             r"([a-zA-z0-9-!'# ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
-            r'( \(([a-zA-Z0-9; ]+(, flickering)?[a-zA-Z0-9; ]+)\))?'
+            r'( \(([a-zA-Z0-9; ]+(, flickering)?[a-zA-Z0-9; ]*)\))?'
             r'( \((for sale|unpaid), (\d+ aum, )?((\d+)[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
         assert len(matches) <= 1, text
-        assert len(matches), text
+        assert len(matches), (text, len(text))
 
         (
             count,
-            _,
             effects1,
-            status,
-            effects2, _, _, _,
-            modifier,
+            _, status,
+            effects2, _, _,
+            _, modifier,
             name,
-            _, uses, _,
-            info, _, _,
-            shop_status, _, _, shop_price
+            _, uses,
+            _, info, _,
+            _, shop_status, _, _, shop_price
         ) = matches[0]
         # TODO: effects, uses
 
@@ -1159,31 +1158,40 @@ class Inventory:
             if 'You carefully open ' in self.agent.single_message or 'You open ' in self.agent.single_message:
                 yield ' '
             assert 'Do what with ' in self.agent.single_popup[0]
-            yield 'r'
-            if 'Put in what type of objects?' in self.agent.single_popup[0]:
-                yield from 'a\r'
-            assert 'Put in what?' in self.agent.single_popup[0]
-            yield from self._select_items_in_popup(items_to_put, items_to_put_counts)
-            i = 0
-            while not self.agent.single_popup or self.agent.single_popup[0] not in ['Take out what type of objects?', 'Take out what?']:
-                assert i < 100, (self.agent.single_message, self.agent.single_popup)
-                yield ' '
-                i += 1
-            if self.agent.single_popup[0] == 'Take out what type of objects?':
-                yield from 'a\r'
-            assert 'Take out what?' in self.agent.single_popup[0]
-            yield from self._select_items_in_popup(items_to_take, items_to_take_counts)
+            if items_to_put and items_to_take:
+                yield 'r'
+            elif items_to_put and not items_to_take:
+                yield 'i'
+            elif not items_to_put and items_to_take:
+                yield 'o'
+            else:
+                assert 0
+            if items_to_put:
+                if 'Put in what type of objects?' in self.agent.single_popup[0]:
+                    yield from 'a\r'
+                assert 'Put in what?' in self.agent.single_popup[0], (self.agent.single_message, self.agent.single_popup)
+                yield from self._select_items_in_popup(items_to_put, items_to_put_counts)
+            if items_to_take:
+                while not self.agent.single_popup or self.agent.single_popup[0] not in ['Take out what type of objects?', 'Take out what?']:
+                    assert ' inside, you are blasted by a ' not in self.agent.message, self.agent.message
+                    assert self.agent.single_message or self.agent.single_popup, (self.agent.message, self.agent.popup)
+                    yield ' '
+                if self.agent.single_popup[0] == 'Take out what type of objects?':
+                    yield from 'a\r'
+                assert 'Take out what?' in self.agent.single_popup[0]
+                yield from self._select_items_in_popup(items_to_take, items_to_take_counts)
 
         with self.agent.atom_operation():
+            # TODO: refactor: the same fragment is in check_container_content
             if container in self.items.all_items:
                 self.agent.step(A.Command.APPLY)
+                assert "You can't do that while carrying so much stuff." not in self.agent.message, self.agent.message
                 self.agent.step(self.items.get_letter(container), gen())
             elif container in self.items_below_me:
                 self.agent.step(A.Command.LOOT)
                 while True:
-                    # TODO: refactor: the same fragment is in check_container_content
+                    assert 'Loot which containers?' not in self.agent.popup, self.agent.popup
                     assert 'Loot in what direction?' not in self.agent.message
-                    assert not self.agent.popup or 'Loot which containers?' not in self.agent.popup[0], self.agent.popup
                     r = re.findall(r'There is ([a-zA-z0-9# ]+) here\, loot it\? \[ynq\] \(q\)', self.agent.message)
                     assert len(r) == 1, self.agent.message
                     text = r[0]
@@ -1228,10 +1236,10 @@ class Inventory:
                 return
 
             if ('A cloud of ' in self.agent.single_message and ' gas billows from ' in self.agent.single_message) or \
-                    'But luckily the electric charge is grounded!' in self.agent.single_message or \
                     'Suddenly you are frozen in place!' in self.agent.single_message or \
                     'A tower of flame bursts from ' in self.agent.single_message or \
-                    'You are jolted by a surge of electricity!' in self.agent.single_message:
+                    'You are jolted by a surge of electricity!' in self.agent.single_message or \
+                    'But luckily ' in self.agent.single_message:
                 raise AgentPanic('triggered trap while looting')
 
             assert self.agent.single_popup, (self.agent.single_message)
@@ -1246,7 +1254,7 @@ class Inventory:
                 #             continue
                 #         content.items.append(self.item_manager.get_item_from_text(text, position=None))
                 #     return
-                assert 0
+                assert 0, (self.agent.single_message, self.agent.single_popup)
 
             yield from 'o'
             if ' is empty' in self.agent.single_message and not self.agent.single_popup:
@@ -1273,13 +1281,15 @@ class Inventory:
             assert 0, (self.agent.single_message, self.agent.single_popup)
 
         with self.agent.atom_operation():
+            # TODO: refactor: the same fragment is in use_container
             if item in self.items.all_items:
                 self.agent.step(A.Command.APPLY)
+                assert "You can't do that while carrying so much stuff." not in self.agent.message, self.agent.message
                 self.agent.step(self.items.get_letter(item), gen())
             else:
                 self.agent.step(A.Command.LOOT)
                 while True:
-                    # TODO: refactor: the same fragment is in use_container
+                    assert 'Loot which containers?' not in self.agent.popup, self.agent.popup
                     assert 'There is ' in self.agent.message and ', loot it?' in self.agent.message, self.agent.message
                     r = re.findall(r'There is ([a-zA-z0-9# ]+) here\, loot it\? \[ynq\] \(q\)', self.agent.message)
                     assert len(r) == 1, self.agent.message
