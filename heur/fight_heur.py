@@ -1,14 +1,16 @@
 from itertools import product
 
+import nle.nethack as nh
 import numpy as np
 from scipy import signal
 
+import objects as O
 import utils
 from glyph import G
 
-ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold']
+ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold', 'gas spore']
 # COLD_MONSTERS = ['brown mold']
-COLD_MONSTERS = []
+# COLD_MONSTERS = []
 
 # TODO
 EXPLODING_MONSTERS = ['yellow light', 'gas spore', 'flaming sphere', 'freezing sphere', 'shocking sphere']
@@ -63,7 +65,7 @@ def draw_monster_priority_positive(agent, monster, priority, walkable):
         # weak monster - freely engage in melee
         _draw_around(priority, y, x, 2, radius=1, operation='max')
         _draw_around(priority, y, x, 1, radius=2, operation='max')
-    elif 'mold' in mon.mname and mon.mname not in COLD_MONSTERS + ONLY_RANGED_SLOW_MONSTERS:
+    elif 'mold' in mon.mname and mon.mname not in ONLY_RANGED_SLOW_MONSTERS:
         if agent.blstats.hitpoints >= 15 or agent.blstats.hitpoints == agent.blstats.max_hitpoints:
             # freely engage in melee
             _draw_around(priority, y, x, 2, radius=1, operation='max')
@@ -108,18 +110,13 @@ def draw_monster_priority_negative(agent, monster, priority, walkable):
 
     if mon.mname in EXPLODING_MONSTERS:
         _draw_around(priority, y, x, -10, radius=1)
-        _draw_around(priority, y, x, -5, radius=2)
+        if mon.mname not in ONLY_RANGED_SLOW_MONSTERS:
+            _draw_around(priority, y, x, -5, radius=2)
         _draw_ranged(priority, y, x, 4, walkable, radius=7)
-    elif 'mold' in mon.mname and mon.mname not in COLD_MONSTERS + ONLY_RANGED_SLOW_MONSTERS:
+    elif 'mold' in mon.mname and mon.mname not in ONLY_RANGED_SLOW_MONSTERS:
         # prioritize staying in ranged weapons line of fire
         if len(agent.inventory.get_ranged_combinations()):
             _draw_ranged(priority, y, x, 2, walkable, radius=7)
-    # elif mon.mname in COLD_MONSTERS:
-    #     if len(agent.inventory.get_ranged_combinations()):
-    #         _draw_ranged(priority, y, x, 6, walkable, radius=5)
-    #     elif agent.blstats.hitpoints < 20 or agent.blstats.hitpoints == agent.blstats.max_hitpoints:
-
-    #         _draw_around(priority, y, x, -15, radius=1)
     elif mon.mname in WEIRD_MONSTERS:
         # stay away
         _draw_around(priority, y, x, -10, radius=1)
@@ -135,6 +132,9 @@ def draw_monster_priority_negative(agent, monster, priority, walkable):
             _draw_around(priority, y, x, -9, radius=1)
             if not len(agent.inventory.get_ranged_combinations()):
                 _draw_ranged(priority, y, x, -1, walkable, radius=7)
+
+    if mon.mname == 'purple worm' and len(agent.inventory.get_ranged_combinations()):
+        _draw_around(priority, y, x, -10, radius=1)
 
 
 def wielding_ranged_weapon(agent):
@@ -158,16 +158,11 @@ def melee_monster_priority(agent, monsters, monster):
         ret += 15
     if wielding_ranged_weapon(agent) and not is_monster_faster(agent, monster):
         ret -= 6
-    if mon.mname in COLD_MONSTERS:
-        if agent.blstats.hitpoints < 20 and agent.blstats.hitpoints != agent.blstats.max_hitpoints:
-            ret -= 15
-        ret -= 1
+    if mon.mname in EXPLODING_MONSTERS:
+        ret -= 17
     # if not wielding_melee_weapon(agent):
     #     ret -= 5
     if mon.mname in ONLY_RANGED_SLOW_MONSTERS:
-        # ret -= 1
-        # if agent.inventory.get_ranged_combinations():
-        #     ret -= 19
         ret -= 100
     return ret
 
@@ -220,13 +215,15 @@ def ranged_priority(agent, dy, dx, monsters):
                 ret -= 5
             if dis == 1:
                 ret -= 6
-                # if mon.mname in EXPLODING_MONSTERS:
-                #     ret -= 20
+                if mon.mname == 'gas spore':  # only gas spore ?
+                    ret -= 100
             return ret, y, x, monster[0]
 
 
 def get_potential_wand_usages(agent, monsters, dy, dx):
-    # TODO
+    for item in agent.inventory.items:
+        if len(item.objs) == 1 and item.objs[0] == O.from_name('magic missile', nh.WAND_CLASS):
+            pass
     return []
 
 

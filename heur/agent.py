@@ -487,7 +487,7 @@ class Agent:
         # if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
         #     self._previous_glyphs = self.last_observation['glyphs']
 
-        mask = utils.isin(self.glyphs, G.FLOOR, G.CORRIDOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS,
+        mask = utils.isin(self.glyphs, G.FLOOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS,
                           G.ALTAR, G.FOUNTAIN)
         level.walkable[mask] = True
         level.seen[mask] = True
