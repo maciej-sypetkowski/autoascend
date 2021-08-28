@@ -356,7 +356,8 @@ class Visualizer:
 
         # game info
         i = 0
-        txt = [f'Level number: {self.env.agent.current_level().level_number}',
+        txt = [f'Level num: {self.env.agent.current_level().level_number}',
+               f'Dung num: {self.env.agent.current_level().dungeon_number}',
                f'Step: {self.env.step_count}',
                f'Turn: {self.env.agent._last_turn}',
                f'Score: {self.env.score}',
@@ -376,7 +377,9 @@ class Visualizer:
         txt = [f'HP: {self.env.agent.blstats.hitpoints} / {self.env.agent.blstats.max_hitpoints}',
                f'LVL: {self.env.agent.blstats.experience_level}',
                ]
-        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE))
+        hp_ratio = self.env.agent.blstats.hitpoints / self.env.agent.blstats.max_hitpoints
+        hp_color = cv2.applyColorMap(np.array([[130 - int((1 - hp_ratio) * 110)]], dtype=np.uint8), cv2.COLORMAP_TURBO)[0, 0]
+        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE), color=tuple(map(int, hp_color)))
         i += 2
 
         # proficiency info
@@ -403,10 +406,10 @@ class Visualizer:
         return ret
 
     def _draw_topbar(self, width):
-        actions_vis = self._draw_action_history(width // 20)
-        messages_vis = self._draw_message_history(width // 3)
+        actions_vis = self._draw_action_history(width // 25)
+        messages_vis = self._draw_message_history(width // 4)
         popup_vis = self._draw_popup_history(width // 4)
-        log_messages_vis = self._draw_debug_message_log(width - width // 20 - width // 3 - width // 4)
+        log_messages_vis = self._draw_debug_message_log(width - width // 25 - width // 4 - width // 4)
         ret = np.concatenate([actions_vis, messages_vis, popup_vis, log_messages_vis], axis=1)
         assert ret.shape[1] == width
         return ret
@@ -496,10 +499,20 @@ class Visualizer:
         from item import Item
         bg_color = {
             nh.WAND_CLASS : np.array([0, 50, 50], dtype=np.uint8),
+            nh.FOOD_CLASS: np.array([0, 50, 0], dtype=np.uint8),
+            nh.ARMOR_CLASS: np.array([50, 50, 0], dtype=np.uint8),
+            nh.RING_CLASS: np.array([50, 50, 0], dtype=np.uint8),
+            nh.SCROLL_CLASS: np.array([30, 30, 30], dtype=np.uint8),
+            nh.POTION_CLASS: np.array([0, 0, 50], dtype=np.uint8),
         }
         vis = np.zeros((round(height * 0.9), width, 3)).astype(np.uint8)
         if item.category in bg_color:
             vis += bg_color[item.category]
+        if item.is_weapon():
+            if item.is_thrown_projectile() or item.is_fired_projectile():
+                vis += np.array([50, 0, 50], dtype=np.uint8)
+            else:
+                vis += np.array([50, 0, 0], dtype=np.uint8)
         _put_text(vis, str(letter), (0, 0))
         status_str, status_col = {
             Item.UNKNOWN: (' ', (255, 255, 255)),
