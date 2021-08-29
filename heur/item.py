@@ -48,7 +48,7 @@ class Item:
 
     def __init__(self, objs, glyphs, count=1, status=UNKNOWN, modifier=None, equipped=False, at_ready=False,
                  monster_id=None, shop_status=NOT_SHOP, price=0, dmg_bonus=None, to_hit_bonus=None,
-                 naming='', comment='', text=None):
+                 naming='', comment='', uses=None, text=None):
         assert isinstance(objs, list) and len(objs) >= 1
         assert isinstance(glyphs, list) and len(glyphs) >= 1 and all((nh.glyph_is_object(g) for g in glyphs))
         assert isinstance(count, int)
@@ -59,6 +59,7 @@ class Item:
         self.status = status
         self.modifier = modifier
         self.equipped = equipped
+        self.uses = uses
         self.at_ready = at_ready
         self.monster_id = monster_id
         self.shop_status = shop_status
@@ -207,6 +208,37 @@ class Item:
     def get_ac(self):
         assert self.is_armor()
         return self.object.ac - (self.modifier if self.modifier is not None else 0)
+
+
+    ######## WAND
+
+    def is_wand(self):
+        return isinstance(self.objs[0], O.Wand)
+
+    def is_beam_wand(self):
+        if not self.is_wand():
+            return False
+        beam_wand_types = ['cancellation', 'locking', 'make invisible',
+                           'nothing', 'opening', 'polymorph', 'probing', 'slow monster',
+                           'speed monster', 'striking', 'teleportation', 'undead turning']
+        beam_wand_types = [O.from_name(w, nh.WAND_CLASS) for w in beam_wand_types]
+        for obj in self.objs:
+            if obj not in beam_wand_types:
+                return False
+        return True
+
+    def is_ray_wand(self):
+        if not self.is_wand():
+            return False
+        ray_wand_types = ['cold', 'death', 'digging', 'fire', 'lightning', 'magic missile', 'sleep']
+        ray_wand_types = [O.from_name(w, nh.WAND_CLASS) for w in ray_wand_types]
+        for obj in self.objs:
+            if obj not in ray_wand_types:
+                return False
+        return True
+
+    def wand_charges_left(self, item):
+        assert item.is_wand()
 
     ######## FOOD
 
@@ -711,7 +743,7 @@ class ItemManager:
 
         return (
             objs, ret_glyphs, count, status, modifier, equipped, at_ready, monster_id, shop_status, shop_price,
-            dmg_bonus, to_hit_bonus, naming, comment,
+            dmg_bonus, to_hit_bonus, naming, comment, uses
         )
 
     @staticmethod

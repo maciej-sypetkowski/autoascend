@@ -12,8 +12,8 @@ from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
-from glyph import MON, C, Hunger, G, SHOP, ALL
-from item import Inventory, Item, flatten_items
+from glyph import MON, C, Hunger, G, SHOP
+from item import Inventory, flatten_items
 from level import Level
 from monster_tracker import MonsterTracker
 from strategy import Strategy
@@ -437,8 +437,8 @@ class Agent:
             if allow_update:
                 # functions that are allowed to call state unchanging steps
                 for func in [self.inventory.update, self.monster_tracker.update,
-                            partial(self.check_terrain, force=False), self.update_level,
-                            self.global_logic.update]:
+                             partial(self.check_terrain, force=False), self.update_level,
+                             self.global_logic.update]:
                     func()
                     self.message = message
                     self.popup = popup
@@ -491,7 +491,8 @@ class Agent:
             assert shop_name in SHOP.name2id, shop_name
             shop_type = SHOP.name2id[shop_name]
 
-        shopkeepers = list(zip(*(utils.isin(self.glyphs, G.SHOPKEEPER) & self.monster_tracker.peaceful_monster_mask).nonzero()))
+        shopkeepers = list(
+            zip(*(utils.isin(self.glyphs, G.SHOPKEEPER) & self.monster_tracker.peaceful_monster_mask).nonzero()))
         for y, x in shopkeepers:
             wall_mask = utils.isin(level.objects, G.WALL)
             entry = ((utils.translate(wall_mask, 1, 0) & utils.translate(wall_mask, -1, 0)) |
@@ -626,6 +627,13 @@ class Agent:
             assert self.glyphs[y, x] in G.MONS or self.glyphs[y, x] in G.INVISIBLE_MON or \
                    self.glyphs[y, x] in G.SWALLOW
             self.direction(y, x)
+        return True
+
+    def zap(self, item, direction):
+        with self.atom_operation():
+            self.step(A.Command.ZAP)
+            self.type_text(self.inventory.items.get_letter(item))
+            self.direction(direction)
         return True
 
     def fire(self, item, direction):
@@ -887,6 +895,7 @@ class Agent:
                         class dummy_permonst:
                             mname = 'unknown'
                             mlet = '0'
+
                         ret.append((dis[y][x], y, x, dummy_permonst(), self.glyphs[y][x]))
                 else:
                     ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))
@@ -942,7 +951,8 @@ class Agent:
             dis = self.bfs()
 
             if not monsters or all(dis > 7 for dis, *_ in monsters) or \
-                    (only_ranged_slow_monsters and not self.inventory.get_ranged_combinations() and np.sum(dis != -1) > 1):
+                    (only_ranged_slow_monsters and not self.inventory.get_ranged_combinations() and np.sum(
+                        dis != -1) > 1):
                 if wait_counter:
                     self.search()
                     wait_counter -= 1
@@ -989,10 +999,15 @@ class Agent:
             priority[~mask] = float('nan')
             with self.env.debug_tiles(priority, color='turbo', is_heatmap=True):
                 def action_str(a):
-                    if a[1] != 'pickup':
-                        return f'{a[0]}{a[1][0]}:{a[2]},{a[3]}'
-                    else:
+                    if a[1] == 'pickup':
                         return f'{a[0]}{a[1][0]}:{len(a[2])}'
+                    elif a[1] == 'zap':
+                        wand = a[4]
+                        letter = self.inventory.items.get_letter(wand)
+                        return f'{a[0]}z{letter}:{a[2]},{a[3]}'
+                    else:
+                        return f'{a[0]}{a[1][0]}:{a[2]},{a[3]}'
+
                 actions_str = '|'.join([action_str(a) for a in sorted(actions)])
                 with self.env.debug_log(actions_str + f'|{best_move_score}|' + '|'.join(map(str, possible_move_to))):
                     wait_counter = self._fight2_perform_action(best_action, best_move_score, best_x, best_y,
@@ -1020,7 +1035,6 @@ class Agent:
                     return wait_counter
             elif best_action[1] == 'ranged':
                 _, _, target_y, target_x, monster = best_action
-                _, _, target_y, target_x, monster = best_action
                 launcher, ammo = self.inventory.get_best_ranged_set()
                 assert ammo is not None
                 if launcher is not None and not launcher.equipped:
@@ -1034,6 +1048,17 @@ class Agent:
                     finally:
                         self._track_hunted_corpse(monster, target_x, target_y)
                     return wait_counter
+            elif best_action[1] == 'zap':
+                _, _, dy, dx, wand, targeted_monsters = best_action
+                dir = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx,
+                                          allow_nonunit_distance=True)
+
+                with self.env.debug_tiles([[my, mx] for my, mx, _ in targeted_monsters],
+                                          (255, 0, 255, 255), mode='frame'):
+                    self.zap(wand, dir)
+                    for my, mx, monster in targeted_monsters:
+                        self._track_hunted_corpse(monster, mx, my)
+
             elif best_action[1] == 'pickup':
                 _, _, items_to_pickup = best_action
                 self.inventory.pickup(items_to_pickup)
@@ -1142,7 +1167,8 @@ class Agent:
         else:
             flags = MON.M1_ACID | MON.M1_POIS
 
-        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags == 0 and ord(MON.permonst(b).mlet) != MON.S_COCKATRICE]
+        editable_bodies = [b for b in G.BODIES if
+                           MON.permonst(b).mflags1 & flags == 0 and ord(MON.permonst(b).mlet) != MON.S_COCKATRICE]
         mask = utils.isin(self.glyphs, editable_bodies) & \
                ((self.blstats.time - level.corpse_age <= 50) |
                 utils.isin(self.glyphs, [MON.body_from_name('lizard'), MON.body_from_name('lichen')]))

@@ -1,3 +1,4 @@
+from collections import defaultdict
 from itertools import product
 
 import nle.nethack as nh
@@ -14,6 +15,8 @@ ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold', 'gas sp
 
 # TODO
 EXPLODING_MONSTERS = ['yellow light', 'gas spore', 'flaming sphere', 'freezing sphere', 'shocking sphere']
+
+INSECTS = ['giant ant', 'killer bee', 'soldier ant', 'fire ant', 'giant beetle', 'queen bee']
 
 WEAK_MONSTERS = ['lichen', 'newt']
 
@@ -182,7 +185,7 @@ def ranged_priority(agent, dy, dx, monsters):
             closest_mon_dis = min(closest_mon_dis, _line_dis_from(agent, my, mx))
 
     if closest_mon_dis == 1:
-        ret -= 5
+        ret -= 11
 
     launcher, ammo = agent.inventory.get_best_ranged_set()
     if ammo is None:
@@ -220,11 +223,121 @@ def ranged_priority(agent, dy, dx, monsters):
             return ret, y, x, monster[0]
 
 
+def inside(agent, y, x):
+    return 0 <= y < agent.glyphs.shape[0] and 0 <= x < agent.glyphs.shape[1]
+
+
+def get_next_states(agent, wand, y, x, dy, dx):
+    if not inside(agent, y, x) or not agent.current_level().walkable[y, x]:
+        can_bounce = wand.is_ray_wand()
+        if not can_bounce:
+            return []
+        if dy == 0 or dx == 0:
+            return [(y - dy, x - dx, -dy, -dx, 1.0, 1)]
+        # TODO: diagonal
+        side1 = (y, x - dx)
+        side2 = (y - dy, x)
+        side1_wall = not inside(agent, *side1) or not agent.current_level().walkable[side1]
+        side2_wall = not inside(agent, *side2) or not agent.current_level().walkable[side2]
+        dy1, dx1 = side2[0] - side1[0], side2[1] - side1[1]
+        dy2, dx2 = side1[0] - side2[0], side1[1] - side2[1]
+        if side1_wall and side2_wall:
+            return [(y - dy, x - dx, -dy, -dx, 1.0, 1)]
+        elif not side1_wall and not side2_wall:
+            return [(y - dy, x - dx, -dy, -dx, 1 / 20, 1),
+                    (y + dy1, x + dx1, dy1, dx1, 19 / 40, 1),
+                    (y + dy2, x + dx2, dy2, dx2, 19 / 40, 1)]
+        elif side1_wall:
+            return [(y + dy1, x + dx1, dy1, dx1, 1.0, 1)]
+        elif side2_wall:
+            return [(y + dy2, x + dx2, dy2, dx2, 1.0, 1)]
+        else:
+            assert 0
+    return [(y + dy, x + dx, dy, dx, 1.0, 0)]
+
+
+def _simulate_wand_path(agent, wand, monsters, y, x, dy, dx, range_left, hit_targets, probability):
+    if range_left < 0:
+        return
+
+    for y, x, dy, dx, next_prob, range_penalty in get_next_states(agent, wand, y, x, dy, dx):
+        range_left -= range_penalty
+        monster = [m for m in monsters if m[1] == y and m[2] == x]
+        if monster:
+            assert len(monster) == 1
+            monster = monster[0]
+            # For each monster hit, range decreases by 2.
+            range_left -= 2
+        elif inside(agent, y, x) and agent.glyphs[y, x] in G.PETS:
+            monster = 'pet'
+            # For each monster hit, range decreases by 2.
+            range_left -= 2
+        elif agent.blstats.y == y and agent.blstats.x == x:
+            monster = 'self'
+            range_left -= 2
+        else:
+            monster = None
+
+        hit_targets[(y, x, monster)] += probability * next_prob
+
+        _simulate_wand_path(agent, wand, monsters, y, x, dy, dx, range_left - 1, hit_targets, 1.0)
+
+
+def simulate_wand_path(agent, wand, monsters, dy, dx):
+    """ Returns list of tuples (y, x, hit_object, expected_hit_count).
+    """
+    y, x = agent.blstats.y, agent.blstats.x
+
+    # TODO: random range left from 6 or 7 to 13
+    hit_targets = defaultdict(int)
+    _simulate_wand_path(agent, wand, monsters, y, x, dy, dx, 13, hit_targets, 1.0)
+    for (y, x, hit_object), expected_hit_count in hit_targets.items():
+        yield y, x, hit_object, expected_hit_count
+
+
+def is_dangerous_monster(monster):
+    _, y, x, mon, _ = monster
+    return mon.mname in INSECTS
+
+
 def get_potential_wand_usages(agent, monsters, dy, dx):
+    ret = []
+    player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
     for item in agent.inventory.items:
-        if len(item.objs) == 1 and item.objs[0] == O.from_name('magic missile', nh.WAND_CLASS):
-            pass
-    return []
+        targeted_monsters = set()
+        if len(item.objs) != 1:
+            continue
+        if not item.is_ray_wand():
+            continue
+        if item.uses == 'no charges':
+            # TODO: is it right ?
+            continue
+        if item.objs[0] == O.from_name('sleep', nh.WAND_CLASS):
+            continue
+        if item.objs[0] == O.from_name('digging', nh.WAND_CLASS):
+            continue
+        priority = 0
+        # print('--------------', dy, dx)
+        for y, x, monster, p in simulate_wand_path(agent, item, monsters, dy, dx):
+            # print(y, x, monster, p)
+            if monster == 'pet':
+                priority -= p * 20
+            elif monster == 'self':
+                priority -= p * 30
+            elif monster is not None:
+                _, y, x, mon, _ = monster
+                if mon.mname in WEAK_MONSTERS:
+                    priority += min(p, 1) * 1
+                elif is_dangerous_monster(monster):
+                    priority += p * 25
+                else:
+                    priority += min(p, 1) * 10
+                targeted_monsters.add((y, x, monster))
+        if targeted_monsters:
+            # priority = priority * (1 - player_hp_ratio) - 10
+            priority = priority - 15
+            ret.append((priority, 'zap', dy, dx, item, targeted_monsters))
+    return ret
 
 
 def get_available_actions(agent, monsters):
