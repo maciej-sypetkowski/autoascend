@@ -482,14 +482,13 @@ class C:
 
 
 class G:  # Glyphs
-    FLOOR: ['.'] = frozenset({SS.S_room, SS.S_ndoor, SS.S_darkroom})
-    VISIBLE_FLOOR: ['.'] = frozenset({SS.S_room})
+    FLOOR: ['.'] = frozenset({SS.S_room, SS.S_ndoor, SS.S_darkroom, SS.S_corr, SS.S_litcorr})
+    VISIBLE_FLOOR: ['.'] = frozenset({SS.S_room, SS.S_litcorr})
     STONE: [' '] = frozenset({SS.S_stone})
     WALL: ['|', '-'] = frozenset({SS.S_vwall, SS.S_hwall, SS.S_tlcorn, SS.S_trcorn, SS.S_blcorn, SS.S_brcorn,
                                   SS.S_crwall, SS.S_tuwall, SS.S_tdwall, SS.S_tlwall, SS.S_trwall})
-    CORRIDOR: ['#'] = frozenset({SS.S_corr})
-    STAIR_UP: ['<'] = frozenset({SS.S_upstair})
-    STAIR_DOWN: ['>'] = frozenset({SS.S_dnstair})
+    STAIR_UP: ['<'] = frozenset({SS.S_upstair, SS.S_upladder})
+    STAIR_DOWN: ['>'] = frozenset({SS.S_dnstair, SS.S_dnladder})
     ALTAR: ['_'] = frozenset({SS.S_altar})
     FOUNTAIN = frozenset({SS.S_fountain})
 
@@ -501,7 +500,8 @@ class G:  # Glyphs
 
     MONS = frozenset(MON.ALL_MONS)
     PETS = frozenset(MON.ALL_PETS)
-    INVISIBLE_MON = frozenset({nh.GLYPH_INVISIBLE})
+    WARNING = frozenset({nh.GLYPH_WARNING_OFF + i for i in range(nh.WARNCOUNT)})
+    INVISIBLE_MON = frozenset({nh.GLYPH_INVISIBLE, *WARNING})
 
     SHOPKEEPER = frozenset({MON.fn('shopkeeper')})
     ORACLE = frozenset({MON.fn('Oracle')})

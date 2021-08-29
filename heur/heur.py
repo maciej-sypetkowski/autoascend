@@ -298,6 +298,10 @@ class EnvWrapper:
 
     def step(self, agent_action):
         if self.visualizer is not None:
+            self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
+
+            if self.interactive and self.to_skip <= 1:
+                self.visualizer.force_next_frame()
             self.render()
 
             if self.interactive:
@@ -307,12 +311,8 @@ class EnvWrapper:
 
             if self.to_skip > 0:
                 self.to_skip -= 1
-                if self.interactive and self.to_skip == 0:
-                    self.visualizer.force_next_frame()
                 action = None
             else:
-                self.visualizer.force_next_frame()
-                self.render()
                 action = self.get_action()
 
             if action is None:
@@ -329,10 +329,11 @@ class EnvWrapper:
         self.step_count += 1
         # if not done:
         #     agent_lib.G.assert_map(obs['glyphs'], obs['chars'])
-        if self.visualizer is not None:
-            self.visualizer.step(obs)
 
         if done:
+            if self.visualizer is not None:
+                self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
+
             end_reason = bytes(obs['tty_chars'].reshape(-1)).decode().replace('You made the top ten list!', '').split()
             if end_reason[7].startswith('Agent'):
                 self.score = int(end_reason[6])

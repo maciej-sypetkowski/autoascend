@@ -1,4 +1,5 @@
 import multiprocessing
+import nle.nethack as nh
 import queue
 import time
 
@@ -7,7 +8,7 @@ import numpy as np
 
 # avoid importing agent modules here, because it makes agent reloading less reliable
 
-MSG_HISTORY_COUNT = 13
+HISTORY_SIZE = 13
 FONT_SIZE = 32
 RENDERS_HISTORY_SIZE = 128
 
@@ -169,6 +170,8 @@ class Visualizer:
         if self.show:
             print('Read tileset of size:', self.tileset.shape)
 
+        self.action_history = list()
+
         self.message_history = list()
         self.popup_history = list()
 
@@ -252,8 +255,9 @@ class Visualizer:
     def debug_log(self, txt, color):
         return DebugLogScope(self, txt, color)
 
-    def step(self, obs):
+    def step(self, obs, action):
         self.last_obs = obs
+        self.action_history.append(action)
         self._update_log_message_history()
         self._update_message_history()
         self._update_popup_history()
@@ -352,7 +356,8 @@ class Visualizer:
 
         # game info
         i = 0
-        txt = [f'Level number: {self.env.agent.current_level().level_number}',
+        txt = [f'Level num: {self.env.agent.current_level().level_number}',
+               f'Dung num: {self.env.agent.current_level().dungeon_number}',
                f'Step: {self.env.step_count}',
                f'Turn: {self.env.agent._last_turn}',
                f'Score: {self.env.score}',
@@ -372,7 +377,9 @@ class Visualizer:
         txt = [f'HP: {self.env.agent.blstats.hitpoints} / {self.env.agent.blstats.max_hitpoints}',
                f'LVL: {self.env.agent.blstats.experience_level}',
                ]
-        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE))
+        hp_ratio = self.env.agent.blstats.hitpoints / self.env.agent.blstats.max_hitpoints
+        hp_color = cv2.applyColorMap(np.array([[130 - int((1 - hp_ratio) * 110)]], dtype=np.uint8), cv2.COLORMAP_TURBO)[0, 0]
+        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE), color=tuple(map(int, hp_color)))
         i += 2
 
         # proficiency info
@@ -399,16 +406,17 @@ class Visualizer:
         return ret
 
     def _draw_topbar(self, width):
-        messages_vis = self._draw_message_history(width // 3)
+        actions_vis = self._draw_action_history(width // 25)
+        messages_vis = self._draw_message_history(width // 4)
         popup_vis = self._draw_popup_history(width // 4)
-        log_messages_vis = self._draw_debug_message_log(width - width // 3 - width // 4)
-        ret = np.concatenate([messages_vis, popup_vis, log_messages_vis], axis=1)
+        log_messages_vis = self._draw_debug_message_log(width - width // 25 - width // 4 - width // 4)
+        ret = np.concatenate([actions_vis, messages_vis, popup_vis, log_messages_vis], axis=1)
         assert ret.shape[1] == width
         return ret
 
     def _draw_debug_message_log(self, width):
-        vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
-        for i in range(MSG_HISTORY_COUNT):
+        vis = np.zeros((FONT_SIZE * HISTORY_SIZE, width, 3)).astype(np.uint8)
+        for i in range(HISTORY_SIZE):
             if i >= len(self.log_messages_history):
                 break
             txt = self.log_messages_history[-i - 1]
@@ -426,9 +434,22 @@ class Visualizer:
         # if txt:
         self.log_messages_history.append(txt)
 
+    def _draw_action_history(self, width):
+        vis = np.zeros((FONT_SIZE * HISTORY_SIZE, width, 3)).astype(np.uint8)
+        for i in range(HISTORY_SIZE):
+            if i >= len(self.action_history):
+                break
+            txt = self.action_history[-i - 1]
+            if i == 0:
+                _put_text(vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+            else:
+                _put_text(vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        _draw_frame(vis)
+        return vis
+
     def _draw_message_history(self, width):
-        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
-        for i in range(MSG_HISTORY_COUNT):
+        messages_vis = np.zeros((FONT_SIZE * HISTORY_SIZE, width, 3)).astype(np.uint8)
+        for i in range(HISTORY_SIZE):
             if i >= len(self.message_history):
                 break
             txt = self.message_history[-i - 1]
@@ -440,8 +461,8 @@ class Visualizer:
         return messages_vis
 
     def _draw_popup_history(self, width):
-        messages_vis = np.zeros((FONT_SIZE * MSG_HISTORY_COUNT, width, 3)).astype(np.uint8)
-        for i in range(MSG_HISTORY_COUNT):
+        messages_vis = np.zeros((FONT_SIZE * HISTORY_SIZE, width, 3)).astype(np.uint8)
+        for i in range(HISTORY_SIZE):
             if i >= len(self.popup_history):
                 break
             txt = '|'.join(self.popup_history[-i - 1])
@@ -477,19 +498,34 @@ class Visualizer:
     def _draw_item(self, letter, item, width, height, indent=0):
         from item import Item
 
+        bg_color = {
+            nh.WAND_CLASS : np.array([0, 50, 50], dtype=np.uint8),
+            nh.FOOD_CLASS: np.array([0, 50, 0], dtype=np.uint8),
+            nh.ARMOR_CLASS: np.array([50, 50, 0], dtype=np.uint8),
+            nh.RING_CLASS: np.array([50, 50, 0], dtype=np.uint8),
+            nh.SCROLL_CLASS: np.array([30, 30, 30], dtype=np.uint8),
+            nh.POTION_CLASS: np.array([0, 0, 50], dtype=np.uint8),
+        }
+
         indent = int((width - 1) * (1 - 0.9 ** indent))
 
         vis = np.zeros((round(height * 0.9), width - indent, 3)).astype(np.uint8)
+        if item.category in bg_color:
+            vis += bg_color[item.category]
+        if item.is_weapon():
+            if item.is_thrown_projectile() or item.is_fired_projectile():
+                vis += np.array([50, 0, 50], dtype=np.uint8)
+            else:
+                vis += np.array([50, 0, 0], dtype=np.uint8)
         if letter is not None:
             _put_text(vis, str(letter), (0, 0))
+
         status_str, status_col = {
             Item.UNKNOWN: (' ', (255, 255, 255)),
             Item.CURSED: ('C', (255, 0, 0)),
             Item.UNCURSED: ('U', (0, 255, 255)),
             Item.BLESSED: ('B', (0, 255, 0)),
         }[item.status]
-        if letter is not None:
-            _put_text(vis, str(letter), (0, 0), color=(255, 255, 255))
         _put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)
 
         if item.modifier is not None:
