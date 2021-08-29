@@ -10,7 +10,7 @@ import utils
 from character import Character
 from exceptions import AgentPanic
 from glyph import Hunger, G, MON
-from item import Item, ItemPriorityBase
+from item import Item, ItemPriorityBase, flatten_items
 from level import Level
 from strategy import Strategy
 
@@ -187,13 +187,14 @@ class GlobalLogic:
                         continue
                     else:
                         pickaxe = None
-                        for item in self.agent.inventory.items:
+                        for item in flatten_items(self.agent.inventory.items):
                             if item.is_unambiguous() and \
                                     item.object in [O.from_name('pick-axe'), O.from_name('dwarvish mattock')]:
                                 pickaxe = item
                                 break
                         if pickaxe is not None:
                             with self.agent.atom_operation():
+                                pickaxe = self.agent.inventory.move_to_inventory(pickaxe)
                                 self.agent.step(A.Command.APPLY)
                                 self.agent.type_text(self.agent.inventory.items.get_letter(pickaxe))
                                 self.agent.direction(direction)
@@ -323,15 +324,19 @@ class GlobalLogic:
         if not mask.any():
             yield False
 
-        yield any((item.status == Item.UNKNOWN for item in self.agent.inventory.items
+        yield any((item.status == Item.UNKNOWN for item in flatten_items(self.agent.inventory.items)
                    if item.can_be_dropped_from_inventory()))
 
         (ty, tx), *_ = zip(*(mask & (dis == dis[mask].min())).nonzero())
         self.agent.go_to(ty, tx)
-        items_to_drop = [item for item in self.agent.inventory.items
+        items_to_drop = [item for item in flatten_items(self.agent.inventory.items)
                          if item.can_be_dropped_from_inventory() and item.status == Item.UNKNOWN]
         if not items_to_drop:
             raise AgentPanic('items to drop on altar vanished')
+
+        # TODO: move chunking to inventory.drop
+        items_to_drop = items_to_drop[:self.agent.inventory.items.free_slots()]
+
         self.agent.inventory.drop(items_to_drop)
 
     @utils.debug_log('dip_for_excalibur')
@@ -350,7 +355,7 @@ class GlobalLogic:
 
         def excalibur_candidate():
             candidate = None
-            for item in self.agent.inventory.items:
+            for item in flatten_items(self.agent.inventory.items):
                 if item.is_unambiguous() and item.object == O.from_name('long sword'):
                     if item.dmg_bonus is not None: # TODO: better condition for excalibur existance
                         return None
@@ -369,6 +374,7 @@ class GlobalLogic:
 
         # TODO: refactor
         with self.agent.atom_operation():
+            candidate = self.agent.inventory.move_to_inventory(candidate)
             self.agent.step(A.Command.DIP)
             self.agent.type_text(self.agent.inventory.items.get_letter(candidate))
             if 'What do you want to dip ' in self.agent.message and 'into?' in self.agent.message:
@@ -421,7 +427,7 @@ class GlobalLogic:
 
         self.item_priority._take_sacrificial_corpses = True
 
-        if not any((self.can_sacrify(item) for item in self.agent.inventory.items if item)):
+        if not any((self.can_sacrify(item) for item in flatten_items(self.agent.inventory.items))):
             yield False
 
         yield True
@@ -430,9 +436,11 @@ class GlobalLogic:
         self.agent.go_to(y, x)
         with self.agent.panic_if_position_changes():
             while 1:
-                for item in self.agent.inventory.items:
+                for item in flatten_items(self.agent.inventory.items):
                     if self.can_sacrify(item):
                         with self.agent.atom_operation():
+                            item = self.agent.inventory.move_to_inventory(item)
+                            assert self.can_sacrify(item)
                             self.agent.step(A.Command.OFFER)
                             while ('There is ' in self.agent.message or 'There are ' in self.agent.message) and \
                                     ('sacrifice it?' in self.agent.message or 'sacrifice one?' in self.agent.message):

@@ -13,7 +13,7 @@ from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
 from glyph import MON, C, Hunger, G, SHOP, ALL
-from item import Inventory, Item
+from item import Inventory, Item, flatten_items
 from level import Level
 from monster_tracker import MonsterTracker
 from strategy import Strategy
@@ -60,6 +60,7 @@ class Agent:
         self._no_step_calls = False
 
         self.turns_in_atom_operation = None
+        self._atom_operation_allow_update = None
 
         self._is_reading_message_or_popup = False
         self._last_terrain_check = None
@@ -67,6 +68,10 @@ class Agent:
     @property
     def has_pet(self):
         return (self.blstats.time - self._last_pet_seen) <= 16
+
+    @property
+    def in_atom_operation(self):
+        return self.turns_in_atom_operation is not None
 
     ######## CONVENIENCE FUNCTIONS
 
@@ -83,18 +88,29 @@ class Agent:
             self._no_step_calls = False
 
     @contextlib.contextmanager
-    def atom_operation(self):
+    def atom_operation(self, allow_update=False):
         assert not self._no_step_calls
         if self.turns_in_atom_operation is not None:
             # already in an atom operation
-            yield
+            old_allow_update = self._atom_operation_allow_update
+            if old_allow_update is None:
+                self._atom_operation_allow_update = allow_update
+            else:
+                assert old_allow_update or not allow_update
+                self._atom_operation_allow_update = old_allow_update and allow_update
+            try:
+                yield
+            finally:
+                self._atom_operation_allow_update = old_allow_update
             return
 
         self.turns_in_atom_operation = 0
+        self._atom_operation_allow_update = allow_update
         try:
             yield
         finally:
             self.turns_in_atom_operation = None
+            self._atom_operation_allow_update = None
 
         self.update_state()
 
@@ -380,14 +396,14 @@ class Agent:
             self.type_text('y')
             return
 
-        should_update = True
+        # should_update = True
 
-        if self.turns_in_atom_operation is not None:
-            should_update = False
-            # if any([(self.last_observation[key] != observation[key]).any()
-            #         for key in ['glyphs', 'blstats', 'inv_strs', 'inv_letters', 'inv_oclasses', 'inv_glyphs']]):
-            #     self.turns_in_atom_operation += 1
-            # assert self.turns_in_atom_operation in [0, 1]
+        # if self.turns_in_atom_operation is not None:
+        #     should_update = False
+        #     # if any([(self.last_observation[key] != observation[key]).any()
+        #     #         for key in ['glyphs', 'blstats', 'inv_strs', 'inv_letters', 'inv_oclasses', 'inv_glyphs']]):
+        #     #     self.turns_in_atom_operation += 1
+        #     # assert self.turns_in_atom_operation in [0, 1]
 
         self.last_observation = observation
 
@@ -400,10 +416,10 @@ class Agent:
             self._inactivity_counter = 0
         assert self._inactivity_counter < 100, ('turn inactivity', sorted(set(self._message_history[-50:])))
 
-        if should_update:
-            self.update_state()
+        self.update_state(allow_update=self._atom_operation_allow_update or not self.in_atom_operation,
+                          allow_callbacks=not self.in_atom_operation)
 
-    def update_state(self):
+    def update_state(self, allow_update=True, allow_callbacks=True):
         assert not self._no_step_calls
         if self._is_updating_state:
             return
@@ -412,15 +428,17 @@ class Agent:
         popup = self.popup
 
         try:
-            # functions that are allowed to call state unchanging steps
-            for func in [self.inventory.update, self.monster_tracker.update,
-                         partial(self.check_terrain, force=False), self.update_level,
-                         self.global_logic.update]:
-                func()
-                self.message = message
-                self.popup = popup
+            if allow_update:
+                # functions that are allowed to call state unchanging steps
+                for func in [self.inventory.update, self.monster_tracker.update,
+                            partial(self.check_terrain, force=False), self.update_level,
+                            self.global_logic.update]:
+                    func()
+                    self.message = message
+                    self.popup = popup
 
-            self.call_update_functions()
+            if allow_callbacks:
+                self.call_update_functions()
         finally:
             self._is_updating_state = False
 
@@ -1180,16 +1198,12 @@ class Agent:
     def eat_from_inventory(self):
         if self.blstats.hunger_state < Hunger.HUNGRY:
             yield False
-        for item in self.inventory.items:
+        for item in flatten_items(self.inventory.items):
             if item.category == nh.FOOD_CLASS and \
                     (not item.is_corpse() or
                      item.monster_id in [MON.from_name(n) - nh.GLYPH_MON_OFF for n in ['lizard', 'lichen']]):
                 yield True
-                with self.atom_operation():
-                    self.step(A.Command.EAT)
-                    while re.search('There (is|are)[a-zA-z0-9 ]* here; eat (it|one)\?', self.message):
-                        self.type_text('n')
-                    self.type_text(self.inventory.items.get_letter(item))
+                self.inventory.eat(item)
                 return
         yield False
 

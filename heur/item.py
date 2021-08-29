@@ -17,6 +17,24 @@ from glyph import WEA, G, C, MON
 from strategy import Strategy
 
 
+def flatten_items(iterable):
+    ret = []
+    for item in iterable:
+        ret.append(item)
+        if item.is_container():
+            ret.extend(flatten_items(item.content))
+    return ret
+
+
+def find_equivalent_item(item, iterable):
+    assert item.text
+    for i in iterable:
+        assert i.text
+        if i.text == item.text:
+            return i
+    assert 0
+
+
 class Item:
     # beatitude
     UNKNOWN = 0
@@ -235,15 +253,6 @@ class Item:
     def content(self):
         assert self.is_container()
         return self.content
-
-
-def flatten_items(iterable):
-    ret = []
-    for item in iterable:
-        ret.append(item)
-        if item.is_container():
-            ret.extend(flatten_items(item.content))
-    return ret
 
 
 class ContainerContent:
@@ -1066,7 +1075,11 @@ class Inventory:
 
     ####### ACTIONS
 
-    def wield(self, item):
+    def wield(self, item, smart=True):
+        if smart:
+            if item is not None:
+                item = self.move_to_inventory(item)
+
         if item is None: # fists
             letter = '-'
         else:
@@ -1099,8 +1112,12 @@ class Inventory:
 
         return True
 
-    def wear(self, item):
+    def wear(self, item, smart=True):
         assert item is not None
+
+        if smart:
+            item = self.move_to_inventory(item)
+            # TODO: smart should be more than that (taking off the armor for shirts, etc)
         letter = self.items.get_letter(item)
 
         if item.equipped:
@@ -1121,6 +1138,8 @@ class Inventory:
         return True
 
     def takeoff(self, item):
+        # TODO: smart
+
         assert item is not None and item.equipped, item
         letter = self.items.get_letter(item)
         assert item.status != Item.CURSED, item
@@ -1451,13 +1470,16 @@ class Inventory:
                 letter = letter[1]
 
         if one_item and drop_count:
-            self.drop(self.items.all_items[self.items.all_letters.index(letter)], drop_count)
+            self.drop(self.items.all_items[self.items.all_letters.index(letter)], drop_count, smart=False)
 
         self.get_items_below_me()
 
         return True
 
-    def drop(self, items, counts=None):
+    def drop(self, items, counts=None, smart=True):
+        if smart:
+            items = self.move_to_inventory(items)
+
         if isinstance(items, Item):
             items = [items]
             if counts is not None:
@@ -1483,6 +1505,7 @@ class Inventory:
                 yield A.MiscAction.MORE
             assert 'What would you like to drop?' in '\n'.join(self.agent.single_popup), \
                    (self.agent.single_message, self.agent.single_popup)
+            i = 0
             while texts_to_type:
                 for text in list(texts_to_type):
                     letter = text[-1]
@@ -1492,6 +1515,9 @@ class Inventory:
 
                 if texts_to_type:
                     yield A.TextCharacters.SPACE
+                    i += 1
+
+                assert i < 100, ('infinite loop', texts_to_type, self.agent.message)
             yield A.MiscAction.MORE
 
         with self.agent.atom_operation():
@@ -1500,12 +1526,79 @@ class Inventory:
 
         return True
 
+    def move_to_inventory(self, items):
+        # all items in self.items will be updated!
+
+        if not isinstance(items, list):
+            is_list = False
+            items = [items]
+        else:
+            is_list = True
+
+        assert self.items.free_slots() >= len(items)
+
+        moved_items = {item for item in items if item in self.items.all_items}
+
+        with self.agent.atom_operation():
+            its = list(filter(lambda i: i in self.items_below_me, items))
+            if its:
+                moved_items = moved_items.union(its)
+                self.pickup(its)
+            for container in chain(self.items_below_me, self.items):
+                if container.is_container():
+                    its = list(filter(lambda i: i in container.content.items, items))
+                    if its:
+                        moved_items = moved_items.union(its)
+                        self.use_container(container, items_to_take=its, items_to_put=[])
+
+            assert moved_items == set(items), ('TODO: nested containers', moved_items, items)
+
+        self.items.update(force=True)
+
+        ret = []
+        for item in items:
+            ret.append(find_equivalent_item(item, filter(lambda i: i not in ret, self.items.all_items)))
+
+        if not is_list:
+            assert len(ret) == 1
+            return ret[0]
+        return ret
+
     def call_item(self, item, name):
         assert item in self.items.all_items, item
         letter = self.items.get_letter(item)
         with self.agent.atom_operation():
             self.agent.step(A.Command.CALL, iter(f'i{letter}#{name}\r'))
         return True
+
+    def eat(self, item, smart=True):
+        if smart:
+            # TODO: eat directly from ground if possible
+            item = self.move_to_inventory(item)
+
+        assert item in self.items.all_items, item or item in self.items_below_me
+        letter = self.items.get_letter(item)
+        with self.agent.atom_operation():
+            self.agent.step(A.Command.EAT)
+            if item in self.items.all_items:
+                while re.search('There (is|are)[a-zA-z0-9 ]* here; eat (it|one)\?', self.agent.message):
+                    self.agent.type_text('n')
+                self.agent.type_text(letter)
+                return True
+
+            elif item in self.items_below_me:
+                while ' eat it? [ynq]' in self.agent.message or \
+                        ' eat one? [ynq]' in self.agent.message:
+                    if item.text in self.agent.message:
+                        self.type_text('y')
+                        return True
+                if "What do you want to eat?" in self.agent.message or \
+                        "You don't have anything to eat." in self.agent.message:
+                    raise AgentPanic('no food is lying here')
+
+                assert 0, self.agent.message
+
+        assert 0
 
     ######## STRATEGIES helpers
 
@@ -1518,7 +1611,7 @@ class Inventory:
         # select the best
         best_item = None
         best_dps = utils.calc_dps(*self.agent.character.get_melee_bonus(None, large_monster=False))
-        for item in items:
+        for item in flatten_items(items):
             if item.is_weapon() and \
                     (item.status in [Item.UNCURSED, Item.BLESSED] or
                      (allow_unknown_status and item.status == Item.UNKNOWN)):
@@ -1535,6 +1628,7 @@ class Inventory:
     def get_ranged_combinations(self, items=None, throwing=True, allow_best_melee=False, allow_unknown_status=False):
         if items is None:
             items = self.items
+        items = flatten_items(items)
         launchers = [i for i in items if i.is_launcher()]
         ammo_list = [i for i in items if i.is_fired_projectile()]
         valid_combinations = []
@@ -1563,6 +1657,8 @@ class Inventory:
                             return_dps=False, allow_unknown_status=False):
         if items is None:
             items = self.items
+        items = flatten_items(items)
+
         best_launcher, best_ammo = None, None
         best_dps = -float('inf')
         for launcher, ammo in self.get_ranged_combinations(items, throwing, allow_best_melee, allow_unknown_status):
@@ -1577,6 +1673,7 @@ class Inventory:
     def get_best_armorset(self, items=None, *, return_ac=False, allow_unknown_status=False):
         if items is None:
             items = self.items
+        items = flatten_items(items)
 
         best_items = [None] * O.ARM_NUM
         best_ac = [None] * O.ARM_NUM
@@ -1666,7 +1763,7 @@ class Inventory:
                 if not yielded:
                     yielded = True
                     yield True
-                assert self.drop([free_items[i] for i in indices], [free_items[i].count - counts[i] for i in indices])
+                assert self.drop([free_items[i] for i in indices], [free_items[i].count - counts[i] for i in indices], smart=False)
                 continue
 
             # take from container
