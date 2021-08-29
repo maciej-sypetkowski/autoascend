@@ -31,7 +31,7 @@ def find_equivalent_item(item, iterable):
         assert i.text
         if i.text == item.text:
             return i
-    assert 0
+    assert 0, (item, iterable)
 
 
 class Item:
@@ -921,6 +921,8 @@ class InventoryItems:
         self._clear()
 
     def update(self, force=False):
+        if force:
+            self._recheck_containers = True
         if force or self._previous_inv_strs is None or (self.agent.last_observation['inv_strs'] != self._previous_inv_strs).any():
             self._clear()
             self._previous_inv_strs = self.agent.last_observation['inv_strs']
@@ -1180,7 +1182,7 @@ class Inventory:
         assert all((item in self.items.all_items for item in items_to_put))
         assert all((item in container.content.items for item in items_to_take))
         assert container.is_container()
-        assert len(self.items.all_items) - len(items_to_put) + len(items_to_take) < 52  # TODO: coin slot, TODO: take counts into consideration
+        assert len(items_to_take) - len(items_to_put) <= self.items.free_slots()  # TODO: take counts into consideration
         assert not container.content.locked, container
 
         def gen():
@@ -1378,11 +1380,13 @@ class Inventory:
                         count = counts.pop(i)
                     else:
                         count = None
+                    break
 
                 if not items:
                     return
 
             yield ' '
+        assert not items
 
     def get_items_below_me(self, assume_appropriate_message=False):
         with self.agent.panic_if_position_changes():
@@ -1548,29 +1552,34 @@ class Inventory:
         else:
             is_list = True
 
-        assert self.items.free_slots() >= len(items)
-
         moved_items = {item for item in items if item in self.items.all_items}
 
-        with self.agent.atom_operation():
-            its = list(filter(lambda i: i in self.items_below_me, items))
-            if its:
-                moved_items = moved_items.union(its)
-                self.pickup(its)
-            for container in chain(self.items_below_me, self.items):
-                if container.is_container():
-                    its = list(filter(lambda i: i in container.content.items, items))
-                    if its:
-                        moved_items = moved_items.union(its)
-                        self.use_container(container, items_to_take=its, items_to_put=[])
+        if len(moved_items) != len(items):
+            with self.agent.atom_operation():
+                its = list(filter(lambda i: i in self.items_below_me, items))
+                if its:
+                    moved_items = moved_items.union(its)
+                    self.pickup(its)
+                for container in chain(self.items_below_me, self.items):
+                    if container.is_container():
+                        its = list(filter(lambda i: i in container.content.items, items))
+                        if its:
+                            moved_items = moved_items.union(its)
+                            self.use_container(container, items_to_take=its, items_to_put=[])
 
-            assert moved_items == set(items), ('TODO: nested containers', moved_items, items)
+                assert moved_items == set(items), ('TODO: nested containers', moved_items, items)
 
-        self.items.update(force=True)
+            # TODO: HACK
+            self.agent.last_observation = self.agent.last_observation.copy()
+            for key in ['inv_strs', 'inv_oclasses', 'inv_glyphs', 'inv_letters']:
+                self.agent.last_observation[key] = self.agent._observation[key].copy()
+            self.items.update(force=True)
 
-        ret = []
-        for item in items:
-            ret.append(find_equivalent_item(item, filter(lambda i: i not in ret, self.items.all_items)))
+            ret = []
+            for item in items:
+                ret.append(find_equivalent_item(item, filter(lambda i: i not in ret, self.items.all_items)))
+        else:
+            ret = items
 
         if not is_list:
             assert len(ret) == 1
