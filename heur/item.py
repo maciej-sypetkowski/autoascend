@@ -31,7 +31,7 @@ def find_equivalent_item(item, iterable):
         assert i.text
         if i.text == item.text:
             return i
-    assert 0
+    assert 0, (item, iterable)
 
 
 class Item:
@@ -520,7 +520,7 @@ class ItemManager:
             category = ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class)
         assert glyph is None or category is None or category == ord(nh.objclass(nh.glyph_to_obj(glyph)).oc_class)
 
-        assert category not in [nh.BALL_CLASS, nh.RANDOM_CLASS]
+        assert category not in [nh.RANDOM_CLASS]
 
         matches = re.findall(
             r'^(a|an|the|\d+)'
@@ -656,6 +656,8 @@ class ItemManager:
         elif name.endswith(' egg') or name.endswith(' eggs'):
             monster_id = nh.glyph_to_mon(MON.from_name(name[:-len(' egg')].strip()))
             name = 'egg'
+        elif name == 'worm teeth':
+            name = 'worm tooth'
 
         dmg_bonus, to_hit_bonus = None, None
 
@@ -953,6 +955,9 @@ class InventoryItems:
         self._clear()
 
     def update(self, force=False):
+        if force:
+            self._recheck_containers = True
+
         if force or self._previous_inv_strs is None or (self.agent.last_observation['inv_strs'] != self._previous_inv_strs).any():
             self._clear()
             self._previous_inv_strs = self.agent.last_observation['inv_strs']
@@ -1056,6 +1061,7 @@ class Inventory:
         'Wands': nh.WAND_CLASS,
         'Boulders/Statues': nh.ROCK_CLASS,
         'Chains': nh.CHAIN_CLASS,
+        'Iron balls': nh.BALL_CLASS,
     }
 
     def __init__(self, agent):
@@ -1212,7 +1218,7 @@ class Inventory:
         assert all((item in self.items.all_items for item in items_to_put))
         assert all((item in container.content.items for item in items_to_take))
         assert container.is_container()
-        assert len(self.items.all_items) - len(items_to_put) + len(items_to_take) < 52  # TODO: coin slot, TODO: take counts into consideration
+        assert len(items_to_take) - len(items_to_put) <= self.items.free_slots()  # TODO: take counts into consideration
         assert not container.content.locked, container
 
         def gen():
@@ -1348,7 +1354,8 @@ class Inventory:
             # TODO: refactor: the same fragment is in use_container
             if item in self.items.all_items:
                 self.agent.step(A.Command.APPLY)
-                assert "You can't do that while carrying so much stuff." not in self.agent.message, self.agent.message
+                if "You can't do that while carrying so much stuff." in self.agent.message:
+                    return  # TODO: is not changing the content in this case a good way to handle this?
                 self.agent.step(self.items.get_letter(item), gen())
             else:
                 self.agent.step(A.Command.LOOT)
@@ -1410,11 +1417,13 @@ class Inventory:
                         count = counts.pop(i)
                     else:
                         count = None
+                    break
 
                 if not items:
                     return
 
             yield ' '
+        assert not items
 
     def get_items_below_me(self, assume_appropriate_message=False):
         with self.agent.panic_if_position_changes():
@@ -1580,29 +1589,34 @@ class Inventory:
         else:
             is_list = True
 
-        assert self.items.free_slots() >= len(items)
-
         moved_items = {item for item in items if item in self.items.all_items}
 
-        with self.agent.atom_operation():
-            its = list(filter(lambda i: i in self.items_below_me, items))
-            if its:
-                moved_items = moved_items.union(its)
-                self.pickup(its)
-            for container in chain(self.items_below_me, self.items):
-                if container.is_container():
-                    its = list(filter(lambda i: i in container.content.items, items))
-                    if its:
-                        moved_items = moved_items.union(its)
-                        self.use_container(container, items_to_take=its, items_to_put=[])
+        if len(moved_items) != len(items):
+            with self.agent.atom_operation():
+                its = list(filter(lambda i: i in self.items_below_me, items))
+                if its:
+                    moved_items = moved_items.union(its)
+                    self.pickup(its)
+                for container in chain(self.items_below_me, self.items):
+                    if container.is_container():
+                        its = list(filter(lambda i: i in container.content.items, items))
+                        if its:
+                            moved_items = moved_items.union(its)
+                            self.use_container(container, items_to_take=its, items_to_put=[])
 
-            assert moved_items == set(items), ('TODO: nested containers', moved_items, items)
+                assert moved_items == set(items), ('TODO: nested containers', moved_items, items)
 
-        self.items.update(force=True)
+            # TODO: HACK
+            self.agent.last_observation = self.agent.last_observation.copy()
+            for key in ['inv_strs', 'inv_oclasses', 'inv_glyphs', 'inv_letters']:
+                self.agent.last_observation[key] = self.agent._observation[key].copy()
+            self.items.update(force=True)
 
-        ret = []
-        for item in items:
-            ret.append(find_equivalent_item(item, filter(lambda i: i not in ret, self.items.all_items)))
+            ret = []
+            for item in items:
+                ret.append(find_equivalent_item(item, filter(lambda i: i not in ret, self.items.all_items)))
+        else:
+            ret = items
 
         if not is_list:
             assert len(ret) == 1
@@ -1616,7 +1630,10 @@ class Inventory:
             self.agent.step(A.Command.CALL, iter(f'i{letter}#{name}\r'))
         return True
 
-    def eat(self, item, smart=True):
+    def quaff(self, item, smart=True):
+        return self.eat(item, quaff=True, smart=smart)
+
+    def eat(self, item, quaff=False, smart=True):
         if smart:
             # TODO: eat directly from ground if possible
             item = self.move_to_inventory(item)
@@ -1624,7 +1641,10 @@ class Inventory:
         assert item in self.items.all_items, item or item in self.items_below_me
         letter = self.items.get_letter(item)
         with self.agent.atom_operation():
-            self.agent.step(A.Command.EAT)
+            if quaff:
+                self.agent.step(A.Command.QUAFF)
+            else:
+                self.agent.step(A.Command.EAT)
             if item in self.items.all_items:
                 while re.search('There (is|are)[a-zA-z0-9 ]* here; eat (it|one)\?', self.agent.message):
                     self.agent.type_text('n')

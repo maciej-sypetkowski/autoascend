@@ -92,7 +92,7 @@ class ItemPriority(ItemPriorityBase):
             add_item(item)
 
         for item in sorted(filter(lambda i: i.is_food() and not i.is_corpse(), items),
-                           key=lambda x: -x.nutrition_per_weight()):
+                           key=lambda x: -x.nutrition_per_weight() - 1000 * (x.objs[0].name == 'sprig of wolfsbane')):
             add_item(item)
 
         if self._take_sacrificial_corpses:
@@ -565,6 +565,9 @@ class GlobalLogic:
             ])
             .preempt(self.agent, [
                 self.wait_out_unexpected_state_strategy(),
+            ])
+            .preempt(self.agent, [
+                self.agent.cure_disease().every(5),
             ])
             .preempt(self.agent, [
                 self.agent.eat1().every(5).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),

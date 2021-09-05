@@ -75,7 +75,7 @@ class ReloadAgent(KeyboardInterrupt):
 
 
 class EnvWrapper:
-    def __init__(self, env, to_skip=0, visualizer_args=dict(), step_limit=None, agent_args={}, interactive=False):
+    def __init__(self, env, to_skip=0, visualizer_args=dict(enable=False), step_limit=None, agent_args={}, interactive=False):
         self.env = env
         self.agent_args = agent_args
         self.interactive = interactive
@@ -91,6 +91,8 @@ class EnvWrapper:
         self.draw_walkable = False
         self.draw_seen = False
         self.draw_shop = False
+
+        self.is_done = False
 
     def main(self):
         self.reset()
@@ -116,6 +118,7 @@ class EnvWrapper:
         self.step_count = 0
         self.end_reason = ''
         self.last_observation = obs
+        self.is_done = False
 
         if self.agent is not None:
             self.render()
@@ -354,6 +357,7 @@ class EnvWrapper:
         self.last_observation = obs
 
         if done:
+            self.is_done = True
             if self.visualizer is not None:
                 self.render()
             if self.interactive:
