@@ -386,9 +386,6 @@ class Agent:
             self.step(A.TextCharacters.SPACE)
             return
 
-        self._is_reading_message_or_popup = False
-        self._message_history.append(self.message)
-
         if "You may wish for an object." in self.message:
             # TODO: wishing strategy
             # TODO: assume wished item as blessed
@@ -407,6 +404,9 @@ class Agent:
         if b'[yn]' in bytes(observation['tty_chars'].reshape(-1)):
             self.type_text('y')
             return
+
+        self._is_reading_message_or_popup = False
+        self._message_history.append(self.message)
 
         # should_update = True
 
@@ -1337,7 +1337,6 @@ class Agent:
                 if item.objs[0].name == 'sprig of wolfsbane':
                     yield True
                     self.inventory.eat(item)
-                    self.character.is_lycanthrope = False
                     return
 
             # holy water
@@ -1345,14 +1344,12 @@ class Agent:
                 if item.objs[0].name == 'water' and item.status == Item.BLESSED:
                     yield True
                     self.inventory.quaff(item)
-                    self.character.is_lycanthrope = False
                     return
 
             # pray
             if self.is_safe_to_pray():
                 yield True
-                if self.pray():
-                    self.character.is_lycanthrope = False
+                self.pray()
                 return
 
         yield False

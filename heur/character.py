@@ -225,6 +225,8 @@ class Character:
     def update(self):
         if 'You feel feverish.' in self.agent.message:
             self.is_lycanthrope = True
+        if 'You feel purified.' in self.agent.message:
+            self.is_lycanthrope = False
 
     @property
     def carrying_capacity(self):

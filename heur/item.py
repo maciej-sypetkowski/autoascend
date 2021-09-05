@@ -92,7 +92,8 @@ class Item:
         return not (
             (isinstance(self.objs[0], (O.Weapon, O.WepTool)) and self.status == Item.CURSED and self.equipped) or
             (isinstance(self.objs[0], O.Armor) and self.equipped) or
-            (self.is_unambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED)
+            (self.is_unambiguous() and self.object == O.from_name('loadstone') and self.status == Item.CURSED) or
+            (self.category == nh.BALL_CLASS and self.equipped)
         )
 
     def weight(self, with_content=True):
@@ -530,7 +531,7 @@ class ItemManager:
             r'( ([+-]\d+))? '
             r"([a-zA-z0-9-!'# ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
-            r'( \(([a-zA-Z0-9; ]+(, flickering)?[a-zA-Z0-9; ]*)\))?'
+            r'( \(([a-zA-Z0-9; ]+(, flickering|, glimmering)?[a-zA-Z0-9; ]*)\))?'
             r'( \((for sale|unpaid), (\d+ aum, )?((\d+)[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
@@ -550,7 +551,7 @@ class ItemManager:
         ) = matches[0]
         # TODO: effects, uses
 
-        if info in {'being worn', 'being worn; slippery', 'wielded'} or info.startswith('weapon in ') or \
+        if info in {'being worn', 'being worn; slippery', 'wielded', 'chained to you'} or info.startswith('weapon in ') or \
                 info.startswith('tethered weapon in '):
             equipped = True
             at_ready = False
@@ -707,7 +708,7 @@ class ItemManager:
             name = 'athame'
             dmg_bonus = 7.25  # TODO
             to_hit_bonus = 2  # 1d3
-        elif name == 'Grayswandir':
+        elif name in ['Grayswandir', 'Werebane']:
             name = 'silver saber'
             dmg_bonus = 15  # TODO: x2 + 1d20
             to_hit_bonus = 3  # 1d5
@@ -840,6 +841,7 @@ class ItemManager:
             ('', nh.WEAPON_CLASS),
             ('', nh.TOOL_CLASS),
             ('', nh.FOOD_CLASS),
+            ('', nh.BALL_CLASS),
         ]
         suffixes = [
             (' amulet', nh.AMULET_CLASS),
@@ -1312,6 +1314,9 @@ class Inventory:
                     'But luckily ' in self.agent.single_message:
                 raise AgentPanic('triggered trap while looting')
 
+            if 'You have no hands!' in self.agent.single_message:
+                return
+
             assert self.agent.single_popup, (self.agent.single_message)
             if '\no - ' not in '\n'.join(self.agent.single_popup):
                 # ':' sometimes doesn't display items correctly if there's >= 22 items (the first page isn't shown)
@@ -1357,6 +1362,8 @@ class Inventory:
                 if "You can't do that while carrying so much stuff." in self.agent.message:
                     return  # TODO: is not changing the content in this case a good way to handle this?
                 self.agent.step(self.items.get_letter(item), gen())
+                if 'You have no hands!' in self.agent.message:
+                    return
             else:
                 self.agent.step(A.Command.LOOT)
                 while True:
@@ -2047,7 +2054,7 @@ class Inventory:
             self.agent.step(A.Command.ENGRAVE, additional_action_iterator=iter(action_generator()))
 
             if skip_engraving[0]:
-                assert msg().strip() == 'Never mind.' \
+                assert msg().strip().endswith('Never mind.') \
                        or 'You cannot wipe out the message that is burned into the floor here.' in msg(), msg()
                 return None
 

@@ -128,8 +128,8 @@ def main(filepath):
 
     print(HEADER, 'TO PASTE:')
     std_median = np.std([np.median(np.random.choice(df.score, size=max(1, len(df) // 2))) for _ in range(1024)])
-    print(f'median: {np.median(df.score):.1f} +/- {std_median:.1f}')
-    print(f'mean  : {np.mean(df.score):.1f} +/- {np.std(df.score) / (len(df) ** 0.5):.1f}')
+    print(f'median    : {np.median(df.score):.1f} +/- {std_median:.1f}')
+    print(f'mean      : {np.mean(df.score):.1f} +/- {np.std(df.score) / (len(df) ** 0.5):.1f}')
     for role in sorted(df.role.unique()):
         s = df[df.role == role].score
         print(f'{role}:{s.median():.0f},{s.mean():.0f}', end='')
@@ -138,6 +138,9 @@ def main(filepath):
         if role == 'mon':
             print()
     print()
+    print(f'exceptions: {sum((r.startswith("exception:") for r in df.end_reason)) / len(df) * 100:.1f}%')
+    print(f'avg_turns : {np.mean(df.turns):.1f} +/- {np.std(df.turns) / (len(df) ** 0.5):.1f}')
+    print(f'avg_steps : {np.mean(df.steps):.1f} +/- {np.std(df.steps) / (len(df) ** 0.5):.1f}')
 
 
 if __name__ == '__main__':
