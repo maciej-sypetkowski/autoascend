@@ -412,7 +412,7 @@ def prepare_env(args, seed, step_limit=None):
     visualizer_args = dict(enable=args.mode == 'run' or args.visualize_ends is not None,
                            start_visualize=args.visualize_ends[seed] if args.visualize_ends is not None else None,
                            show=args.mode == 'run',
-                           output_dir=Path('/workspace/vis/') / str(seed),
+                           output_dir=Path('/tmp/vis/') / str(seed),
                            frame_skipping=None if args.visualize_ends is None else 1)
     env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=1000),
                      to_skip=args.skip_to, visualizer_args=visualizer_args,

@@ -13,8 +13,8 @@ from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
-from glyph import MON, C, Hunger, G, SHOP
-from item import Inventory, flatten_items
+from glyph import MON, C, Hunger, G, SHOP, ALL
+from item import Inventory, Item, flatten_items
 from level import Level
 from monster_tracker import MonsterTracker
 from strategy import Strategy
@@ -1025,9 +1025,9 @@ class Agent:
         wait_counter = 0
         while 1:
             monsters = self.get_visible_monsters()
-
-            only_ranged_slow_monsters = all([mon.mname in fight_heur.ONLY_RANGED_SLOW_MONSTERS
-                                             for _, _, _, mon, _ in monsters])
+            only_ranged_slow_monsters = all([monster[3].mname in fight_heur.ONLY_RANGED_SLOW_MONSTERS
+                                             and not fight_heur.consider_melee_only_ranged_if_hp_full(self, monster)
+                                             for monster in monsters])
 
             dis = self.bfs()
 
@@ -1047,38 +1047,18 @@ class Agent:
                 yield True
                 self.character.parse_enhance_view()
 
-            priority, actions = fight_heur.get_priorities(self)
-            mask = ~np.isnan(priority)
-            assert mask.any()
-            priority[~mask] = np.min(priority[mask]) - 1
+            move_priority_heatmap, actions = fight_heur.get_priorities(self)
 
-            adjacent = dis == 1
-
-            assert np.sum(adjacent) <= 8, np.sum(adjacent)
-            possible_move_to = []
-            if adjacent.any():
-                possible_move_to = list(zip(*np.nonzero((priority == np.max(priority[adjacent])) & adjacent)))
-            assert len(possible_move_to) <= 8
-
-            best_y, best_x = None, None
-            if possible_move_to:
-                best_y, best_x = possible_move_to[self.rng.randint(0, len(possible_move_to))]
-                if priority[best_y, best_x] < -2 ** 15:
-                    best_y, best_x = None, None
-
-            best_move_score = None
-            if best_y is not None:
-                best_move_score = priority[best_y, best_x]
+            best_move_score, best_x, best_y, possible_move_to = self._fight2_get_best_move(dis, move_priority_heatmap)
 
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1] != 'ranged', actions))
-            best_action = max(actions) if actions else None
+            best_action = max(actions, key=lambda x: x[0]) if actions else None
 
             if best_y is None and best_action is None:
                 assert 0, 'No possible action available during fight2'
 
-            priority[~mask] = float('nan')
-            with self.env.debug_tiles(priority, color='turbo', is_heatmap=True):
+            with self.env.debug_tiles(move_priority_heatmap, color='turbo', is_heatmap=True):
                 def action_str(a):
                     if a[1] == 'pickup':
                         return f'{a[0]}{a[1][0]}:{len(a[2])}'
@@ -1089,10 +1069,32 @@ class Agent:
                     else:
                         return f'{a[0]}{a[1][0]}:{a[2]},{a[3]}'
 
-                actions_str = '|'.join([action_str(a) for a in sorted(actions)])
+                actions_str = '|'.join([action_str(a) for a in sorted(actions, key=lambda x: x[0])])
                 with self.env.debug_log(actions_str + f'|{best_move_score}|' + '|'.join(map(str, possible_move_to))):
                     wait_counter = self._fight2_perform_action(best_action, best_move_score, best_x, best_y,
                                                                wait_counter)
+
+    def _fight2_get_best_move(self, dis, move_priority_heatmap):
+        mask = ~np.isnan(move_priority_heatmap)
+        assert mask.any()
+        move_priority_heatmap[~mask] = np.min(move_priority_heatmap[mask]) - 1
+        adjacent = dis == 1
+        assert np.sum(adjacent) <= 8, np.sum(adjacent)
+        possible_move_to = []
+        if adjacent.any():
+            possible_move_to = list(
+                zip(*np.nonzero((move_priority_heatmap == np.max(move_priority_heatmap[adjacent])) & adjacent)))
+        assert len(possible_move_to) <= 8
+        best_y, best_x = None, None
+        if possible_move_to:
+            best_y, best_x = possible_move_to[self.rng.randint(0, len(possible_move_to))]
+            if move_priority_heatmap[best_y, best_x] < -2 ** 15:
+                best_y, best_x = None, None
+        best_move_score = None
+        if best_y is not None:
+            best_move_score = move_priority_heatmap[best_y, best_x]
+        move_priority_heatmap[~mask] = float('nan')
+        return best_move_score, best_x, best_y, possible_move_to
 
     def _fight2_perform_action(self, best_action, best_move_score, best_x, best_y, wait_counter):
         if best_action is None or (best_y is not None and best_move_score > best_action[0]):

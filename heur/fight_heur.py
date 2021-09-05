@@ -24,6 +24,10 @@ WEAK_MONSTERS = ['lichen', 'newt']
 WEIRD_MONSTERS = ['leprechaun', 'nymph']
 
 
+def consider_melee_only_ranged_if_hp_full(agent, monster):
+    return monster[3].mname in ('brown mold', 'blue jelly') and agent.blstats.hitpoints == agent.blstats.max_hitpoints
+
+
 def _draw_around(priority, y, x, value, radius=1, operation='add'):
     # TODO: optimize
     for y1 in range(y - radius, y + radius + 1):
@@ -82,6 +86,9 @@ def draw_monster_priority_positive(agent, monster, priority, walkable):
     #         _draw_around(priority, y, x, 2, radius=1, operation='max')
     #         _draw_around(priority, y, x, 1, radius=2, operation='max')
     elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.inventory.get_ranged_combinations():
+        if consider_melee_only_ranged_if_hp_full(agent, monster):
+            _draw_around(priority, y, x, 2, radius=1, operation='max')
+            _draw_around(priority, y, x, 1, radius=2, operation='max')
         if len(agent.inventory.get_ranged_combinations()):
             _draw_ranged(priority, y, x, 1, walkable, radius=7, operation='max')
     else:
@@ -166,7 +173,10 @@ def melee_monster_priority(agent, monsters, monster):
     # if not wielding_melee_weapon(agent):
     #     ret -= 5
     if mon.mname in ONLY_RANGED_SLOW_MONSTERS:
-        ret -= 100
+        if not consider_melee_only_ranged_if_hp_full(agent, monster):
+            ret -= 100
+            if mon.mname == 'floating eye':
+                ret -= 10
     return ret
 
 
