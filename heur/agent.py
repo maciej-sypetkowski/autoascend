@@ -442,7 +442,7 @@ class Agent:
         try:
             if allow_update:
                 # functions that are allowed to call state unchanging steps
-                for func in [self.inventory.update, self.monster_tracker.update,
+                for func in [self.character.update, self.inventory.update, self.monster_tracker.update,
                             partial(self.check_terrain, force=False), self.update_level,
                             self.global_logic.update]:
                     func()
@@ -616,8 +616,16 @@ class Agent:
                 raise AgentPanic('no food is lying here')
             assert 0, self.message
 
+    def is_safe_to_pray(self):
+        return (
+                (self.last_prayer_turn is None and self.blstats.time > 300) or
+                (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > 900)
+        )
+
     def pray(self):
         self.step(A.Command.PRAY)
+        self.last_prayer_turn = self.blstats.time
+        # TODO: return value
         return True
 
     def open_door(self, y, x):
@@ -1214,8 +1222,11 @@ class Agent:
             flags1 = MON.M1_ACID
         else:
             flags1 = MON.M1_ACID | MON.M1_POIS
+        flags2 = MON.M2_WERE
 
-        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags1 == 0 and ord(MON.permonst(b).mlet) != MON.S_COCKATRICE]
+        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags1 == 0 and \
+                                                  MON.permonst(b).mflags2 & flags2 == 0 and \
+                                                  ord(MON.permonst(b).mlet) != MON.S_COCKATRICE]
         mask = utils.isin(self.glyphs, editable_bodies) & \
                ((self.blstats.time - level.corpse_age <= 50) |
                 utils.isin(self.glyphs, [MON.body_from_name('lizard'), MON.body_from_name('lichen')]))
@@ -1245,14 +1256,12 @@ class Agent:
     def emergency_strategy(self):
         # TODO: to refactor
         if (
-                ((self.last_prayer_turn is None and self.blstats.time > 300) or
-                 (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > 900)) and
+                self.is_safe_to_pray() and
                 (self.blstats.hitpoints < 1 / (5 if self.blstats.experience_level < 6 else 6)
                  * self.blstats.max_hitpoints or self.blstats.hitpoints < 6
                  or self.blstats.hunger_state >= Hunger.FAINTING)
         ):
             yield True
-            self.last_prayer_turn = self.blstats.time
             self.pray()
             return
 
@@ -1277,19 +1286,48 @@ class Agent:
 
         yield False
 
-    ######## HIGH-LEVEL STRATEGIES
-
+    @utils.debug_log('eat_from_inventory')
     @Strategy.wrap
     def eat_from_inventory(self):
         if self.blstats.hunger_state < Hunger.HUNGRY:
             yield False
         for item in flatten_items(self.inventory.items):
             if item.category == nh.FOOD_CLASS and \
+                    item.objs[0].name != 'sprig of wolfsbane' and \
                     (not item.is_corpse() or
                      item.monster_id in [MON.from_name(n) - nh.GLYPH_MON_OFF for n in ['lizard', 'lichen']]):
                 yield True
                 self.inventory.eat(item)
                 return
+        yield False
+
+    @utils.debug_log('cure_disease')
+    @Strategy.wrap
+    def cure_disease(self):
+        if self.character.is_lycanthrope:
+            # spring of wolfbane
+            for item in flatten_items(self.inventory.items):
+                if item.objs[0].name == 'sprig of wolfsbane':
+                    yield True
+                    self.inventory.eat(item)
+                    self.character.is_lycanthrope = False
+                    return
+
+            # holy water
+            for item in flatten_items(self.inventory.items):
+                if item.objs[0].name == 'water' and item.status == Item.BLESSED:
+                    yield True
+                    self.inventory.quaff(item)
+                    self.character.is_lycanthrope = False
+                    return
+
+            # pray
+            if self.is_safe_to_pray():
+                yield True
+                if self.pray():
+                    self.character.is_lycanthrope = False
+                return
+
         yield False
 
     ####### MAIN

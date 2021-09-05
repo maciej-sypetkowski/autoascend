@@ -220,6 +220,12 @@ class Character:
         self.skill_levels = np.zeros(max(self.name_to_skill_type.values()) + 1, dtype=int)
         self.upgradable_skills = dict()
 
+        self.is_lycanthrope = False
+
+    def update(self):
+        if 'You feel feverish.' in self.agent.message:
+            self.is_lycanthrope = True
+
     @property
     def carrying_capacity(self):
         # TODO: levitation, etc

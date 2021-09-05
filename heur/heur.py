@@ -75,14 +75,14 @@ class ReloadAgent(KeyboardInterrupt):
 
 
 class EnvWrapper:
-    def __init__(self, env, to_skip=0, visualizer_args=dict(), step_limit=None, agent_args={}, interactive=False):
+    def __init__(self, env, to_skip=0, visualizer_args=dict(enable=False), step_limit=None, agent_args={}, interactive=False):
         self.env = env
         self.agent_args = agent_args
         self.interactive = interactive
         self.to_skip = to_skip
         self.step_limit = step_limit
         self.visualizer = None
-        if 'enable' in visualizer_args and visualizer_args['enable']:
+        if visualizer_args['enable']:
             visualizer_args.pop('enable')
             self.visualizer = visualize.Visualizer(self, **visualizer_args)
         self.last_observation = None
