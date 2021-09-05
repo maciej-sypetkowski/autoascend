@@ -1,5 +1,8 @@
+import ctypes
 import datetime
 import os
+import queue
+import threading
 
 import gym
 import nle
@@ -7,10 +10,16 @@ import numpy as np
 import torch
 
 from .abstract_game import AbstractGame
+from heur import EnvWrapper
 
 
 class MuZeroConfig:
     def __init__(self):
+
+        #game = Game(0)
+        #rl_model = game.rl_model
+        #game.close()
+
         # More information is available here: https://github.com/werner-duvaud/muzero-general/wiki/Hyperparameter-Optimization
 
         self.seed = 0  # Seed for numpy, torch and the game
@@ -19,8 +28,10 @@ class MuZeroConfig:
 
 
         ### Game
-        self.observation_shape = (15327, 1, 1)  # Dimensions of the game observation, must be 3D (channel, height, width). For a 1D array, please reshape it to (1, 1, length of array)
-        self.action_space = list(range(113))  # Fixed list of all possible actions. You should only edit the length
+        #self.observation_shape = (rl_model.observation_size(), 1, 1)  # Dimensions of the game observation, must be 3D (channel, height, width). For a 1D array, please reshape it to (1, 1, length of array)
+        #self.action_space = list(range(len(rl_model.action_space)))  # Fixed list of all possible actions. You should only edit the length
+        self.observation_shape = (98, 1, 1)
+        self.action_space = list(range(9))
         self.players = list(range(1))  # List of players. You should only edit the length
         self.stacked_observations = 0  # Number of previous observations and previous actions to add to the current observation
 
@@ -31,10 +42,10 @@ class MuZeroConfig:
 
 
         ### Self-Play
-        self.num_workers = 8  # Number of simultaneous threads/workers self-playing to feed the replay buffer
+        self.num_workers = 16  # Number of simultaneous threads/workers self-playing to feed the replay buffer
         self.selfplay_on_gpu = False
         self.max_moves = 1000  # Maximum number of moves if game is not finished before
-        self.num_simulations = 2  # Number of future moves self-simulated
+        self.num_simulations = 5  # Number of future moves self-simulated
         self.discount = 0.997  # Chronological discount of the reward
         self.temperature_threshold = None  # Number of moves before dropping the temperature given by visit_softmax_temperature_fn to 0 (ie selecting the best action). If None, visit_softmax_temperature_fn is used every time
 
@@ -94,7 +105,7 @@ class MuZeroConfig:
 
 
         ### Replay Buffer
-        self.replay_buffer_size = 50 # Number of self-play games to keep in the replay buffer
+        self.replay_buffer_size = 1e6 # Number of self-play games to keep in the replay buffer
         self.num_unroll_steps = 5  # Number of game moves to keep for every batch element
         self.td_steps = 10  # Number of steps in the future to take into account for calculating the target value
         self.PER = True  # Prioritized Replay (See paper appendix Training), select in priority the elements in the replay buffer which are unexpected for the network
@@ -134,9 +145,44 @@ class Game(AbstractGame):
     """
 
     def __init__(self, seed=None):
-        self.env = gym.make("NetHackChallenge-v0")
-        #if seed is not None:
-        #    self.env.seed(seed)
+        self.env, self.output_queue, self.input_queue = self._create_env(seed)
+        self.current_legal_actions = None
+        self.last_score = 0
+        self._start_thread()
+        self.rl_model = self.output_queue.get()
+
+    @staticmethod
+    def _create_env(seed, env=None):
+        if env is None:
+            env = gym.make('NetHackChallenge-v0')
+        output_queue, input_queue = queue.Queue(), queue.Queue()
+        env = EnvWrapper(env,
+                         agent_args=dict(rl_model_to_train='fight3',
+                                         rl_model_training_comm=(output_queue, input_queue)))
+        if seed is not None:
+            env.env.seed(seed, seed)
+        return env, output_queue, input_queue
+
+
+    def _start_thread(self):
+        def f():
+            try:
+                self.env.main()
+            except BaseException:
+                self.env.is_done = True
+            self.output_queue.put((self.rl_model.zero_observation(), None))
+
+        self.thread = threading.Thread(target=f)
+        self.thread.start()
+
+    def _kill_thread(self):
+        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(self.thread.ident,
+              ctypes.py_object(KeyboardInterrupt))
+        if res > 1:
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(self.thread.ident, 0)
+            assert 0, 'Exception raise failure'
+        self.input_queue.put(None)
+        self.thread.join()
 
     def step(self, action):
         """
@@ -148,8 +194,11 @@ class Game(AbstractGame):
         Returns:
             The new observation, the reward and a boolean if the game has ended.
         """
-        observation, reward, done, _ = self.env.step(action)
-        return self.encode_observation(observation), reward, done
+        self.input_queue.put(action)
+        observation, self.current_legal_actions = self.output_queue.get()
+        reward = self.env.score - self.last_score
+        self.last_score = self.env.score
+        return self.rl_model.encode_observation(observation).reshape(-1, 1, 1), reward, self.env.is_done
 
     def legal_actions(self):
         """
@@ -162,7 +211,7 @@ class Game(AbstractGame):
         Returns:
             An array of integers, subset of the action space.
         """
-        return list(range(113))
+        return self.current_legal_actions
 
     def reset(self):
         """
@@ -171,14 +220,25 @@ class Game(AbstractGame):
         Returns:
             Initial observation of the game.
         """
-        observation = self.env.reset()
-        return self.encode_observation(observation)
+        while 1:
+            self._kill_thread()
+            self.env.env.reset()
+            self.env, self.output_queue, self.input_queue = self._create_env(seed=None, env=self.env.env)
+            self.last_score = 0
+            self._start_thread()
+            self.rl_model = self.output_queue.get()
+
+            observation, self.current_legal_actions = self.output_queue.get()
+            if not self.env.is_done:
+                break
+        return self.rl_model.encode_observation(observation).reshape(-1, 1, 1)
 
     def close(self):
         """
         Properly close the game.
         """
-        self.env.close()
+        self._kill_thread()
+        self.env.env.close()
 
     def render(self):
         """
@@ -186,29 +246,3 @@ class Game(AbstractGame):
         """
         self.env.render()
         input("Press enter to take a step ")
-
-    @staticmethod
-    def encode_observation(observation):
-        ret = []
-        for k, v in sorted(observation.items()):
-            ret.append(v.reshape(-1).astype(np.int64))
-        ret = np.concatenate(ret)
-        return ret.reshape(-1, 1, 1)
-
-    @staticmethod
-    def decode_observation(data):
-        keys = ['blstats', 'chars', 'colors', 'glyphs', 'inv_glyphs', 'inv_letters', 'inv_oclasses', 'inv_strs', 'message', 'misc', 'specials', 'tty_chars', 'tty_colors', 'tty_cursor']
-        shapes = [(25,), (21, 79), (21, 79), (21, 79), (55,), (55,), (55,), (55, 80), (256,), (3,), (21, 79), (24, 80), (24, 80), (2,)]
-        dtypes = [np.dtype('int64'), np.dtype('uint8'), np.dtype('uint8'), np.dtype('int16'), np.dtype('int16'), np.dtype('uint8'), np.dtype('uint8'), np.dtype('uint8'), np.dtype('uint8'), np.dtype('int32'), np.dtype('uint8'), np.dtype('uint8'), np.dtype('int8'), np.dtype('uint8')]
-
-        data = data.reshape(-1)
-
-        ret = {}
-        for key, shape, dtype in zip(keys, shapes, dtypes):
-            s = 1
-            for x in shape:
-                s *= x
-            ret[key] = data[:s].reshape(shape).astype(dtype)
-            data = data[s:]
-        assert len(data) == 0
-        return ret

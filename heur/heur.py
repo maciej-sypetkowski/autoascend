@@ -82,7 +82,7 @@ class EnvWrapper:
         self.to_skip = to_skip
         self.step_limit = step_limit
         self.visualizer = None
-        if visualizer_args['enable']:
+        if 'enable' in visualizer_args and visualizer_args['enable']:
             visualizer_args.pop('enable')
             self.visualizer = visualize.Visualizer(self, **visualizer_args)
         self.last_observation = None
@@ -91,6 +91,8 @@ class EnvWrapper:
         self.draw_walkable = False
         self.draw_seen = False
         self.draw_shop = False
+
+        self.is_done = False
 
     def main(self):
         self.reset()
@@ -116,6 +118,7 @@ class EnvWrapper:
         self.step_count = 0
         self.end_reason = ''
         self.last_observation = obs
+        self.is_done = False
 
         if self.agent is not None:
             self.render()
@@ -354,6 +357,7 @@ class EnvWrapper:
         self.last_observation = obs
 
         if done:
+            self.is_done = True
             if self.visualizer is not None:
                 self.render()
             if self.interactive:

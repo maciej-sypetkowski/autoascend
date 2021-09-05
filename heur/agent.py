@@ -7,6 +7,7 @@ import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
+import rl_utils
 import utils
 from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
@@ -23,12 +24,15 @@ BLStats = namedtuple('BLStats',
 
 
 class Agent:
-    def __init__(self, env, seed=0, verbose=False, panic_on_errors=False):
+    def __init__(self, env, seed=0, verbose=False, panic_on_errors=False,
+                 rl_model_to_train=None, rl_model_training_comm=(None, None)):
         self.env = env
         self.verbose = verbose
         self.rng = np.random.RandomState(seed)
         self.panic_on_errors = panic_on_errors
         self.all_panics = []
+        self.rl_model_to_train = rl_model_to_train
+        self.rl_model_training_comm = rl_model_training_comm
 
         self.on_update = []
         self.levels = {}
@@ -64,6 +68,8 @@ class Agent:
 
         self._is_reading_message_or_popup = False
         self._last_terrain_check = None
+
+        self._init_fight3_model()
 
     @property
     def has_pet(self):
@@ -927,6 +933,73 @@ class Agent:
 
         return False
 
+    def _init_fight3_model(self):
+        self._fight3_model = rl_utils.RLModel({
+                'walkable': ((7, 7), bool),
+                'monster_mask': ((7, 7), bool),
+            },
+            [(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
+            train=self.rl_model_to_train == 'fight3',
+            training_comm=self.rl_model_training_comm,
+        )
+
+    @utils.debug_log('fight3')
+    @Strategy.wrap
+    def fight3(self):
+        yielded = False
+        while 1:
+            monsters = self.get_visible_monsters()
+
+            # get only monsters with path to them
+            monsters = [m for m in monsters if m[0] != -1]
+
+            if not monsters or all(dis > 7 for dis, *_ in monsters):
+                if not yielded:
+                    yield False
+                return
+
+            if not yielded:
+                yielded = True
+                yield True
+                self.character.parse_enhance_view()
+
+            if self.wield_best_melee_weapon():
+                continue
+
+            dis = self.bfs()
+            level = self.current_level()
+            walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
+                       ~self.monster_tracker.peaceful_monster_mask & \
+                       ~utils.isin(level.objects, G.TRAPS)
+
+            radius_y = self._fight3_model.observation_def['walkable'][0][0] // 2
+            radius_x = self._fight3_model.observation_def['walkable'][0][1] // 2
+            y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
+                             self.blstats.x - radius_x, self.blstats.x + radius_x + 1
+
+            observation = {
+                'walkable': utils.slice_with_padding(walkable, y1, y2, x1, x2),
+                'monster_mask': utils.slice_with_padding(self.monster_tracker.monster_mask, y1, y2, x1, x2),
+            }
+            actions = [(y, x) for y, x in self._fight3_model.action_space
+                       if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
+                               and level.walkable[self.blstats.y + y, self.blstats.x + x]]
+
+            off_y, off_x = self._fight3_model.choose_action(observation, actions)
+
+            y, x = self.blstats.y + off_y, self.blstats.x + off_x
+            if self.monster_tracker.monster_mask[y, x]:
+                # TODO: copied from `flight1`
+                mon_glyph = self.glyphs[y, x]
+                try:
+                    self.fight(y, x)
+                finally:  # TODO: what if panic?
+                    if nh.glyph_is_body(self.glyphs[y, x]) \
+                            and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == nh.glyph_to_mon(mon_glyph):
+                        self.current_level().corpse_age[y, x] = self.blstats.time
+            else:
+                self.move(y, x)
+
     @utils.debug_log('fight2')
     @Strategy.wrap
     def fight2(self):
@@ -1138,11 +1211,11 @@ class Agent:
         level = self.current_level()
 
         if self.character.race == Character.ORC:
-            flags = MON.M1_ACID
+            flags1 = MON.M1_ACID
         else:
-            flags = MON.M1_ACID | MON.M1_POIS
+            flags1 = MON.M1_ACID | MON.M1_POIS
 
-        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags == 0 and ord(MON.permonst(b).mlet) != MON.S_COCKATRICE]
+        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags1 == 0 and ord(MON.permonst(b).mlet) != MON.S_COCKATRICE]
         mask = utils.isin(self.glyphs, editable_bodies) & \
                ((self.blstats.time - level.corpse_age <= 50) |
                 utils.isin(self.glyphs, [MON.body_from_name('lizard'), MON.body_from_name('lichen')]))
