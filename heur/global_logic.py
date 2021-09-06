@@ -506,10 +506,10 @@ class GlobalLogic:
                 continue
 
 
-            def exploration_strategy(level):
+            def exploration_strategy(level, **kwargs):
                 return (
                     Strategy(lambda: self.agent.exploration.explore1(level, trap_search_offset=1,
-                        kick_doors=self.agent.current_level().dungeon_number != Level.GNOMISH_MINES).strategy())
+                        kick_doors=self.agent.current_level().dungeon_number != Level.GNOMISH_MINES, **kwargs).strategy())
                     .preempt(self.agent, [
                         self.identify_items_on_altar().every(100),
                         self.identify_items_on_altar().condition(
@@ -538,11 +538,11 @@ class GlobalLogic:
 
             (
                 self.agent.exploration.go_to_level_strategy(*level, go_to_strategy, exploration_strategy(None))
-                .before(exploration_strategy(None))
+                .before(exploration_strategy(None))#.before(self.agent.exploration.patrol())
                 .preempt(self.agent, [
                     exploration_strategy(0),
-                    exploration_strategy(None)
-                    .until(self.agent, lambda: self.agent.blstats.hitpoints >= 0.8 * self.agent.blstats.max_hitpoints)
+                    exploration_strategy(None).until(
+                        self.agent, lambda: self.agent.blstats.hitpoints >= 0.8 * self.agent.blstats.max_hitpoints)
                 ])
                 .preempt(self.agent, [
                     self.agent.exploration.explore_stairs(go_to_strategy, all=True).condition(explore_stairs_condition),

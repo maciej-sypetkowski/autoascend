@@ -178,9 +178,11 @@ class EnvWrapper:
                                 if self.draw_shop else contextlib.suppress():
                             with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0,
                                                 color=(0, 255, 255, 128)):
-                                if force:
-                                    self.visualizer.force_next_frame()
-                                rendered = self.visualizer.render()
+                                with self.debug_tiles([self.agent.cursor_pos],
+                                                      color=(255, 255, 255, 128)):
+                                    if force:
+                                        self.visualizer.force_next_frame()
+                                    rendered = self.visualizer.render()
 
             if not force and (not self.interactive or not rendered):
                 return
@@ -540,7 +542,7 @@ def run_profiling(args):
         session.start_call_stack = [session.start_call_stack[0]]
 
         print('Cumulative time:')
-        profiler.last_session = session
+        profiler._last_session = session
         print(profiler.output_text(unicode=True, color=True))
 
         new_records = []
@@ -557,7 +559,7 @@ def run_profiling(args):
         session.start_call_stack = [session.start_call_stack[0]]
 
         print('Total time:')
-        profiler.last_session = session
+        profiler._last_session = session
         print(profiler.output_text(unicode=True, color=True, show_all=True))
     elif args.profiler == 'none':
         pass

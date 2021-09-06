@@ -191,3 +191,7 @@ def slice_with_padding(array, a1, a2, b1, b2, pad_value=0):
     off_b2 = array.shape[1] - b2 if b2 > array.shape[1] else ret.shape[1]
     ret[off_a1 : off_a2, off_b1 : off_b2] = array[max(0, a1) : a2, max(0, b1) : b2]
     return ret
+
+def slice_square_with_padding(array, center_y, center_x, radius, pad_value=0):
+    return slice_with_padding(array, center_y - radius, center_y + radius + 1,
+                              center_x - radius, center_x + radius + 1, pad_value=pad_value)

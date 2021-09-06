@@ -234,8 +234,28 @@ class ExplorationLogic:
 
         yield False
 
+    @utils.debug_log('patrol')
+    @Strategy.wrap
+    def patrol(self):
+        yielded = False
+        while True:
+            reachable = self.agent.bfs()
+            reachable[reachable < 0] = 0
+            if (reachable == 0).all():
+                if not yielded:
+                    yield False
+                return
+            if not yielded:
+                yield True
+                yielded = True
+
+
+            i = self.agent.rng.choice(range(reachable.shape[0] * reachable.shape[1]), p=(reachable.reshape(-1) / reachable.sum()))
+            y, x = i // reachable.shape[1], i % reachable.shape[1]
+            self.agent.go_to(y, x, fast=True)
+
     @utils.debug_log('explore1')
-    def explore1(self, search_prio_limit=0, door_open_count=4, kick_doors=True, trap_search_offset=0, check_altar_alignment=True):
+    def explore1(self, search_prio_limit=0, door_open_count=4, kick_doors=True, trap_search_offset=0, check_altar_alignment=True, fast_go_to=False):
         # TODO: refactor entire function
 
 
@@ -271,17 +291,20 @@ class ExplorationLogic:
 
         def to_visit_func():
             level = self.agent.current_level()
-            to_visit = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
 
+            stone = ~level.seen & utils.isin(self.agent.glyphs, G.STONE)
+            doors = utils.isin(self.agent.glyphs, G.DOOR_CLOSED) & (level.door_open_count < door_open_count)
+            if not stone.any() and not doors.any():
+                return stone
+
+            to_visit = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
             tmp = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=bool)
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     if dy != 0 or dx != 0:
-                        to_visit |= utils.translate(~level.seen & utils.isin(self.agent.glyphs, G.STONE), dy, dx, out=tmp)
+                        to_visit |= utils.translate(stone, dy, dx, out=tmp)
                         if dx == 0 or dy == 0:
-                            to_visit |= utils.translate(utils.isin(self.agent.glyphs, G.DOOR_CLOSED) &
-                                                        (level.door_open_count < door_open_count),
-                                                        dy, dx, out=tmp)
+                            to_visit |= utils.translate(doors, dy, dx, out=tmp)
             return to_visit
 
         def to_search_func(prio_limit=0, return_prio=False):
@@ -363,7 +386,6 @@ class ExplorationLogic:
                     search_prio = to_search_func(return_prio=True)
                     if search_prio_limit is not None:
                         search_prio[search_prio < search_prio_limit] = -np.inf
-                        search_prio[search_prio < search_prio_limit] = -np.inf
                         search_prio -= dis * np.isfinite(search_prio) * 100
                     else:
                         search_prio -= dis * 4
@@ -385,12 +407,12 @@ class ExplorationLogic:
                 target_y, target_x = nonzero_y[i], nonzero_x[i]
 
                 with self.agent.env.debug_tiles(to_explore, color=(0, 0, 255, 64)):
-                    self.agent.go_to(target_y, target_x, debug_tiles_args=dict(
+                    self.agent.go_to(target_y, target_x, fast=fast_go_to, debug_tiles_args=dict(
                         color=(255 * bool(to_visit[target_y, target_x]),
                                255, 255 * bool(to_search[target_y, target_x])),
                         is_path=True))
                     if to_search[target_y, target_x] and not to_visit[target_y, target_x]:
-                        self.agent.search()
+                        self.agent.search(5)
 
             assert search_prio_limit is not None
 

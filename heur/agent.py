@@ -44,6 +44,7 @@ class Agent:
         self.message = self.single_message = ''
         self.popup = self.single_popup = []
         self._message_history = []
+        self.cursor_pos = (0, 0)
 
         self._last_pet_seen = 0
 
@@ -359,6 +360,8 @@ class Agent:
         self.step_count += 1
         self.score += reward
 
+        self.cursor_pos = (observation['tty_cursor'][0] - 1, observation['tty_cursor'][1])
+
         if done:
             raise AgentFinished()
 
@@ -426,7 +429,7 @@ class Agent:
         if self._last_turn != self.blstats.time:
             self._last_turn = self.blstats.time
             self._inactivity_counter = 0
-        assert self._inactivity_counter < 100, ('turn inactivity', sorted(set(self._message_history[-50:])))
+        assert self._inactivity_counter < 200, ('turn inactivity', sorted(set(self._message_history[-50:])))
 
         self.update_state(allow_update=self._atom_operation_allow_update or not self.in_atom_operation,
                           allow_callbacks=not self.in_atom_operation)
@@ -668,12 +671,17 @@ class Agent:
                 self.step(A.Command.KICK)
                 self.direction(self.calc_direction(self.blstats.y, self.blstats.x, y, x))
 
-    def search(self):
+    def search(self, max_count=1):
+        assert max_count >= 1
         with self.panic_if_position_changes():
-            self.step(A.Command.SEARCH)
-            self.current_level().search_count[self.blstats.y, self.blstats.x] += 1
-            if 'You find ' in self.message:
-                self.check_terrain(force=True)
+            with self.atom_operation():
+                if max_count > 1:
+                    self.type_text(str(max_count))
+                self.step(A.Command.SEARCH)
+                # TODO: estimate the real number of searches
+                self.current_level().search_count[self.blstats.y, self.blstats.x] += max_count
+                if 'You find ' in self.message:
+                    self.check_terrain(force=True)
         return True
 
     def direction(self, y, x=None):
@@ -813,8 +821,24 @@ class Agent:
 
     ######## NON-TRIVIAL ACTIONS
 
-    def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_tiles_args=None, callback=lambda: False):
+    def _fast_go_to(self, y, x):
+        with self.atom_operation():
+            self.step(A.Command.TRAVEL)
+            py, px = self.cursor_pos
+            while py != y or px != x:
+                dy, dx = np.sign(y - py), np.sign(x - px)
+                self.direction(self.calc_direction(py, px, py + dy, px + dx))
+                py += dy
+                px += dx
+                assert (py, px) == self.cursor_pos
+            self.direction('.')
+
+        if (self.blstats.y, self.blstats.x) == (y, x):
+            return True
+
+    def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_tiles_args=None, callback=lambda: False, fast=False):
         assert not stop_one_before or (self.blstats.y != y or self.blstats.x != x)
+        assert max_steps is None or not fast
 
         if stop_one_before and self.bfs()[y, x] == -1:
             dis = self.bfs()
@@ -833,17 +857,24 @@ class Agent:
             return
         steps_taken = 0
         cont = True
-        while cont:
+        while cont and (self.blstats.y, self.blstats.x) != (y, x):
             dis = self.bfs()
             if dis[y, x] == -1:
                 raise AgentPanic('end point is no longer accessible')
             path = self.path(self.blstats.y, self.blstats.x, y, x)
+            orig_path = path
+            path = path[1:]
+            if stop_one_before:
+                path = path[:-1]
 
-            with self.env.debug_tiles(path, **debug_tiles_args) \
+            if fast and len(path) > 2:
+                my_y, my_x = self.blstats.y, self.blstats.x
+                self._fast_go_to(*path[-1])
+                if (my_y, my_x) != (self.blstats.y, self.blstats.x):
+                    continue
+
+            with self.env.debug_tiles(orig_path, **debug_tiles_args) \
                     if debug_tiles_args is not None else contextlib.suppress():
-                path = path[1:]
-                if stop_one_before:
-                    path = path[:-1]
                 for y, x in path:
                     if self.monster_tracker.peaceful_monster_mask[y, x]:
                         cont = True
