@@ -1074,12 +1074,14 @@ class Inventory:
         self._previous_blstats = None
         self.items_below_me = None
         self.letters_below_me = None
+        self.engraving_below_me = None
 
         self.skip_engrave_counter = 0
 
     def on_panic(self):
         self.items_below_me = None
         self.letters_below_me = None
+        self.engraving_below_me = None
         self._previous_blstats = None
 
         self.item_manager.on_panic()
@@ -1093,16 +1095,18 @@ class Inventory:
                 (self._previous_blstats.y, self._previous_blstats.x, \
                  self._previous_blstats.level_number, self._previous_blstats.dungeon_number) != \
                 (self.agent.blstats.y, self.agent.blstats.x, \
-                 self.agent.blstats.level_number, self.agent.blstats.dungeon_number):
-            assume_appropriate_message = self._previous_blstats is not None
+                 self.agent.blstats.level_number, self.agent.blstats.dungeon_number) or \
+                (self.engraving_below_me is None or self.engraving_below_me.lower() == 'elbereth'):
+            assume_appropriate_message = self._previous_blstats is not None and not self.engraving_below_me
 
             self._previous_blstats = self.agent.blstats
             self.items_below_me = None
             self.letters_below_me = None
+            self.engraving_below_me = None
 
             self.get_items_below_me(assume_appropriate_message=assume_appropriate_message)
 
-        assert self.items_below_me is not None and self.letters_below_me is not None
+        assert self.items_below_me is not None and self.letters_below_me is not None and self.engraving_below_me is not None
 
     @contextlib.contextmanager
     def panic_if_items_below_me_change(self):
@@ -1441,6 +1445,14 @@ class Inventory:
                         re.search('There are (several|many) objects here\.', self.agent.message):
                     # LOOK is necessary even when 'Things that are here' popup is present for some very rare cases
                     self.agent.step(A.Command.LOOK)
+
+                if 'Something is ' in self.agent.message and 'You read: "' in self.agent.message:
+                    index = self.agent.message.index('You read: "') + len('You read: "')
+                    assert '"' in self.agent.message[index:]
+                    engraving = self.agent.message[index : index + self.agent.message[index:].index('"')]
+                    self.engraving_below_me = engraving
+                else:
+                    self.engraving_below_me = ''
 
                 if 'Things that are here:' not in self.agent.popup and 'There is ' not in '\n'.join(self.agent.popup):
                     if 'You see no objects here.' in self.agent.message:

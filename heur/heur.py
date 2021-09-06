@@ -201,6 +201,7 @@ class EnvWrapper:
             print('Turns:', self.env._turns)
             print('Seed :', self.env.get_seeds())
             print('Items below me :', self.agent.inventory.items_below_me)
+            print('Engraving below me:', self.agent.inventory.engraving_below_me)
             print()
             print(self.agent.inventory.items)
             print('-' * 20)

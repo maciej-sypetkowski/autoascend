@@ -69,6 +69,7 @@ class Agent:
 
         self._is_reading_message_or_popup = False
         self._last_terrain_check = None
+        self._forbidden_engrave_position = (-1, -1)
 
         self._init_fight3_model()
 
@@ -735,6 +736,36 @@ class Agent:
                 raise AgentPanic(f'agent position do not match after "move": '
                                  f'expected ({expected_y}, {expected_x}), got ({self.blstats.y}, {self.blstats.x})')
 
+    def can_engrave(self):
+        return (self.blstats.y, self.blstats.x) != self._forbidden_engrave_position
+
+    def engrave(self, text):
+        assert '\r' not in text
+        ret = False
+        def gen():
+            nonlocal ret
+            if 'What do you want to write with?' not in self.single_message:
+                self._forbidden_engrave_position = (self.blstats.y, self.blstats.x)
+                yield A.Command.ESC
+                return
+            yield '-'
+            if 'Do you want to add to the current engraving?' in self.single_message:
+                yield 'n'
+            while self._observation['misc'][2]:
+                yield ' '
+            if 'What do you want to write in the dust here?' not in self.single_message:
+                self._forbidden_engrave_position = (self.blstats.y, self.blstats.x)
+                yield A.Command.ESC
+                return
+            yield from text
+            yield '\r'
+            ret = True
+
+        with self.atom_operation():
+            self.step(A.Command.ENGRAVE, gen())
+            self.inventory.get_items_below_me()
+        return ret
+
     ######## NON-TRIVIAL HELPERS
 
     def neighbors(self, y, x, shuffle=True, diagonal=True):
@@ -1312,7 +1343,6 @@ class Agent:
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
     def emergency_strategy(self):
-        # TODO: to refactor
         if (
                 self.is_safe_to_pray() and
                 (self.blstats.hitpoints < 1 / (5 if self.blstats.experience_level < 6 else 6)
@@ -1323,24 +1353,26 @@ class Agent:
             self.pray()
             return
 
+        items = [item for item in flatten_items(self.inventory.items) if item.is_unambiguous() and
+                item.category == nh.POTION_CLASS and item.object.name in ['healing', 'extra healing', 'full healing']]
         if (
                 (self.blstats.hitpoints < 1 / 3 * self.blstats.max_hitpoints
                  or self.blstats.hitpoints < 8 or self.blstats.hunger_state >= Hunger.FAINTING) and
-                len([s for s in map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])
-                     if 'potion of healing' in s or 'potion of extra healing' in s
-                        or 'potion of full healing' in s]) > 0
+                items
         ):
             yield True
-            with self.atom_operation():
-                self.type_text('q')
-                for letter, s in zip(self.last_observation['inv_letters'],
-                                     map(lambda x: bytes(x).decode(), self.last_observation['inv_strs'])):
-                    if 'potion of healing' in s or 'potion of extra healing' in s or 'potion of full healing' in s:
-                        self.type_text(chr(letter))
-                        break
-                else:
-                    assert 0
+            self.inventory.quaff(items[0])
             return
+
+        # if self.inventory.engraving_below_me.lower() != 'elbereth' and self.can_engrave() and \
+        #         (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5):
+        #     yield True
+        #     self.engrave('Elbereth')
+        #     for _ in range(8):
+        #         if self.inventory.engraving_below_me.lower() != 'elbereth':
+        #             break
+        #         self.direction('.')
+        #     return
 
         yield False
 
