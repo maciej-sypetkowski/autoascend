@@ -336,6 +336,11 @@ class EnvWrapper:
         # if not done:
         #     agent_lib.G.assert_map(obs['glyphs'], obs['chars'])
 
+        # uncomment to debug measure up to assumed median
+        # if True and self.score >= 1350:
+        #     done = True
+        #     self.end_reason = 'quit after median'
+        # elif done:
         if done:
             if self.visualizer is not None:
                 self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
@@ -391,6 +396,7 @@ class EnvWrapper:
             'character': str(self.agent.character).split()[0],
             'end_reason': self.end_reason,
             'seed': self.env.get_seeds(),
+            **self.agent.stats_logger.get_stats_dict(),
         }
 
 

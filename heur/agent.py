@@ -1,5 +1,6 @@
 import contextlib
 import re
+from stats_logger import StatsLogger
 from collections import namedtuple
 from functools import partial
 
@@ -13,7 +14,7 @@ from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
-from glyph import MON, C, Hunger, G, SHOP, ALL
+from glyph import MON, C, Hunger, G, SHOP
 from item import Inventory, Item, flatten_items
 from level import Level
 from monster_tracker import MonsterTracker
@@ -72,6 +73,8 @@ class Agent:
         self._forbidden_engrave_position = (-1, -1)
 
         self._init_fight3_model()
+
+        self.stats_logger = StatsLogger()
 
     @property
     def has_pet(self):
@@ -447,8 +450,8 @@ class Agent:
             if allow_update:
                 # functions that are allowed to call state unchanging steps
                 for func in [self.character.update, self.inventory.update, self.monster_tracker.update,
-                            partial(self.check_terrain, force=False), self.update_level,
-                            self.global_logic.update]:
+                             partial(self.check_terrain, force=False), self.update_level,
+                             self.global_logic.update]:
                     func()
                     self.message = message
                     self.popup = popup
@@ -742,6 +745,7 @@ class Agent:
     def engrave(self, text):
         assert '\r' not in text
         ret = False
+
         def gen():
             nonlocal ret
             if 'What do you want to write with?' not in self.single_message:
@@ -764,6 +768,9 @@ class Agent:
         with self.atom_operation():
             self.step(A.Command.ENGRAVE, gen())
             self.inventory.get_items_below_me()
+
+        if ret and text.lower() == 'elbereth':
+            self.stats_logger.log_event('elbereth_write')
         return ret
 
     ######## NON-TRIVIAL HELPERS
@@ -867,7 +874,8 @@ class Agent:
         if (self.blstats.y, self.blstats.x) == (y, x):
             return True
 
-    def go_to(self, y, x, stop_one_before=False, max_steps=None, debug_tiles_args=None, callback=lambda: False, fast=False):
+    def go_to(self, y, x, stop_one_before=False, max_steps=None,
+              debug_tiles_args=None, callback=lambda: False, fast=False):
         assert not stop_one_before or (self.blstats.y != y or self.blstats.x != x)
         assert max_steps is None or not fast
 
@@ -1014,9 +1022,9 @@ class Agent:
 
     def _init_fight3_model(self):
         self._fight3_model = rl_utils.RLModel({
-                'walkable': ((7, 7), bool),
-                'monster_mask': ((7, 7), bool),
-            },
+            'walkable': ((7, 7), bool),
+            'monster_mask': ((7, 7), bool),
+        },
             [(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
             train=self.rl_model_to_train == 'fight3',
             training_comm=self.rl_model_training_comm,
@@ -1062,7 +1070,7 @@ class Agent:
             }
             actions = [(y, x) for y, x in self._fight3_model.action_space
                        if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
-                               and level.walkable[self.blstats.y + y, self.blstats.x + x]]
+                       and level.walkable[self.blstats.y + y, self.blstats.x + x]]
 
             off_y, off_x = self._fight3_model.choose_action(observation, actions)
 
@@ -1128,6 +1136,10 @@ class Agent:
                         wand = a[4]
                         letter = self.inventory.items.get_letter(wand)
                         return f'{a[0]}z{letter}:{a[2]},{a[3]}'
+                    elif a[1] == 'elbereth':
+                        return f'{a[0]:.1f}e'
+                    elif a[1] == 'wait':
+                        return f'{a[0]}w'
                     else:
                         return f'{a[0]}{a[1][0]}:{a[2]},{a[3]}'
 
@@ -1146,6 +1158,7 @@ class Agent:
         if adjacent.any():
             possible_move_to = list(
                 zip(*np.nonzero((move_priority_heatmap == np.max(move_priority_heatmap[adjacent])) & adjacent)))
+            possible_move_to = [(y, x) for y, x in possible_move_to if mask[y, x]]
         assert len(possible_move_to) <= 8
         best_y, best_x = None, None
         if possible_move_to:
@@ -1156,6 +1169,8 @@ class Agent:
         if best_y is not None:
             best_move_score = move_priority_heatmap[best_y, best_x]
         move_priority_heatmap[~mask] = float('nan')
+        if best_y is not None:
+            assert mask[best_y, best_x]
         return best_move_score, best_x, best_y, possible_move_to
 
     def _fight2_perform_action(self, best_action, best_move_score, best_x, best_y, wait_counter):
@@ -1193,6 +1208,14 @@ class Agent:
                     finally:
                         self._track_hunted_corpse(monster, target_x, target_y)
                     return wait_counter
+            elif best_action[1] == 'elbereth':
+                assert self.inventory.engraving_below_me.lower() != 'elbereth'
+                self.engrave("Elbereth")
+                return wait_counter
+            elif best_action[1] == 'wait':
+                assert self.inventory.engraving_below_me.lower() == 'elbereth'
+                self.search()
+                return wait_counter
             elif best_action[1] == 'zap':
                 _, _, dy, dx, wand, targeted_monsters = best_action
                 dir = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx,
@@ -1354,7 +1377,7 @@ class Agent:
             return
 
         items = [item for item in flatten_items(self.inventory.items) if item.is_unambiguous() and
-                item.category == nh.POTION_CLASS and item.object.name in ['healing', 'extra healing', 'full healing']]
+                 item.category == nh.POTION_CLASS and item.object.name in ['healing', 'extra healing', 'full healing']]
         if (
                 (self.blstats.hitpoints < 1 / 3 * self.blstats.max_hitpoints
                  or self.blstats.hitpoints < 8 or self.blstats.hunger_state >= Hunger.FAINTING) and

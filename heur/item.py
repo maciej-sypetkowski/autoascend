@@ -571,6 +571,8 @@ class ItemManager:
 
         count = int({'a': 1, 'an': 1, 'the': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
+        if uses is not None and status == Item.UNKNOWN:
+            status = Item.UNCURSED
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
         monster_id = None
 

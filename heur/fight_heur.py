@@ -97,6 +97,8 @@ def draw_monster_priority_positive(agent, monster, priority, walkable):
             _draw_around(priority, y, x, 3, radius=2, operation='max')
         if wielding_ranged_weapon(agent):
             _draw_ranged(priority, y, x, 4, walkable, radius=7, operation='max')
+        elif len(agent.inventory.get_ranged_combinations()):
+            _draw_ranged(priority, y, x, 1, walkable, radius=7, operation='max')
 
 
 def is_monster_faster(agent, monster):
@@ -346,8 +348,44 @@ def get_potential_wand_usages(agent, monsters, dy, dx):
         if targeted_monsters:
             # priority = priority * (1 - player_hp_ratio) - 10
             priority = priority - 15
+            if agent.inventory.engraving_below_me.lower() == 'elbereth':
+                priority -= 100
             ret.append((priority, 'zap', dy, dx, item, targeted_monsters))
     return ret
+
+
+def elbereth_action(agent, monsters):
+    if agent.inventory.engraving_below_me.lower() == 'elbereth':
+        return []
+    if not agent.can_engrave():
+        return []
+    adj_monsters_count = 0
+    for monster in monsters:
+        _, my, mx, mon, _ = monster
+        if mon.mname in ONLY_RANGED_SLOW_MONSTERS:
+            continue
+        if not utils.adjacent((my, mx), (agent.blstats.y, agent.blstats.x)):
+            continue
+        multiplier = np.clip(20 / agent.blstats.hitpoints, 1.0, 1.5)
+        if is_monster_faster(agent, monster):
+            multiplier *= 2
+        if mon in WEAK_MONSTERS:
+            adj_monsters_count += 0.1 * multiplier
+            continue
+        adj_monsters_count += 1 * multiplier
+        if is_dangerous_monster(monster):
+            adj_monsters_count += 2 * multiplier
+
+    player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
+    if agent.blstats.hitpoints < 30 and adj_monsters_count > 0:
+        return [(-17 + 28 * adj_monsters_count * (1 - player_hp_ratio), 'elbereth')]
+    return []
+
+
+def wait_action(agent, monsters):
+    if agent.inventory.engraving_below_me.lower() == 'elbereth':
+        return [(-50, 'wait')]
+    return []
 
 
 def get_available_actions(agent, monsters):
@@ -358,6 +396,8 @@ def get_available_actions(agent, monsters):
         _, y, x, mon, _ = monster
         if utils.adjacent((y, x), (agent.blstats.y, agent.blstats.x)):
             priority = melee_monster_priority(agent, monsters, monster)
+            if agent.inventory.engraving_below_me.lower() == 'elbereth':
+                priority -= 100
             actions.append((priority, 'melee', y, x, monster))
 
     # ranged attack actions
@@ -366,6 +406,8 @@ def get_available_actions(agent, monsters):
             ranged_pr = ranged_priority(agent, dy, dx, monsters)
             if ranged_pr is not None:
                 pri, y, x, monster = ranged_pr
+                if agent.inventory.engraving_below_me.lower() == 'elbereth':
+                    pri -= 100
                 actions.append((pri, 'ranged', y, x, monster))
 
             actions.extend(get_potential_wand_usages(agent, monsters, dy, dx))
@@ -381,6 +423,9 @@ def get_available_actions(agent, monsters):
     if to_pickup:
         actions.append((15, 'pickup', to_pickup))
 
+    # actions.extend(elbereth_action(agent, monsters))
+    # actions.extend(wait_action(agent, monsters))
+
     return actions
 
 
@@ -394,6 +439,7 @@ def get_corridors_priority_map(walkable):
 
 
 def get_priorities(agent):
+    """ Returns a pair (move priority heatmap, other actions (with priorities) list) """
     walkable = agent.current_level().walkable
     priority = np.zeros(walkable.shape, dtype=float)
     monsters = agent.get_visible_monsters()
