@@ -1209,15 +1209,19 @@ class Inventory:
         with self.agent.atom_operation():
             self.agent.step(A.Command.TAKEOFF)
 
+            is_take_off_message = lambda: \
+                    'You finish taking off ' in self.agent.message or \
+                    'You were wearing ' in self.agent.message or \
+                    'You feel that monsters no longer have difficulty pinpointing your location.' in self.agent.message
+
             if len(equipped_armors) > 1:
+                if is_take_off_message():
+                    raise AgentPanic('env did not ask for the item to takeoff')
                 assert 'What do you want to take off?' in self.agent.message, self.agent.message
                 self.agent.type_text(letter)
             if 'It is cursed.' in self.agent.message or 'They are cursed.' in self.agent.message:
                 return False
-            assert 'You finish taking off ' in self.agent.message or \
-                   'You were wearing ' in self.agent.message or \
-                   'You feel that monsters no longer have difficulty pinpointing your location.' in self.agent.message \
-                , self.agent.message
+            assert is_take_off_message(), self.agent.message
 
         return True
 
@@ -1479,7 +1483,8 @@ class Inventory:
                                 ' solidly fixed to the floor.' in self.agent.message or \
                                 'You read:' in self.agent.message or \
                                 "You don't see anything in here to pick up." in self.agent.message or \
-                                'You cannot reach the ground.' in self.agent.message:
+                                'You cannot reach the ground.' in self.agent.message or \
+                                "You don't feel anything in here to pick up." in self.agent.message:
                             items = []
                             letters = []
                         else:

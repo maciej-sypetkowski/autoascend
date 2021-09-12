@@ -14,7 +14,7 @@ from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
-from glyph import MON, C, Hunger, G, SHOP
+from glyph import MON, C, Hunger, G, SHOP, ALL
 from item import Inventory, Item, flatten_items
 from level import Level
 from monster_tracker import MonsterTracker
@@ -393,15 +393,15 @@ class Agent:
             self.step(A.TextCharacters.SPACE)
             return
 
-        if "You may wish for an object." in self.message:
-            # TODO: wishing strategy
-            # TODO: assume wished item as blessed
-            self.step('b', iter('lessed greased +2 gray dragon scale mail\r'))
-            return
-
         if observation['misc'][1]:  # entering text
-            self.step(A.Command.ESC)
-            return
+            if "You may wish for an object." in self.message:
+                # TODO: wishing strategy
+                # TODO: assume wished item as blessed
+                self.step('b', iter('lessed greased +2 gray dragon scale mail\r'))
+                return
+            else:
+                self.step(A.Command.ESC)
+                return
 
         if 'Where do you want to be teleported?' in self.message:
             # TODO: teleport control
@@ -886,7 +886,7 @@ class Agent:
                 if dis[ny, nx] != -1 and (best_p is None or dis[best_p] > dis[ny, nx]):
                     best_p = ny, nx
             if best_p is None:
-                assert 0, 'no achievable neighbor'
+                assert 0, 'no reachable neighbor'
             y, x = best_p
             stop_one_before = False
 
@@ -963,7 +963,7 @@ class Agent:
                 return False
 
     def get_visible_monsters(self):
-        """ Returns list of tuples (distance, y, x, monster)
+        """ Returns list of tuples (distance, y, x, permonst, monster_glyph)
         """
         mask = self.monster_tracker.monster_mask & ~self.monster_tracker.peaceful_monster_mask
         if not mask.any():
@@ -1150,7 +1150,8 @@ class Agent:
 
     def _fight2_get_best_move(self, dis, move_priority_heatmap):
         mask = ~np.isnan(move_priority_heatmap)
-        assert mask.any()
+        if not mask.any():
+            return None, None, None, []
         move_priority_heatmap[~mask] = np.min(move_priority_heatmap[mask]) - 1
         adjacent = dis == 1
         assert np.sum(adjacent) <= 8, np.sum(adjacent)

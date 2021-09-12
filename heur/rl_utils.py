@@ -54,5 +54,5 @@ class RLModel:
             assert self.action_space[action_id] in legal_actions
             return self.action_space[action_id]
 
-        i = np.random.randint(0, len(legal_actions))
+        i = np.random.randint(0, len(legal_actions))  # TODO: determinism
         return legal_actions[i]

@@ -55,7 +55,6 @@ class ItemPriority(ItemPriorityBase):
             if item.is_container() and item.status in [Item.UNCURSED, Item.BLESSED] and item.objs[0].desc == 'bag':
                 bag = item  # TODO: select the best
                 add_item(bag)
-                break
 
         for allow_unknown_status in [False, True]:
             item = self.agent.inventory.get_best_melee_weapon(items=forced_items + items,
@@ -463,6 +462,21 @@ class GlobalLogic:
                 else:
                     break
 
+    @utils.debug_log('follow_guard')
+    @Strategy.wrap
+    def follow_guard(self):
+        if not utils.isin(self.agent.glyphs, G.GUARD).any():
+            yield False
+
+        ys, xs = utils.isin(self.agent.glyphs, G.GUARD).nonzero()
+        y, x = ys[0], xs[0]
+
+        if utils.adjacent((y, x), (self.agent.blstats.y, self.agent.blstats.x)):
+            yield False
+
+        yield True
+        self.agent.go_to(y, x, stop_one_before=True)
+
     @Strategy.wrap
     def current_strategy(self):
         yield True
@@ -572,6 +586,9 @@ class GlobalLogic:
             .preempt(self.agent, [
                 self.agent.eat1().every(5).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 self.agent.eat_from_inventory().every(5),
+            ])
+            .preempt(self.agent, [
+                self.follow_guard(),
             ])
             .preempt(self.agent, [
                 self.agent.fight2(),

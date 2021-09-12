@@ -505,6 +505,7 @@ class G:  # Glyphs
 
     SHOPKEEPER = frozenset({MON.fn('shopkeeper')})
     ORACLE = frozenset({MON.fn('Oracle')})
+    GUARD = frozenset({MON.fn('guard')})
 
     STATUES = frozenset({i + nh.GLYPH_STATUE_OFF for i in range(nh.NUMMONS)})
 
