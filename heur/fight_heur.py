@@ -8,6 +8,7 @@ from scipy import signal
 import objects as O
 import utils
 from glyph import G
+from item import flatten_items
 
 ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold', 'gas spore']
 # COLD_MONSTERS = ['brown mold']
@@ -18,7 +19,7 @@ EXPLODING_MONSTERS = ['yellow light', 'gas spore', 'flaming sphere', 'freezing s
 
 INSECTS = ['giant ant', 'killer bee', 'soldier ant', 'fire ant', 'giant beetle', 'queen bee']
 
-WEAK_MONSTERS = ['lichen', 'newt']
+WEAK_MONSTERS = ['lichen', 'newt', 'shrieker', 'grid bug']
 
 # TODO: nymph?
 WEIRD_MONSTERS = ['leprechaun', 'nymph']
@@ -79,12 +80,6 @@ def draw_monster_priority_positive(agent, monster, priority, walkable):
             _draw_around(priority, y, x, 1, radius=2, operation='max')
         if len(agent.inventory.get_ranged_combinations()):
             _draw_ranged(priority, y, x, 1, walkable, radius=7, operation='max')
-    # elif mon.mname in COLD_MONSTERS:
-    #     if len(agent.inventory.get_ranged_combinations()):
-    #         _draw_around(priority, y, x, 1, radius=2, operation='max')
-    #     elif agent.blstats.hitpoints > 12:
-    #         _draw_around(priority, y, x, 2, radius=1, operation='max')
-    #         _draw_around(priority, y, x, 1, radius=2, operation='max')
     elif mon.mname in ONLY_RANGED_SLOW_MONSTERS:  # and agent.inventory.get_ranged_combinations():
         if consider_melee_only_ranged_if_hp_full(agent, monster):
             _draw_around(priority, y, x, 2, radius=1, operation='max')
@@ -92,9 +87,12 @@ def draw_monster_priority_positive(agent, monster, priority, walkable):
         if len(agent.inventory.get_ranged_combinations()):
             _draw_ranged(priority, y, x, 1, walkable, radius=7, operation='max')
     else:
-        if agent.blstats.hitpoints > 8 and not wielding_ranged_weapon(agent):
+        if not imminent_death_on_melee(agent, monster) and not wielding_ranged_weapon(agent):
             # engage, but ensure striking first if possible
-            _draw_around(priority, y, x, 3, radius=2, operation='max')
+            if mon.mmove <= 12:
+                _draw_around(priority, y, x, 3, radius=2, operation='max')
+            else:
+                _draw_around(priority, y, x, 3, radius=3, operation='max')
         if wielding_ranged_weapon(agent):
             _draw_ranged(priority, y, x, 4, walkable, radius=7, operation='max')
         elif len(agent.inventory.get_ranged_combinations()):
@@ -109,16 +107,38 @@ def is_monster_faster(agent, monster):
            or 'bee' in mon.mname or 'fox' in mon.mname
 
 
+def imminent_death_on_melee(agent, monster):
+    if is_dangerous_monster(monster):
+        return agent.blstats.hitpoints <= 15
+    return agent.blstats.hitpoints <= 8
+
+
 def draw_monster_priority_negative(agent, monster, priority, walkable):
     _, y, x, mon, _ = monster
 
-    if agent.blstats.hitpoints <= 8 and not is_monster_faster(agent, monster) and not mon.mname in WEAK_MONSTERS \
+    if imminent_death_on_melee(agent, monster) and not mon.mname in WEAK_MONSTERS \
             and not mon.mname in ONLY_RANGED_SLOW_MONSTERS:
-        # stay out of melee range
-        _draw_around(priority, y, x, -10, radius=1)
+        if mon.mmove <= 12:
+            _draw_around(priority, y, x, -10, radius=1)
+        else:
+            if utils.adjacent((agent.blstats.y, agent.blstats.x), (y, x)):
+                # no point in running -- monster is fast
+                pass
+            else:
+                _draw_around(priority, y, x, -10, radius=2)
+                _draw_around(priority, y, x, -5, radius=1)
+
         if not len(agent.inventory.get_ranged_combinations()):
             # prefer avoiding being in line of fire
             _draw_ranged(priority, y, x, -1, walkable, radius=7)
+
+    # if agent.blstats.hitpoints <= 8 and not is_monster_faster(agent, monster) and not mon.mname in WEAK_MONSTERS \
+    #         and not mon.mname in ONLY_RANGED_SLOW_MONSTERS:
+    #     # stay out of melee range
+    #     _draw_around(priority, y, x, -10, radius=1)
+    #     if not len(agent.inventory.get_ranged_combinations()):
+    #         # prefer avoiding being in line of fire
+    #         _draw_ranged(priority, y, x, -1, walkable, radius=7)
 
     if mon.mname in EXPLODING_MONSTERS:
         _draw_around(priority, y, x, -10, radius=1)
@@ -309,24 +329,18 @@ def simulate_wand_path(agent, wand, monsters, dy, dx):
 
 def is_dangerous_monster(monster):
     _, y, x, mon, _ = monster
-    return mon.mname in INSECTS
-
+    is_pet = 'dog' in mon.mname or 'cat' in mon.mname or 'kitten' in mon.mname or 'pony' in mon.mname \
+             or 'horse' in mon.mname
+    return is_pet or mon.mname in INSECTS
 
 def get_potential_wand_usages(agent, monsters, dy, dx):
     ret = []
     player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
+    # for item in flatten_items(agent.inventory.items):
+    #     item = self.inventory.move_to_inventory(item)
     for item in agent.inventory.items:
         targeted_monsters = set()
-        if len(item.objs) != 1:
-            continue
-        if not item.is_ray_wand():
-            continue
-        if item.uses == 'no charges':
-            # TODO: is it right ?
-            continue
-        if item.objs[0] == O.from_name('sleep', nh.WAND_CLASS):
-            continue
-        if item.objs[0] == O.from_name('digging', nh.WAND_CLASS):
+        if not item.is_offensive_usable_wand():
             continue
         priority = 0
         # print('--------------', dy, dx)
@@ -376,15 +390,17 @@ def elbereth_action(agent, monsters):
         if is_dangerous_monster(monster):
             adj_monsters_count += 2 * multiplier
 
-    player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
+    player_hp_ratio = (agent.blstats.hitpoints / agent.blstats.max_hitpoints) ** 0.5
     if agent.blstats.hitpoints < 30 and adj_monsters_count > 0:
-        return [(-17 + 28 * adj_monsters_count * (1 - player_hp_ratio), 'elbereth')]
+        return [(-15 + 20 * adj_monsters_count * (1 - player_hp_ratio), 'elbereth')]
     return []
 
 
 def wait_action(agent, monsters):
     if agent.inventory.engraving_below_me.lower() == 'elbereth':
-        return [(-50, 'wait')]
+        player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
+        priority = 25 - player_hp_ratio * 40
+        return [(priority, 'wait')]
     return []
 
 

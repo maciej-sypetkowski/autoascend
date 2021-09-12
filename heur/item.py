@@ -241,6 +241,20 @@ class Item:
     def wand_charges_left(self, item):
         assert item.is_wand()
 
+    def is_offensive_usable_wand(self):
+        if len(self.objs) != 1:
+            return False
+        if not self.is_ray_wand():
+            return False
+        if self.uses == 'no charges':
+            # TODO: is it right ?
+            return False
+        if self.objs[0] == O.from_name('sleep', nh.WAND_CLASS):
+            return False
+        if self.objs[0] == O.from_name('digging', nh.WAND_CLASS):
+            return False
+        return True
+
     ######## FOOD
 
     def is_food(self):

@@ -979,6 +979,7 @@ class Agent:
                         class dummy_permonst:
                             mname = 'unknown'
                             mlet = '0'
+                            mmove = 12
 
                         ret.append((dis[y][x], y, x, dummy_permonst(), self.glyphs[y][x]))
                 else:
@@ -1139,7 +1140,7 @@ class Agent:
                     elif a[1] == 'elbereth':
                         return f'{a[0]:.1f}e'
                     elif a[1] == 'wait':
-                        return f'{a[0]}w'
+                        return f'{a[0]:.1f}w'
                     else:
                         return f'{a[0]}{a[1][0]}:{a[2]},{a[3]}'
 
