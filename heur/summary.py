@@ -39,6 +39,8 @@ def print_exceptions(df, ref_df):
 
 
 def get_group_from_end_reason(text):
+    if text.startswith('exception:'):
+        return 'exception'
     if 'starved' in text or 'while fainted from lack of food' in text:
         return 'food'
     if 'the shopkeeper' in text:
