@@ -106,14 +106,16 @@ class ItemPriority(ItemPriorityBase):
                                  nh.TOOL_CLASS]:
                 if (not isinstance(item.objs[0], O.Container) or item.objs[0].desc == 'bag') and \
                         not item.is_possible_container():
-                    add_item(item, to_bag=True)
+                    to_bag = O.from_name('cancellation', nh.WAND_CLASS) not in item.objs
+                    add_item(item, to_bag=to_bag)
 
         categories = [nh.WEAPON_CLASS, nh.ARMOR_CLASS, nh.TOOL_CLASS, nh.FOOD_CLASS, nh.GEM_CLASS, nh.AMULET_CLASS,
                       nh.RING_CLASS, nh.POTION_CLASS, nh.SCROLL_CLASS, nh.SPBOOK_CLASS, nh.WAND_CLASS]
         for item in sorted(items, key=lambda i: i.unit_weight(with_content=False)):
             if item.category in categories and not isinstance(item.objs[0], O.Container) and not item.is_corpse():
                 if item.status == Item.UNKNOWN:
-                    add_item(item, to_bag=True)
+                    to_bag = O.from_name('cancellation', nh.WAND_CLASS) not in item.objs
+                    add_item(item, to_bag=to_bag)
 
         r = {None: [ret_inv.get(item, 0) for item in items]}
         if bag is not None:
