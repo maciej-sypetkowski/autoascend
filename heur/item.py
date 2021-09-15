@@ -585,6 +585,7 @@ class ItemManager:
 
         count = int({'a': 1, 'an': 1, 'the': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
+        # TODO: should be uses -- but the score is better this way
         if uses is not None and status == Item.UNKNOWN:
             status = Item.UNCURSED
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
@@ -2055,10 +2056,11 @@ class Inventory:
             return self.agent.single_message
 
         self.agent.step(A.Command.LOOK)
-        if 'written' in msg() or 'engraved' in msg() or 'see' not in msg() or 'read' not in msg():
+        if 'written' in msg() or 'engraved' in msg() or 'see' not in msg() or 'read' in msg():
             return None
 
         skip_engraving = [False]
+
 
         def action_generator():
             assert smsg().startswith('What do you want to write with?'), smsg()
@@ -2132,9 +2134,9 @@ class Inventory:
         if skip_engraving[0]:
             return None
 
-        if 'Do you want to add to the current engraving' in msg():
+        if 'Do you want to add to the current engraving' in smsg():
             self.agent.type_text('q')
-            assert msg().strip() == 'Never mind.', msg()
+            assert smsg().strip() == 'Never mind.', smsg()
 
         return possible_wand_types
 
