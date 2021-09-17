@@ -333,6 +333,7 @@ def is_dangerous_monster(monster):
              or 'horse' in mon.mname
     return is_pet or mon.mname in INSECTS
 
+
 def get_potential_wand_usages(agent, monsters, dy, dx):
     ret = []
     player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
@@ -424,6 +425,8 @@ def get_available_actions(agent, monsters):
                 pri, y, x, monster = ranged_pr
                 if agent.inventory.engraving_below_me.lower() == 'elbereth':
                     pri -= 100
+                if all(monster[3].mname in ONLY_RANGED_SLOW_MONSTERS for monster in monsters):
+                    pri += 10
                 actions.append((pri, 'ranged', y, x, monster))
 
             actions.extend(get_potential_wand_usages(agent, monsters, dy, dx))

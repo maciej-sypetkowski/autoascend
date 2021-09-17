@@ -4,9 +4,11 @@ import pandas as pd
 
 
 def interesting_reason(txt):
+    txt = txt.lower()
     # return 'Error' not in txt
     # return 'starved' in txt.lower()
     # return ('food' in txt or 'fainted' in txt or 'starved' in txt)
+    return 'captain' in txt or 'shop' in txt
     return ('food' not in txt
             and 'shop' not in txt
             and 'falling rock' not in txt
@@ -33,13 +35,14 @@ def process(path='/tmp/nh_sim.json'):
         if row.score > 2200:
             continue
         if interesting_reason(row.end_reason):
-            print(row.seed[0], row.end_reason)
+            print(row.seed[0], row.steps, row.end_reason)
             ret[row.seed[0]] = row.steps - 128
 
     with open('filtered.json', 'w') as f:
         json.dump(ret, f)
 
 
-process('/tmp/nh_sim.json')
+# process('/tmp/nh_sim.json')
+process('nh_sim_fix_engrave.json')
 # process('/workspace/nh_sim_fight2.json')
 

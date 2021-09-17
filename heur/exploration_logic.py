@@ -1,11 +1,13 @@
-import numpy as np
 import re
+
+import cv2
+import numpy as np
 from nle import nethack as nh
 from nle.nethack import actions as A
 
 import utils
 from character import Character
-from glyph import G, C
+from glyph import G, C, SS
 from level import Level
 from strategy import Strategy
 
@@ -420,8 +422,69 @@ class ExplorationLogic:
             open_visit_search(search_prio_limit)
             .preempt(self.agent, [
                 self.agent.inventory.gather_items(),
+                # self.disarm_traps().every(10),
             ])
             .preempt(self.agent, [
                 self.search_neighbors_for_traps(trap_search_offset),
             ])
         )
+
+    @utils.debug_log('disarm_traps')
+    @Strategy.wrap
+    def disarm_traps(self):
+        """
+        You can untrap containers, and following types of traps:
+
+        1. Spider web or bear trap. If there is a monster in it, you try to save it from the trap, otherwise you try to remove the trap. In case of success with bear trap, you receive bear trap as a tool.
+        2. Pit or spiked pit. If there is a monster in it, you try to untrap it, otherwise nothing happens. ("You are already on the edge of the pit", or "Try filling the pit first.")
+        3. Landmine. In case of success, you receive landmine as a tool.
+        4. Squeeky board. You are asked for an object to untrap it with. The object must be either noncursed, nonlit potion of oil, or noncursed can of grease with charges. In case of success, one potion of oil, or one charge of the can, is spent, the potion of oil becomes known (if you used it), and the trap is removed. "You repair the squeeky board."
+        5. Dart trap or arrow trap. In case of success, 50-rnl(50) darts or arrows are recovered.
+
+        Other kinds of traps cannot be untrapped. ("You cannot disable this/that trap.") However, there are alternative methods to remove most of them.
+        """
+        disarmable_traps = [SS.S_web, SS.S_bear_trap, SS.S_land_mine, SS.S_dart_trap, SS.S_arrow_trap]
+        # TODO: consider strategy for SS.S_pit, SS.S_spiked_pit
+        level = self.agent.current_level()
+        trap_mask = utils.isin(level.objects, disarmable_traps)
+
+        if not trap_mask.any():
+            yield False
+            return
+
+        trap_locations = list(zip(*trap_mask.nonzero()))
+
+        trap_mask = cv2.dilate(trap_mask.astype(np.uint8), kernel=np.ones((3, 3))).astype(bool)
+        bfs = self.agent.bfs()
+        trap_mask[self.agent.blstats.y, self.agent.blstats.x] = 0  # don't try to disarm when standing on it
+        trap_mask &= (bfs >= 0)
+        trap_mask &= bfs == bfs[trap_mask].min()
+        assert trap_mask.any()
+
+        if not trap_mask.any():
+            yield False
+            return
+        yield True
+
+        closest_y, closest_x = trap_mask.nonzero()
+        target_y, target_x = closest_y[0], closest_x[0]
+        assert target_y != self.agent.blstats.y or target_x != self.agent.blstats.x
+
+        self.agent.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 120, 0), is_path=True))
+        for trap_y, trap_x in trap_locations:
+            if utils.adjacent((self.agent.blstats.y, self.agent.blstats.x), (trap_y, trap_x)):
+                trap_glyph = level.objects[trap_y, trap_x]
+                assert trap_glyph in disarmable_traps
+                # assert 0, trap_glyph
+                assert level.objects[trap_y, trap_x] == trap_glyph
+                for _ in range(15):
+                    if trap_y == self.agent.blstats.y and trap_x == self.agent.blstats.x:
+                        break
+                    if self.agent.untrap(trap_y, trap_x):
+                        self.agent.check_terrain(force=True)
+                        break
+                else:
+                    assert 0, "Disarming the trap didn't work after too many attempts"
+                break
+        # else:
+        #     assert 0, 'No longer can reach targeted trap'

@@ -624,6 +624,20 @@ class Agent:
                 raise AgentPanic('no food is lying here')
             assert 0, self.message
 
+    def untrap(self, trap_y, trap_x):
+        with self.atom_operation():
+            self.type_text('#u')
+            self.step(A.MiscAction.MORE) # , iter('b'))
+            assert self.single_message == "In what direction?", self.single_message
+            self.direction(trap_y, trap_x)
+            if self.single_message == 'You know of no traps there.':
+                # assert 0, "Trying to untrap already untraped trap"
+                return True
+            if self.single_message == 'You disarm the trap.':
+                self.stats_logger.log_event('untrap_success')
+                return True
+            return False
+
     def is_safe_to_pray(self):
         return (
                 (self.last_prayer_turn is None and self.blstats.time > 300) or

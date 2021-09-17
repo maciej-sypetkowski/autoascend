@@ -403,7 +403,8 @@ class Visualizer:
         _put_text(ret, 'Unarmed bonus: ' + str(ch.get_melee_bonus(None)), (0, i * FONT_SIZE))
         i += 2
 
-        _put_text(ret, '\n'.join(f'{k}={v}' for k, v in self.env.agent.stats_logger.get_stats_dict().items()),
+
+        _put_text(ret, '|'.join(f'{k}={v}' for k, v in self.env.agent.stats_logger.get_stats_dict().items()),
                   (0, i * FONT_SIZE), color=(100, 100, 100))
 
         _draw_frame(ret)
