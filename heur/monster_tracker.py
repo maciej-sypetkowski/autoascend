@@ -14,6 +14,19 @@ except ImportError:
         njit = lambda *a, **k: (lambda f: f)
 
 
+@nb.njit('b1[:,:](i2[:,:],i2[:,:],i4)', cache=True)
+def disappearance_mask(old_mons, new_mons, max_radius):
+    ret = np.zeros_like(new_mons, dtype=nb.b1)
+    for y in range(new_mons.shape[0]):
+        for x in range(new_mons.shape[1]):
+            glyph = old_mons[y, x]
+            if glyph == -1:
+                continue
+            ret[y, x] = (new_mons[max(0, y - max_radius) : min(y + max_radius + 1, new_mons.shape[0]),
+                                  max(0, x - max_radius) : min(x + max_radius + 1, new_mons.shape[1])] != glyph).all()
+    return ret
+
+
 @nb.njit('optional(b1[:,:])(i2[:,:],i2[:,:],i2[:,:],i4)', cache=True)
 def figure_out_monster_movement(peaceful_mons, aggressive_mons, new_mons, max_radius):
     ret_peaceful_mons = np.zeros_like(peaceful_mons, dtype=nb.b1)

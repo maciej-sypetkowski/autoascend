@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import numpy as np
 
 import utils
@@ -23,7 +25,6 @@ class Level:
         self.seen = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
         self.objects = np.zeros((C.SIZE_Y, C.SIZE_X), np.int16)
         self.objects[:] = -1
-        self.corpse_age = np.zeros((C.SIZE_Y, C.SIZE_X), np.int32) - 10000
         self.was_on = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
 
         self.shop = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
@@ -40,6 +41,8 @@ class Level:
 
         self.stair_destination = {}  # {(y, x) -> ((dungeon, level), (y, x))}
         self.altars = {}  # {(y, x) -> alignment}
+
+        self.corpses_to_eat = defaultdict(lambda: defaultdict(lambda: -10000))  # {(y, x) -> {monster_id -> age_turn}}
 
     def key(self):
         return (self.dungeon_number, self.level_number)

@@ -404,14 +404,20 @@ class MON: # monsters, pets
     @staticmethod
     @functools.lru_cache(nh.NUMMONS)
     def from_name(name):
+        return nh.GLYPH_MON_OFF + MON.id_from_name(name)
+        assert 0, name
+
+    @staticmethod
+    @functools.lru_cache(nh.NUMMONS)
+    def id_from_name(name):
         for i in range(nh.NUMMONS):
             if nh.permonst(i).mname == name:
-                return nh.GLYPH_MON_OFF + i
+                return i
         assert 0, name
 
     @staticmethod
     def body_from_name(name):
-        return MON.from_name(name) - nh.GLYPH_MON_OFF + nh.GLYPH_BODY_OFF
+        return MON.id_from_name(name) + nh.GLYPH_BODY_OFF
 
     fn = from_name
 

@@ -578,7 +578,7 @@ class GlobalLogic:
             ])
             .preempt(self.agent, [
                 self.offer_corpses().preempt(self.agent, [
-                    self.agent.eat1().condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
+                    self.agent.eat_corpses_from_ground().condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 ]),
             ])
             .preempt(self.agent, [
@@ -588,7 +588,7 @@ class GlobalLogic:
                 self.agent.cure_disease().every(5),
             ])
             .preempt(self.agent, [
-                self.agent.eat1().every(5).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
+                self.agent.eat_corpses_from_ground().every(5).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 self.agent.eat_from_inventory().every(5),
             ])
             .preempt(self.agent, [

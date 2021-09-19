@@ -1676,6 +1676,21 @@ class Inventory:
 
     def eat(self, item, quaff=False, smart=True):
         if smart:
+            if not quaff and item in self.items_below_me:
+                with self.agent.atom_operation():
+                    self.agent.step(A.Command.EAT)
+                    while '; eat it? [ynq]' in self.agent.message or \
+                            '; eat one? [ynq]' in self.agent.message:
+                        if f'{item.text} here; eat it? [ynq]' in self.agent.message or \
+                                f'{item.text} here; eat one? [ynq]' in self.agent.message:
+                            self.agent.type_text('y')
+                            return True
+                        self.agent.type_text('n')
+                    # if "What do you want to eat?" in self.agent.message or \
+                    #         "You don't have anything to eat." in self.agent.message:
+                    raise AgentPanic('no such food is lying here')
+                    assert 0, self.agent.message
+
             # TODO: eat directly from ground if possible
             item = self.move_to_inventory(item)
 
@@ -1819,7 +1834,7 @@ class Inventory:
             .before(self.wear_best_stuff())
             .before(self.wand_engrave_identify())
             .before(self.go_to_unchecked_containers())
-            .before(self.go_to_item_to_pickup()
+            .before(self.check_items().before(self.go_to_item_to_pickup())
                     .before(self.check_items()).repeat().every(5)
                     .preempt(self.agent, [
                         self.pickup_and_drop_items(),
@@ -2290,14 +2305,14 @@ class Inventory:
             yield False
         yield True
 
-        for i, c in zip(items, counts):
+        for (i, _), c in sorted(zip(items.items(), counts), key=lambda x: dis[x[0][1]]):
             if c != 0:
                 target_y, target_x = items[i]
                 break
         else:
             assert 0
 
-        with self.agent.env.debug_tiles(mask, color=(255, 0, 0, 128)):
+        with self.agent.env.debug_tiles([(y, x) for _, (y, x) in items.items()], color=(255, 0, 0, 128)):
             self.agent.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 0, 255), is_path=True))
 
     @utils.debug_log('inventory.pickup_and_drop_items')

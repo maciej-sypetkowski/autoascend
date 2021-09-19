@@ -1,8 +1,8 @@
 import contextlib
 import re
-from stats_logger import StatsLogger
-from collections import namedtuple
+from collections import namedtuple, Counter
 from functools import partial
+from stats_logger import StatsLogger
 
 import nle.nethack as nh
 import numpy as np
@@ -17,7 +17,7 @@ from global_logic import GlobalLogic
 from glyph import MON, C, Hunger, G, SHOP, ALL
 from item import Inventory, Item, flatten_items
 from level import Level
-from monster_tracker import MonsterTracker
+from monster_tracker import MonsterTracker, disappearance_mask
 from strategy import Strategy
 
 BLStats = namedtuple('BLStats',
@@ -46,6 +46,7 @@ class Agent:
         self.popup = self.single_popup = []
         self._message_history = []
         self.cursor_pos = (0, 0)
+        self.last_observation = None
 
         self._last_pet_seen = 0
 
@@ -58,7 +59,7 @@ class Agent:
         self.last_bfs_dis = None
         self.last_bfs_step = None
         self.last_prayer_turn = None
-        # self._previous_glyphs = None
+        self._previous_glyphs = None
         self._last_turn = -1
         self._inactivity_counter = 0
         self._is_updating_state = False
@@ -424,7 +425,12 @@ class Agent:
         #     #     self.turns_in_atom_operation += 1
         #     # assert self.turns_in_atom_operation in [0, 1]
 
-        self.last_observation = observation
+        if self.last_observation is None:
+            self.last_observation = observation
+            self._previous_glyphs = self.last_observation['glyphs']
+        else:
+            self._previous_glyphs = self.last_observation['glyphs']
+            self.last_observation = observation
 
         self.blstats = BLStats(*self.last_observation['blstats'])
         self.glyphs = self.last_observation['glyphs']
@@ -520,6 +526,52 @@ class Agent:
                 level.shop_type[mask] = shop_type
             level.shop_interior[mask & ~utils.dilate(entry, radius=1, with_diagonal=False)] = True
 
+    def _update_level_corpses(self):
+        mnames = list(map(lambda x: x[-1],
+                          re.findall(r'((kills?)|(destroys?)) ((an?)|(the) )?([a-zA-Z ]+)\!', self.message)))
+        mnames += list(map(lambda x: x[-4],
+                           re.findall(r'((An? )|(The )( *))([a-zA-Z ]+) is ((killed)|(destroyed))\!', self.message)))
+        mnames = list(filter(lambda name: 'invisible' not in name and name != 'it' and not name.startswith('poor '),
+                             mnames))
+        mnames = list(map(lambda name: name[len('saddled '):] if name.startswith('saddled ') else name,
+                          mnames))
+        mnames = list(filter(lambda name: name[0].lower() == name[0],
+                             mnames))
+
+        level = self.current_level()
+
+        if not self.character.prop.hallu and mnames:
+            old_mons = self._previous_glyphs.copy()
+            old_mons[~utils.isin(self._previous_glyphs, G.MONS, G.INVISIBLE_MON)] = -1
+            new_mons = self.glyphs.copy()
+            new_mons[~utils.isin(self.glyphs, G.MONS, G.INVISIBLE_MON)] = -1
+            mask = disappearance_mask(old_mons, new_mons, 1)
+            mons = old_mons.copy()
+            mons[~mask] = -1
+
+            assert mons.any()
+
+            for mname in mnames:
+                glyph = MON.from_name(mname)
+                monster_id = glyph - nh.GLYPH_MON_OFF
+                corpse_glyph = MON.body_from_name(mname)
+                for y, x in zip(*utils.isin(mons, [glyph]).nonzero()):
+                    if self.glyphs[y, x] == corpse_glyph:
+                        # TODO: it works because level.items is updated in `inventory.check_items`
+                        if all(map(lambda item: item.is_corpse() and item.monster_id != monster_id, level.items[y, x])):
+                            level.corpses_to_eat[y, x][monster_id] = self.blstats.time
+
+        old_possible_corpses = level.corpses_to_eat[self.blstats.y, self.blstats.x].copy()
+        del level.corpses_to_eat[self.blstats.y, self.blstats.x]
+
+        corpses = Counter((item for item in self.inventory.items_below_me if item.is_corpse()))
+        for item, count in corpses.items():
+            if count != 1:
+                continue
+
+            level.corpses_to_eat[self.blstats.y, self.blstats.x][item.monster_id] = \
+                    old_possible_corpses[item.monster_id]
+
     def update_level(self):
         if utils.isin(self.glyphs, G.SWALLOW).any():
             return
@@ -528,9 +580,6 @@ class Agent:
             self._last_pet_seen = self.blstats.time
 
         level = self.current_level()
-
-        # if self._previous_glyphs is None or (self._previous_glyphs != self.last_observation['glyphs']).any():
-        #     self._previous_glyphs = self.last_observation['glyphs']
 
         mask = utils.isin(self.glyphs, G.FLOOR, G.STAIR_UP, G.STAIR_DOWN, G.DOOR_OPENED, G.TRAPS,
                           G.ALTAR, G.FOUNTAIN)
@@ -549,6 +598,7 @@ class Agent:
 
         self._update_level_items()
         self._update_level_shops()
+        self._update_level_corpses()
 
         for y, x in zip(*utils.isin(level.objects, G.ALTAR).nonzero()):
             if (y, x) not in level.altars:
@@ -611,18 +661,6 @@ class Agent:
         with self.atom_operation():
             for char in text:
                 self.step(char)
-
-    def eat(self):  # TODO: eat what
-        with self.atom_operation():
-            self.step(A.Command.EAT)
-            if ' eat it? [ynq]' in self.message or \
-                    ' eat one? [ynq]' in self.message:
-                self.type_text('y')
-                return True
-            if "What do you want to eat?" in self.message or \
-                    "You don't have anything to eat." in self.message:
-                raise AgentPanic('no food is lying here')
-            assert 0, self.message
 
     def untrap(self, trap_y, trap_x):
         with self.atom_operation():
@@ -1093,12 +1131,7 @@ class Agent:
             if self.monster_tracker.monster_mask[y, x]:
                 # TODO: copied from `flight1`
                 mon_glyph = self.glyphs[y, x]
-                try:
-                    self.fight(y, x)
-                finally:  # TODO: what if panic?
-                    if nh.glyph_is_body(self.glyphs[y, x]) \
-                            and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == nh.glyph_to_mon(mon_glyph):
-                        self.current_level().corpse_age[y, x] = self.blstats.time
+                self.fight(y, x)
             else:
                 self.move(y, x)
 
@@ -1203,10 +1236,7 @@ class Agent:
                     return wait_counter
                 with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
                                            [target_y, target_x]], color=(255, 0, 255), is_path=True):
-                    try:
-                        self.fight(target_y, target_x)
-                    finally:
-                        self._track_hunted_corpse(monster, target_x, target_y)
+                    self.fight(target_y, target_x)
                     wait_counter = 0
                     return wait_counter
             elif best_action[1] == 'ranged':
@@ -1219,10 +1249,7 @@ class Agent:
                 with self.env.debug_tiles([[target_y, target_x]], (0, 0, 255, 255), mode='frame'):
                     dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
                                               allow_nonunit_distance=True)
-                    try:
-                        assert self.fire(ammo, dir)
-                    finally:
-                        self._track_hunted_corpse(monster, target_x, target_y)
+                    assert self.fire(ammo, dir)
                     return wait_counter
             elif best_action[1] == 'elbereth':
                 assert self.inventory.engraving_below_me.lower() != 'elbereth'
@@ -1240,8 +1267,6 @@ class Agent:
                 with self.env.debug_tiles([[my, mx] for my, mx, _ in targeted_monsters],
                                           (255, 0, 255, 255), mode='frame'):
                     self.zap(wand, dir)
-                    for my, mx, monster in targeted_monsters:
-                        self._track_hunted_corpse(monster, mx, my)
 
             elif best_action[1] == 'pickup':
                 _, _, items_to_pickup = best_action
@@ -1249,12 +1274,6 @@ class Agent:
             else:
                 raise NotImplementedError()
         return wait_counter
-
-    def _track_hunted_corpse(self, monster, target_x, target_y):
-        _, _, _, _, mon_glyph = monster
-        if nh.glyph_is_body(self.glyphs[target_y, target_x]) \
-                and self.glyphs[target_y, target_x] - nh.GLYPH_BODY_OFF == nh.glyph_to_mon(mon_glyph):
-            self.current_level().corpse_age[target_y, target_x] = self.blstats.time
 
     @utils.debug_log('engulfed_fight')
     @Strategy.wrap
@@ -1334,50 +1353,110 @@ class Agent:
 
             if self.wield_best_melee_weapon():
                 continue
-            try:
-                self.fight(y, x)
-            finally:  # TODO: what if panic?
-                if nh.glyph_is_body(self.glyphs[y, x]) \
-                        and self.glyphs[y, x] - nh.GLYPH_BODY_OFF == nh.glyph_to_mon(mon_glyph):
-                    self.current_level().corpse_age[y, x] = self.blstats.time
+            self.fight(y, x)
 
-    @utils.debug_log('eat1')
+    def _is_corpse_editable(self, monster_id, age_turn):
+        permonst = MON.permonst(monster_id)
+
+        # TODO: read intrinsics
+        if self.character.race != Character.ORC and permonst.mflags1 & MON.M1_POIS != 0:
+            return False
+
+        # TODO: read intrinsics
+        if permonst.mflags1 & MON.M1_ACID != 0:
+            return False
+
+        if permonst.mflags2 & MON.M2_WERE != 0:
+            return False
+
+        # polymorph
+        if monster_id in [MON.id_from_name(name) for name in ['chameleon', 'doppelganger', 'sandestin']]:
+            return False
+
+        # remove random intrinsic
+        if monster_id in [MON.id_from_name(name) for name in ['disenchanter']]:
+            return False
+
+        # hallucination
+        if monster_id in [MON.id_from_name(name) for name in ['abbot', 'violet fungus', 'yellow mold']]:
+            return False
+
+        # stun
+        if monster_id in [MON.id_from_name(name) for name in ['bat', 'giant bat']]:
+            return False
+
+        # aggravate monster
+        if monster_id in [MON.id_from_name(name) for name in ['dog', 'little dog', 'large dog',
+                                                              'kitten', 'housecat', 'large cat']]:
+            return False
+
+        # teleportitis
+        # if ord(permonst.mlet) in [MON.S_LEPRECHAUN, MON.S_NYMPH]:
+        #     return False
+
+        # petrification
+        if ord(permonst.mlet) == MON.S_COCKATRICE or monster_id == MON.id_from_name('Medusa'):
+            return False
+
+        # temporary prevents movement
+        if ord(permonst.mlet) == MON.S_MIMIC:
+            return False
+
+        # cannibalism
+        race_flag = {
+            Character.HUMAN: MON.M2_HUMAN,
+            Character.DWARF: MON.M2_DWARF,
+            Character.ELF: MON.M2_ELF,
+            Character.GNOME: MON.M2_GNOME,
+            Character.ORC: 0,
+        }[self.character.race]
+        if self.character.role == Character.CAVEMAN:
+            race_flag = 0
+        if permonst.mflags2 & race_flag:
+            return False
+
+        # corpse aging
+        if self.blstats.time - age_turn >= 50 and \
+                monster_id not in [MON.id_from_name('lizard'), MON.id_from_name('lichen')]:
+            return False
+
+        return True
+
+    @utils.debug_log('eat_corpses_from_ground')
     @Strategy.wrap
-    def eat1(self):
+    def eat_corpses_from_ground(self):
         level = self.current_level()
+        to_eat = []  # (y, x, monster_id)
 
-        if self.character.race == Character.ORC:
-            flags1 = MON.M1_ACID
-        else:
-            flags1 = MON.M1_ACID | MON.M1_POIS
-        flags2 = MON.M2_WERE
+        for (y, x), corpse_mapping in level.corpses_to_eat.items():
+            for monster_id, corpse_age in corpse_mapping.items():
+                if level.shop[y, x]:
+                    continue
+                if self._is_corpse_editable(monster_id, corpse_age):
+                    to_eat.append((y, x, monster_id))
 
-        editable_bodies = [b for b in G.BODIES if MON.permonst(b).mflags1 & flags1 == 0 and \
-                                                  MON.permonst(b).mflags2 & flags2 == 0 and \
-                                                  ord(MON.permonst(b).mlet) != MON.S_COCKATRICE]
-        mask = utils.isin(self.glyphs, editable_bodies) & \
-               ((self.blstats.time - level.corpse_age <= 50) |
-                utils.isin(self.glyphs, [MON.body_from_name('lizard'), MON.body_from_name('lichen')]))
-        mask |= utils.isin(self.glyphs, G.FOOD_OBJECTS)
-        mask &= ~level.shop
-        if not mask.any():
+        if not to_eat:
             yield False
 
-        mask &= (self.bfs() != -1)
-        if not mask.any():
+        dis = self.bfs()
+        to_eat = sorted(filter(lambda e: dis[e[0], e[1]] != -1, to_eat), key=lambda e: dis[e[0], e[1]])
+        if not to_eat:
             yield False
 
         yield True
 
-        dis = self.bfs()
-        mask &= dis == dis[mask].min()
-
-        closests_y, closests_x = mask.nonzero()
-        target_y, target_x = closests_y[0], closests_x[0]
+        target_y, target_x, monster_id = to_eat[0]
 
         self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 255, 0), is_path=True))
-        if not self.current_level().shop[self.blstats.y, self.blstats.x]:
-            self.eat()  # TODO: what
+        # TODO: checking level.corpses_to_eat again (moving to non-existing corpses often)
+        if (target_y, target_x) in level.corpses_to_eat and monster_id in level.corpses_to_eat[target_y, target_x]:
+            corpse_age = level.corpses_to_eat[target_y, target_x][monster_id]
+            for item in self.inventory.items_below_me:
+                if item.is_corpse() and item.monster_id == monster_id:
+                    if level.shop[target_y, target_x]:
+                        continue
+                    if self._is_corpse_editable(item.monster_id, corpse_age):
+                        self.inventory.eat(item)
 
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
