@@ -1851,8 +1851,8 @@ class Inventory:
             .before(self.wear_best_stuff())
             .before(self.wand_engrave_identify())
             .before(self.go_to_unchecked_containers())
-            .before(self.check_items().before(self.go_to_item_to_pickup())
-                    .before(self.check_items()).repeat().every(5)
+            .before(self.check_items()
+                    .before(self.go_to_item_to_pickup()).repeat().every(5)
                     .preempt(self.agent, [
                         self.pickup_and_drop_items(),
                         self.check_containers(),

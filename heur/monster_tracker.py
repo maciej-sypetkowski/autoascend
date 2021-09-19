@@ -57,13 +57,12 @@ def figure_out_monster_movement(peaceful_mons, aggressive_mons, new_mons, max_ra
 class MonsterTracker:
     def __init__(self, agent):
         self.agent = agent
-        self.peaceful_monster_mask = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
-        self.monster_mask = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
-
-        self._last_glyphs = None
+        self.on_panic()
 
     def on_panic(self):
         self._last_glyphs = None
+        self.peaceful_monster_mask = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
+        self.monster_mask = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
 
     def take_all_monsters(self):
         with self.agent.atom_operation():
@@ -87,9 +86,15 @@ class MonsterTracker:
                 monsters[y, x] = name
         return monsters
 
-    def update(self):
+    def _get_current_masks(self):
         new_monster_mask = utils.isin(self.agent.glyphs, G.MONS, G.INVISIBLE_MON)
         new_monster_mask[self.agent.blstats.y, self.agent.blstats.x] = 0
+        pet_mask = utils.isin(self.agent.glyphs, G.PETS)
+
+        return new_monster_mask, pet_mask
+
+    def update(self):
+        new_monster_mask, _ = self._get_current_masks()
 
         if self._last_glyphs is None:
             new_peaceful_mons = None
@@ -98,7 +103,7 @@ class MonsterTracker:
             pea_mon[~self.peaceful_monster_mask] = -1
             agr_mon = self._last_glyphs.copy()
             agr_mon[~self.monster_mask | self.peaceful_monster_mask] = -1
-            new_mon = self._last_glyphs.copy()
+            new_mon = self.agent.glyphs.copy()
             new_mon[~new_monster_mask] = -1
             new_peaceful_mons = figure_out_monster_movement(pea_mon, agr_mon, new_mon, max_radius=2)
 
@@ -106,9 +111,12 @@ class MonsterTracker:
         self.peaceful_monster_mask.fill(0)
         if not self.agent.character.prop.hallu:
             if new_peaceful_mons is None:
-                self.peaceful_monster_mask.fill(0)
-                for (y, x), name in self.take_all_monsters().items():
-                    if 'peaceful' in name:
+                all_monsters = self.take_all_monsters()
+                self.monster_mask, pet_mask = self._get_current_masks()  # glyphs can change sometimes after calling `take_all_monsters`
+                for (y, x), name in all_monsters.items():
+                    assert self.monster_mask[y, x] or pet_mask[y, x] or (y, x) == (self.agent.blstats.y, self.agent.blstats.x), \
+                           (name, (y, x), list(zip(*self.monster_mask.nonzero())))
+                    if 'peaceful' in name and not pet_mask[y, x]:
                         self.peaceful_monster_mask[y, x] = 1
             else:
                 self.peaceful_monster_mask = new_peaceful_mons
