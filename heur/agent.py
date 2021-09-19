@@ -665,7 +665,7 @@ class Agent:
     def untrap(self, trap_y, trap_x):
         with self.atom_operation():
             self.type_text('#u')
-            self.step(A.MiscAction.MORE) # , iter('b'))
+            self.step(A.MiscAction.MORE)
             assert self.single_message == "In what direction?", self.single_message
             self.direction(trap_y, trap_x)
             if self.single_message == 'You know of no traps there.':
@@ -675,6 +675,27 @@ class Agent:
                 self.stats_logger.log_event('untrap_success')
                 return True
             return False
+
+    def untrap_container_below_me(self):
+        """ Return None if succesfull else fail message """
+        with self.atom_operation():
+            self.type_text('#u')
+            self.step(A.MiscAction.MORE)
+            assert self.single_message == "In what direction?", self.single_message
+            self.type_text('.')
+            if 'There is a container and a ' in self.message:
+                self.type_text('n')
+            assert 'Check it for traps?' in self.single_message, self.single_message
+            self.type_text('y')
+            if self.message.startswith('You find no traps on the'):
+                return
+            assert 'Disarm it?' in self.message, self.message
+            self.type_text('y')
+            if 'You disarm it!' in self.message:
+                self.stats_logger.log_event('container_untrap_success')
+                return
+            self.stats_logger.log_event('container_untrap_fail')
+            return self.message
 
     def is_safe_to_pray(self):
         return (
@@ -1543,6 +1564,7 @@ class Agent:
         if isinstance(exc, BaseException):
             if not isinstance(exc, AgentPanic) and not self.panic_on_errors:
                 raise exc
+            self.stats_logger.log_event('agent_panic')
             self.all_panics.append(exc)
             if self.verbose:
                 print(f'PANIC!!!! : {exc}')

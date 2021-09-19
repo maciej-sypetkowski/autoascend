@@ -34,6 +34,14 @@ def find_equivalent_item(item, iterable):
     assert 0, (item, iterable)
 
 
+def check_if_triggered_container_trap(message):
+    return ('A cloud of ' in message and ' gas billows from ' in message) or \
+            'Suddenly you are frozen in place!' in message or \
+            'A tower of flame bursts from ' in message or \
+            'You are jolted by a surge of electricity!' in message or \
+            'But luckily ' in message
+
+
 class Item:
     # beatitude
     UNKNOWN = 0
@@ -282,6 +290,13 @@ class Item:
         return False
 
     ######## CONTAINER
+
+    def is_chest(self):
+        if self.is_unambiguous() and self.object.name == 'bag of tricks':
+            return False
+        assert self.is_possible_container() or self.is_container(), self.objs
+        assert isinstance(self.objs[0], O.Container), self.objs
+        return self.objs[0].desc != 'bag'
 
     def is_container(self):
         # bag of tricks is not considered to be a container.
@@ -1332,11 +1347,8 @@ class Inventory:
                 yield A.Command.ESC
                 return
 
-            if ('A cloud of ' in self.agent.single_message and ' gas billows from ' in self.agent.single_message) or \
-                    'Suddenly you are frozen in place!' in self.agent.single_message or \
-                    'A tower of flame bursts from ' in self.agent.single_message or \
-                    'You are jolted by a surge of electricity!' in self.agent.single_message or \
-                    'But luckily ' in self.agent.single_message:
+            if check_if_triggered_container_trap(self.agent.single_message):
+                self.agent.stats_logger.log_event('triggered_undetected_trap')
                 raise AgentPanic('triggered trap while looting')
 
             if 'You have no hands!' in self.agent.single_message:
@@ -1746,7 +1758,7 @@ class Inventory:
             return best_item, best_dps
         return best_item
 
-    def get_ranged_combinations(self, items=None, throwing=True, allow_best_melee=False,
+    def get_ranged_combinations(self, items=None, throwing=True, allow_best_melee=False, allow_wielded_melee=False,
                                 allow_unknown_status=False, additional_ammo=[]):
         if items is None:
             items = self.items
@@ -1770,12 +1782,17 @@ class Inventory:
             best_melee_weapon = None
             if not allow_best_melee:
                 best_melee_weapon = self.get_best_melee_weapon()
+            wielded_melee_weapon = None
+            if not allow_wielded_melee:
+                wielded_melee_weapon = self.items.main_hand
             valid_combinations.extend([(None, i) for i in items
-                                       if i.is_thrown_projectile() and i != best_melee_weapon])
+                                       if i.is_thrown_projectile()
+                                       and i != best_melee_weapon and i != wielded_melee_weapon])
 
         return valid_combinations
 
     def get_best_ranged_set(self, items=None, *, throwing=True, allow_best_melee=False,
+                            allow_wielded_melee=False,
                             return_dps=False, allow_unknown_status=False, additional_ammo=[]):
         if items is None:
             items = self.items
@@ -1783,7 +1800,7 @@ class Inventory:
 
         best_launcher, best_ammo = None, None
         best_dps = -float('inf')
-        for launcher, ammo in self.get_ranged_combinations(items, throwing, allow_best_melee,
+        for launcher, ammo in self.get_ranged_combinations(items, throwing, allow_best_melee, allow_wielded_melee,
                                                            allow_unknown_status, additional_ammo):
             to_hit, dmg = self.agent.character.get_ranged_bonus(launcher, ammo)
             dps = utils.calc_dps(to_hit, dmg)
@@ -2071,8 +2088,10 @@ class Inventory:
             return self.agent.single_message
 
         self.agent.step(A.Command.LOOK)
-        if 'written' in msg() or 'engraved' in msg() or 'see' not in msg() or 'read' in msg():
+        if msg() != 'You see no objects here.':
             return None
+        # if 'written' in msg() or 'engraved' in msg() or 'see' not in msg() or 'read' in msg():
+        #     return None
 
         skip_engraving = [False]
 
@@ -2263,8 +2282,11 @@ class Inventory:
                 if not yielded:
                     yielded = True
                     yield True
+                if item.is_chest() and not (item.is_unambiguous() and item.object.name == 'ice box'):
+                    fail_msg = self.agent.untrap_container_below_me()
+                    if fail_msg is not None and check_if_triggered_container_trap(fail_msg):
+                        raise AgentPanic('triggered trap while looting')
                 self.check_container_content(item)
-
         if not yielded:
             yield False
 

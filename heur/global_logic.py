@@ -104,7 +104,7 @@ class ItemPriority(ItemPriorityBase):
         for item in sorted(items, key=lambda i: i.unit_weight(with_content=False)):
             if item.category in [nh.POTION_CLASS, nh.RING_CLASS, nh.AMULET_CLASS, nh.WAND_CLASS, nh.SCROLL_CLASS,
                                  nh.TOOL_CLASS]:
-                if (not isinstance(item.objs[0], O.Container) or item.objs[0].desc == 'bag') and \
+                if (not isinstance(item.objs[0], O.Container) or not item.is_chest()) and \
                         not item.is_possible_container():
                     to_bag = O.from_name('cancellation', nh.WAND_CLASS) not in item.objs and \
                              not item.is_offensive_usable_wand()
