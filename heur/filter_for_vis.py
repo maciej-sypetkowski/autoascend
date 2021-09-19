@@ -8,7 +8,8 @@ def interesting_reason(txt):
     # return 'Error' not in txt
     # return 'starved' in txt.lower()
     # return ('food' in txt or 'fainted' in txt or 'starved' in txt)
-    return 'captain' in txt or 'shop' in txt
+    # return 'captain' in txt or 'shop' in txt
+    return 'rotten' in txt
     return ('food' not in txt
             and 'shop' not in txt
             and 'falling rock' not in txt

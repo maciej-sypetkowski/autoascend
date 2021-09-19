@@ -638,6 +638,27 @@ class Agent:
                 return True
             return False
 
+    def untrap_container_below_me(self):
+        """ Return None if succesfull else fail message """
+        with self.atom_operation():
+            self.type_text('#u')
+            self.step(A.MiscAction.MORE) # , iter('b'))
+            assert self.single_message == "In what direction?", self.single_message
+            self.type_text('.')
+            if 'There is a container and a ' in self.message:
+                self.type_text('n')
+            assert self.single_message.endswith('Check it for traps?'), self.single_message
+            self.type_text('y')
+            if self.message.startswith('You find no traps on the'):
+                return
+            assert 'Disarm it?' in self.message, self.message
+            self.type_text('y')
+            if 'You disarm it!' in self.message:
+                self.stats_logger.log_event('container_untrap_success')
+                return
+            self.stats_logger.log_event('container_untrap_fail')
+            return self.message
+
     def is_safe_to_pray(self):
         return (
                 (self.last_prayer_turn is None and self.blstats.time > 300) or
