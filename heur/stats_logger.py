@@ -1,6 +1,7 @@
 class StatsLogger:
     def __init__(self):
         self._values = {
+            "agent_panic": 0,
             "elbereth_write": 0,
             "container_untrap_success": 0,
             "container_untrap_fail": 0,

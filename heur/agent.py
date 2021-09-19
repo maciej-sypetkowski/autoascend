@@ -627,7 +627,7 @@ class Agent:
     def untrap(self, trap_y, trap_x):
         with self.atom_operation():
             self.type_text('#u')
-            self.step(A.MiscAction.MORE) # , iter('b'))
+            self.step(A.MiscAction.MORE)
             assert self.single_message == "In what direction?", self.single_message
             self.direction(trap_y, trap_x)
             if self.single_message == 'You know of no traps there.':
@@ -642,12 +642,12 @@ class Agent:
         """ Return None if succesfull else fail message """
         with self.atom_operation():
             self.type_text('#u')
-            self.step(A.MiscAction.MORE) # , iter('b'))
+            self.step(A.MiscAction.MORE)
             assert self.single_message == "In what direction?", self.single_message
             self.type_text('.')
             if 'There is a container and a ' in self.message:
                 self.type_text('n')
-            assert self.single_message.endswith('Check it for traps?'), self.single_message
+            assert 'Check it for traps?' in self.single_message, self.single_message
             self.type_text('y')
             if self.message.startswith('You find no traps on the'):
                 return
@@ -1485,6 +1485,7 @@ class Agent:
         if isinstance(exc, BaseException):
             if not isinstance(exc, AgentPanic) and not self.panic_on_errors:
                 raise exc
+            self.stats_logger.log_event('agent_panic')
             self.all_panics.append(exc)
             if self.verbose:
                 print(f'PANIC!!!! : {exc}')

@@ -291,6 +291,13 @@ class Item:
 
     ######## CONTAINER
 
+    def is_chest(self):
+        if self.is_unambiguous() and self.object.name == 'bag of tricks':
+            return False
+        assert self.is_possible_container() or self.is_container(), self.objs
+        assert isinstance(self.objs[0], O.Container), self.objs
+        return self.objs[0].desc != 'bag'
+
     def is_container(self):
         # bag of tricks is not considered to be a container.
         # If the identifier doesn't exist yet, it's not consider a container
@@ -2260,14 +2267,11 @@ class Inventory:
                 if not yielded:
                     yielded = True
                     yield True
+                if item.is_chest() and not (item.is_unambiguous() and item.object.name == 'ice box'):
+                    fail_msg = self.agent.untrap_container_below_me()
+                    if fail_msg is not None and check_if_triggered_container_trap(fail_msg):
+                        raise AgentPanic('triggered trap while looting')
                 self.check_container_content(item)
-            if item.is_container() and item.content.locked:
-                if not yielded:
-                    yielded = True
-                    yield True
-                fail_msg = self.agent.untrap_container_below_me()
-                if fail_msg is not None and check_if_triggered_container_trap(fail_msg):
-                    raise AgentPanic('triggered trap while looting')
         if not yielded:
             yield False
 
