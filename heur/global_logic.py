@@ -295,7 +295,9 @@ class GlobalLogic:
                     push_bolder(ty, tx, dy, dx)
                     continue
 
-            assert 0, 'sakomap unsolvable'
+            self.agent.stats_logger.log_event('sokoban_dropped')
+            self.milestone = Milestone(int(self.milestone) + 1)
+            raise AgentPanic('sokomap unsolvable')
 
     @Strategy.wrap
     def wait_out_unexpected_state_strategy(self):
@@ -588,6 +590,7 @@ class GlobalLogic:
                 self.agent.cure_disease().every(5),
             ])
             .preempt(self.agent, [
+                self.agent.eat_corpses_from_ground(only_below_me=True).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 self.agent.eat_corpses_from_ground().every(5).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
                 self.agent.eat_from_inventory().every(5),
             ])

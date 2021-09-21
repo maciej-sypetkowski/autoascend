@@ -1388,7 +1388,9 @@ Misc("iron chain", None, wt=120),
 #       BITS(0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, P_NONE, LIQUID), 0,
 #       VENOM_CLASS, 500, 0, 1, 0, 6, 6, 0, 0, 0, HI_ORGANIC),
 #        /* +d6 small or large */
-None, None,
+
+None,
+None,
 
 #/* fencepost, the deadly Array Terminator -- name [1st arg] *must* be NULL */
 #OBJECT(OBJ(None, None),
@@ -1502,6 +1504,10 @@ for i in range(nh.NUM_OBJECTS):
         assert d.oc_descr == objects[i].desc
 assert len(objects) == nh.NUM_OBJECTS, (len(objects), nh.NUM_OBJECTS)
 
+# TODO: this is really 'acid venom' but because it is not used, let's treat that field as a generic unknown object
+assert objects[-1] is None
+objects[-1] = Misc('unknown', None, wt=10000000)
+
 
 @utils.copy_result
 @functools.lru_cache(len(objects))
@@ -1599,6 +1605,9 @@ def possibilities_from_glyph(i):
 
     if cat in [nh.ROCK_CLASS, nh.BALL_CLASS, 16]:
         return [o for o in objects if o is not None and (o.desc or o.name) == desc]
+
+    if objects[obj_id] == objects[-1]:
+        return [objects[-1]]
 
     assert 0, (obj_id, objects[obj_id], cat)
 

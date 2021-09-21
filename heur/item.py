@@ -452,14 +452,22 @@ class ItemManager:
 
     def get_item_from_text(self, text, category=None, glyph=None, *, position):
         # position acts as a container identifier if the container is not called. If the item is in inventory set it to None
-        # TODO: when blind, it may not work as expected, e.g. "a shield", "a gem", "a potion", etc
 
         if self.agent.character.prop.hallu:
             glyph = None
 
-        objs, glyphs, count, status, modifier, *args = \
-            self.parse_text(text, category, glyph)
-        category = O.get_category(objs[0])
+        try:
+            objs, glyphs, count, status, modifier, *args = \
+                self.parse_text(text, category, glyph)
+            category = O.get_category(objs[0])
+        except:
+            # TODO: when blind, it may not work as expected, e.g. "a shield", "a gem", "a potion", etc
+            if self.agent.character.prop.blind:
+                obj = O.from_name('unknown')
+                glyphs = O.possible_glyphs_from_object(obj)
+                return Item([obj], glyphs, text=text)
+            raise
+
 
         possibilities_from_glyphs = set.union(*(set(self.possible_objects_from_glyph(glyph)) for glyph in glyphs))
         objs = [o for o in objs if o in possibilities_from_glyphs]
@@ -1222,7 +1230,8 @@ class Inventory:
             assert 'What do you want to wear?' in self.agent.message, self.agent.message
             self.agent.type_text(letter)
             assert 'You finish your dressing maneuver.' in self.agent.message or \
-                   'You are now wearing ' in self.agent.message, self.agent.message
+                   'You are now wearing ' in self.agent.message or \
+                   'Your foot is trapped!' in self.agent.message, self.agent.message
 
         return True
 
@@ -1304,6 +1313,8 @@ class Inventory:
                 while True:
                     assert 'Loot which containers?' not in self.agent.popup, self.agent.popup
                     assert 'Loot in what direction?' not in self.agent.message
+                    if "You don't find anything here to loot." in self.agent.message:
+                        raise AgentPanic('no container to loot')
                     r = re.findall(r'There is ([a-zA-z0-9# ]+) here\, loot it\? \[ynq\] \(q\)', self.agent.message)
                     assert len(r) == 1, self.agent.message
                     text = r[0]
@@ -1351,7 +1362,8 @@ class Inventory:
                 self.agent.stats_logger.log_event('triggered_undetected_trap')
                 raise AgentPanic('triggered trap while looting')
 
-            if 'You have no hands!' in self.agent.single_message:
+            if 'You have no hands!' in self.agent.single_message or \
+                    'You have no free hand.' in self.agent.single_message:
                 return
 
             assert self.agent.single_popup, (self.agent.single_message)
@@ -1404,6 +1416,8 @@ class Inventory:
             else:
                 self.agent.step(A.Command.LOOT)
                 while True:
+                    if "You don't find anything here to loot." in self.agent.message:
+                        raise AgentPanic('no container below me')
                     assert 'Loot which containers?' not in self.agent.popup, self.agent.popup
                     assert 'There is ' in self.agent.message and ', loot it?' in self.agent.message, self.agent.message
                     r = re.findall(r'There is ([a-zA-z0-9# ]+) here\, loot it\? \[ynq\] \(q\)', self.agent.message)

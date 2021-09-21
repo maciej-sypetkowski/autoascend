@@ -7,6 +7,7 @@ class StatsLogger:
             "container_untrap_fail": 0,
             "untrap_success": 0,
             "triggered_undetected_trap": 0,
+            "sokoban_dropped": 0,
         }
 
     def log_event(self, name):

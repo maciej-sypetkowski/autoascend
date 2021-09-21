@@ -556,10 +556,9 @@ class Agent:
                 monster_id = glyph - nh.GLYPH_MON_OFF
                 corpse_glyph = MON.body_from_name(mname)
                 for y, x in zip(*utils.isin(mons, [glyph]).nonzero()):
-                    if self.glyphs[y, x] == corpse_glyph:
-                        # TODO: it works because level.items is updated in `inventory.check_items`
-                        if all(map(lambda item: item.is_corpse() and item.monster_id != monster_id, level.items[y, x])):
-                            level.corpses_to_eat[y, x][monster_id] = self.blstats.time
+                    # TODO: it works because level.items is updated in `inventory.check_items`
+                    if all(map(lambda item: item.is_corpse() and item.monster_id != monster_id, level.items[y, x])):
+                        level.corpses_to_eat[y, x][monster_id] = self.blstats.time
 
         old_possible_corpses = level.corpses_to_eat[self.blstats.y, self.blstats.x].copy()
         del level.corpses_to_eat[self.blstats.y, self.blstats.x]
@@ -1445,16 +1444,29 @@ class Agent:
 
     @utils.debug_log('eat_corpses_from_ground')
     @Strategy.wrap
-    def eat_corpses_from_ground(self):
+    def eat_corpses_from_ground(self, only_below_me=True):
+        yielded = False
         level = self.current_level()
         to_eat = []  # (y, x, monster_id)
 
-        for (y, x), corpse_mapping in level.corpses_to_eat.items():
+        if only_below_me:
+            y, x = self.blstats.y, self.blstats.x
+            if (y, x) not in level.corpses_to_eat:
+                yield False
+            corpse_mapping = level.corpses_to_eat[y, x]
             for monster_id, corpse_age in corpse_mapping.items():
                 if level.shop[y, x]:
                     continue
                 if self._is_corpse_editable(monster_id, corpse_age):
                     to_eat.append((y, x, monster_id))
+
+        else:
+            for (y, x), corpse_mapping in level.corpses_to_eat.items():
+                for monster_id, corpse_age in corpse_mapping.items():
+                    if level.shop[y, x]:
+                        continue
+                    if self._is_corpse_editable(monster_id, corpse_age):
+                        to_eat.append((y, x, monster_id))
 
         if not to_eat:
             yield False
@@ -1464,11 +1476,14 @@ class Agent:
         if not to_eat:
             yield False
 
-        yield True
-
         target_y, target_x, monster_id = to_eat[0]
 
-        self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 255, 0), is_path=True))
+        if (target_y, target_x) != (self.blstats.y, self.blstats.x):
+            if not yielded:
+                yielded = True
+                yield True
+            self.go_to(target_y, target_x, debug_tiles_args=dict(color=(255, 255, 0), is_path=True))
+
         # TODO: checking level.corpses_to_eat again (moving to non-existing corpses often)
         if (target_y, target_x) in level.corpses_to_eat and monster_id in level.corpses_to_eat[target_y, target_x]:
             corpse_age = level.corpses_to_eat[target_y, target_x][monster_id]
@@ -1477,7 +1492,13 @@ class Agent:
                     if level.shop[target_y, target_x]:
                         continue
                     if self._is_corpse_editable(item.monster_id, corpse_age):
+                        if not yielded:
+                            yielded = True
+                            yield True
                         self.inventory.eat(item)
+
+        if not yielded:
+            yield False
 
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
