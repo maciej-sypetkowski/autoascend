@@ -477,7 +477,7 @@ class ItemManager:
         if status == Item.UNKNOWN and (
                 self.agent.character.role == Character.PRIEST or
                 (modifier is not None and category not in [nh.ARMOR_CLASS, nh.RING_CLASS])):
-            # TODO; oc_charged, amulets of yendor
+            # TODO: amulets of yendor
             status = Item.UNCURSED
 
         old_objs = None
@@ -514,6 +514,11 @@ class ItemManager:
                 if len(item.glyphs) == 1 and item.glyphs[0] not in self._is_not_bag_of_tricks:
                     self._is_not_bag_of_tricks.add(item.glyphs[0])
                     self.update_possible_objects(item)
+
+
+        # FIXME: it gives a better score. Implement it in item equipping
+        if item.status == Item.UNKNOWN:
+            item.status = Item.UNCURSED
 
         return item
 
@@ -568,7 +573,7 @@ class ItemManager:
             r'( ([+-]\d+))? '
             r"([a-zA-z0-9-!'# ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
-            r'( \(([a-zA-Z0-9; ]+(, flickering|, glimmering)?[a-zA-Z0-9; ]*)\))?'
+            r'( \(([a-zA-Z0-9; ]+(, flickering|, gleaming)?[a-zA-Z0-9; ]*)\))?'
             r'( \((for sale|unpaid), (\d+ aum, )?((\d+)[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
@@ -609,7 +614,7 @@ class ItemManager:
         count = int({'a': 1, 'an': 1, 'the': 1}.get(count, count))
         status = {'': Item.UNKNOWN, 'cursed': Item.CURSED, 'uncursed': Item.UNCURSED, 'blessed': Item.BLESSED}[status]
         # TODO: should be uses -- but the score is better this way
-        if uses is not None and status == Item.UNKNOWN:
+        if uses and status == Item.UNKNOWN:
             status = Item.UNCURSED
         modifier = None if not modifier else {'+': 1, '-': -1}[modifier[0]] * int(modifier[1:])
         monster_id = None
@@ -1000,10 +1005,13 @@ class InventoryItems:
         if force:
             self._recheck_containers = True
 
-        if force or self._previous_inv_strs is None or (self.agent.last_observation['inv_strs'] != self._previous_inv_strs).any():
+        if force or self._previous_inv_strs is None or \
+                (self.agent.last_observation['inv_strs'] != self._previous_inv_strs).any():
             self._clear()
             self._previous_inv_strs = self.agent.last_observation['inv_strs']
 
+            # For some reasons sometime the inventory entries in last_observation may be duplicated
+            iterable = set()
             for item_name, category, glyph, letter in zip(
                     self.agent.last_observation['inv_strs'],
                     self.agent.last_observation['inv_oclasses'],
@@ -1013,6 +1021,13 @@ class InventoryItems:
                 letter = chr(letter)
                 if not item_name:
                     continue
+                iterable.add((item_name, category, glyph, letter))
+            iterable = sorted(iterable, key=lambda x: x[-1])
+
+            assert len(iterable) == len(set(map(lambda x: x[-1], iterable))), \
+                   'letters in inventory are not unique'
+
+            for item_name, category, glyph, letter in iterable:
                 item = self.agent.inventory.item_manager.get_item_from_text(item_name, category=category,
                         glyph=glyph if not nh.glyph_is_body(glyph) and not nh.glyph_is_statue(glyph) else None,
                         position=None)
@@ -1032,7 +1047,7 @@ class InventoryItems:
                         (O.Armor,               O.ARM_SHIRT,  'shirt'),
                     ]:
                         if isinstance(item.objs[0], types) and (sub is None or sub == item.objs[0].sub):
-                            assert getattr(self, name) is None
+                            assert getattr(self, name) is None, ((name, getattr(self, name), item), str(self), iterable)
                             setattr(self, name, item)
                             break
 
@@ -1278,6 +1293,7 @@ class Inventory:
                 raise AgentPanic('some items from the container vanished')
             if 'You carefully open ' in self.agent.single_message or 'You open ' in self.agent.single_message:
                 yield ' '
+            assert 'You have no free hand.' not in self.agent.single_message, 'TODO: handle it'
             assert 'Do what with ' in self.agent.single_popup[0]
             if items_to_put and items_to_take:
                 yield 'r'
@@ -1301,6 +1317,10 @@ class Inventory:
                     yield from 'a\r'
                 assert 'Take out what?' in self.agent.single_popup[0]
                 yield from self._select_items_in_popup(items_to_take, items_to_take_counts)
+
+                if 'You have ' in self.agent.single_message and ' removing ' in self.agent.single_message and \
+                        'Continue? [ynq] (q)' in self.agent.single_message:
+                    yield 'y'
 
         with self.agent.atom_operation():
             # TODO: refactor: the same fragment is in check_container_content
@@ -1365,6 +1385,12 @@ class Inventory:
             if 'You have no hands!' in self.agent.single_message or \
                     'You have no free hand.' in self.agent.single_message:
                 return
+
+            if ' vanished!' in self.agent.message:
+                raise AgentPanic('some items from the container vanished')
+
+            if 'cat' in self.agent.message and ' inside the box is ' in self.agent.message:
+                raise AgentPanic('encountered a cat in a box')
 
             assert self.agent.single_popup, (self.agent.single_message)
             if '\no - ' not in '\n'.join(self.agent.single_popup):
@@ -1478,6 +1504,7 @@ class Inventory:
                     break
 
                 if not items:
+                    yield '\r'
                     return
 
             yield ' '
@@ -2046,6 +2073,9 @@ class Inventory:
     @utils.debug_log('inventory.wand_engrave_identify')
     @Strategy.wrap
     def wand_engrave_identify(self):
+        if self.agent.character.prop.polymorph:
+            yield False  # TODO: only for handless monsters (which cannot write)
+
         self.skip_engrave_counter -= 1
         if self.agent.character.prop.blind or self.skip_engrave_counter > 0:
             yield False

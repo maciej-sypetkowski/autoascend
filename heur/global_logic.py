@@ -176,6 +176,8 @@ class GlobalLogic:
 
         def push_bolder(ty, tx, dy, dx):
             while 1:
+                if self.agent.bfs()[ty, tx] == -1:
+                    return False
                 self.agent.go_to(ty, tx, debug_tiles_args=dict(color=(255, 255, 255), is_path=True))
                 with self.agent.atom_operation():
                     direction = self.agent.calc_direction(ty, tx, ty + dy, tx + dx)
@@ -201,9 +203,9 @@ class GlobalLogic:
                                 self.agent.step(A.Command.APPLY)
                                 self.agent.type_text(self.agent.inventory.items.get_letter(pickaxe))
                                 self.agent.direction(direction)
-                            return
+                            return True
                 else:
-                    return
+                    return True
 
                 # TODO: not sure what to do
                 self.agent.exploration.explore1(None).run()
@@ -256,7 +258,8 @@ class GlobalLogic:
 
                                 self.agent.go_to(vy, vx, callback=clear_neighbors)
 
-                    push_bolder(ty, tx, dy, dx)
+                    if not push_bolder(ty, tx, dy, dx):
+                        continue
 
                     possible_mimics = set()
                     last_resort_move = None
@@ -459,6 +462,8 @@ class GlobalLogic:
                                 self._got_artifact = True
                                 self.agent.inventory.get_items_below_me()
                                 return
+                            if 'So this is how you repay loyalty?' in self.agent.message:
+                                raise AgentPanic('pet sacrified')
                             assert 'Your sacrifice is consumed in a flash of light' in self.agent.message or \
                                 'Your sacrifice is consumed in a burst of flame' in self.agent.message or \
                                 ('The blood covers the altar!' in self.agent.message and \

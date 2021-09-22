@@ -7,6 +7,7 @@ from nle.nethack import actions as A
 
 import utils
 from character import Character
+from exceptions import AgentPanic
 from glyph import G, C, SS
 from level import Level
 from strategy import Strategy
@@ -492,7 +493,8 @@ class ExplorationLogic:
         for trap_y, trap_x in trap_locations:
             if utils.adjacent((self.agent.blstats.y, self.agent.blstats.x), (trap_y, trap_x)):
                 trap_glyph = level.objects[trap_y, trap_x]
-                assert trap_glyph in untrappable_traps
+                if trap_glyph not in untrappable_traps:
+                    raise AgentPanic('a trap is no longer there')
                 # assert level.objects[trap_y, trap_x] == trap_glyph
                 if trap_y == self.agent.blstats.y and trap_x == self.agent.blstats.x:
                     continue

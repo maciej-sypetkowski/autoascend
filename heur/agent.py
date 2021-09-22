@@ -684,6 +684,12 @@ class Agent:
             self.type_text('.')
             if 'There is a container and a ' in self.message:
                 self.type_text('n')
+            if 'You know of no traps there.' in self.message:
+                raise AgentPanic('no container below me to untrap')
+            if 'There is a container and ' in self.message and \
+                    (' trap here.' in self.message or ' field here.' in self.message) and \
+                    ('trap?' in self.message or 'field?' in self.message):
+                self.type_text('n')
             assert 'Check it for traps?' in self.single_message, self.single_message
             self.type_text('y')
             if self.message.startswith('You find no traps on the'):
@@ -812,6 +818,8 @@ class Agent:
                                  f'expected ({expected_y}, {expected_x}), got ({self.blstats.y}, {self.blstats.x})')
 
     def can_engrave(self):
+        if self.agent.character.prop.polymorph:
+            return False  # TODO: only for handless monsters (which cannot write)
         return (self.blstats.y, self.blstats.x) != self._forbidden_engrave_position
 
     def engrave(self, text):
@@ -1487,15 +1495,19 @@ class Agent:
         # TODO: checking level.corpses_to_eat again (moving to non-existing corpses often)
         if (target_y, target_x) in level.corpses_to_eat and monster_id in level.corpses_to_eat[target_y, target_x]:
             corpse_age = level.corpses_to_eat[target_y, target_x][monster_id]
+            if level.shop[target_y, target_x]:
+                del level.corpses_to_eat[target_y, target_x]
+                return
             for item in self.inventory.items_below_me:
                 if item.is_corpse() and item.monster_id == monster_id:
-                    if level.shop[target_y, target_x]:
-                        continue
-                    if self._is_corpse_editable(item.monster_id, corpse_age):
+                    if self._is_corpse_editable(monster_id, corpse_age):
                         if not yielded:
                             yielded = True
                             yield True
                         self.inventory.eat(item)
+
+            if not yielded:
+                del level.corpses_to_eat[target_y, target_x][monster_id]
 
         if not yielded:
             yield False
