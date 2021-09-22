@@ -457,6 +457,26 @@ def get_available_actions(agent, monsters):
     return actions
 
 
+def goto_action(agent, priority, monsters):
+    values = []
+    walkable = agent.current_level().walkable
+    for dy, dx in [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1)]:
+        y, x = agent.blstats.y - dy, agent.blstats.x - dx
+        if not 0 <= y < walkable.shape[0] or not 0 <= x < walkable.shape[1]:
+            continue
+        if not np.isnan(priority[y, x]):
+            values.append(priority[y, x])
+    if len(set(values)) > 1:
+        return []
+
+    assert monsters
+    for monster in monsters:
+        _, my, mx, mon, _ = monster
+        if not utils.adjacent((agent.blstats.y, agent.blstats.x), (my, mx)):
+            return [(1, 'go_to', my, mx, monster)]
+    assert 0, monsters
+
+
 def get_corridors_priority_map(walkable):
     k = np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
     wall_count = signal.convolve2d((~walkable).astype(int), k, boundary='symm', mode='same')
@@ -488,4 +508,7 @@ def get_priorities(agent):
     # use relative priority to te current position
     priority -= priority[agent.blstats.y, agent.blstats.x]
 
-    return priority, get_available_actions(agent, monsters)
+    actions = get_available_actions(agent, monsters)
+    if not actions:
+        actions.extend(goto_action(agent, priority, monsters))
+    return priority, actions

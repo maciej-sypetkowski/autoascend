@@ -436,7 +436,7 @@ class ExplorationLogic:
         walkable_changes = 0
         for dy, dx in [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]:
             y, x = trap_y - dy, trap_x - dx
-            if not 0 <= y <= walkable.shape[0] or not 0 <= x <= walkable.shape[1]:
+            if not 0 <= y < walkable.shape[0] or not 0 <= x < walkable.shape[1]:
                 w = False
             else:
                 w = walkable[y, x]

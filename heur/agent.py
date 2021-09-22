@@ -1216,6 +1216,8 @@ class Agent:
                         return f'{a[0]:.1f}e'
                     elif a[1] == 'wait':
                         return f'{a[0]:.1f}w'
+                    elif a[1] == 'go_to':
+                        return f'{a[0]}goto:{a[2]},{a[3]}'
                     else:
                         return f'{a[0]}{a[1][0]}:{a[2]},{a[3]}'
 
@@ -1254,8 +1256,8 @@ class Agent:
         if best_action is None or (best_y is not None and best_move_score > best_action[0]):
             with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
                                        [best_y, best_x]], color=(0, 255, 0), is_path=True):
-                self.move(best_y, best_x)
                 wait_counter = 5
+                self.move(best_y, best_x)
                 return wait_counter
         else:
             if best_action[1] == 'melee':
@@ -1299,6 +1301,11 @@ class Agent:
             elif best_action[1] == 'pickup':
                 _, _, items_to_pickup = best_action
                 self.inventory.pickup(items_to_pickup)
+            elif best_action[1] == 'go_to':
+                _, _, target_y, target_x, monster = best_action
+                self.go_to(target_y, target_x, stop_one_before=True, max_steps=1,
+                           debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
+                return wait_counter
             else:
                 raise NotImplementedError()
         return wait_counter

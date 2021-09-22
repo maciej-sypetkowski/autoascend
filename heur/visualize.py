@@ -593,6 +593,7 @@ class Visualizer:
         return vis
 
     def save_end_history(self):
+        print('SAVING', self.output_dir)
         for i, render in enumerate(list(self.renders_history)):
             render = render[..., ::-1]
             out_path = self.output_dir / (str(i).rjust(5, '0') + '.jpg')

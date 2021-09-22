@@ -7,9 +7,9 @@ def interesting_reason(txt):
     txt = txt.lower()
     # return 'Error' not in txt
     # return 'starved' in txt.lower()
-    # return ('food' in txt or 'fainted' in txt or 'starved' in txt)
+    return ('food' in txt or 'fainted' in txt or 'starved' in txt)
     # return 'captain' in txt or 'shop' in txt
-    return 'rotten' in txt
+    # return 'rotten' in txt
     return ('food' not in txt
             and 'shop' not in txt
             and 'falling rock' not in txt
@@ -44,6 +44,7 @@ def process(path='/tmp/nh_sim.json'):
 
 
 # process('/tmp/nh_sim.json')
-process('nh_sim_fix_engrave.json')
+# process('nh_sim_fix_engrave.json')
 # process('/workspace/nh_sim_fight2.json')
+process()
 
