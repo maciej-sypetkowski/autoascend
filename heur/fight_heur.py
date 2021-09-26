@@ -10,7 +10,7 @@ import utils
 from glyph import G
 from item import flatten_items
 
-ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold', 'gas spore']
+ONLY_RANGED_SLOW_MONSTERS = ['floating eye', 'blue jelly', 'brown mold', 'gas spore', 'acid blob']
 # COLD_MONSTERS = ['brown mold']
 # COLD_MONSTERS = []
 
@@ -473,6 +473,7 @@ def goto_action(agent, priority, monsters):
     for monster in monsters:
         _, my, mx, mon, _ = monster
         if not utils.adjacent((agent.blstats.y, agent.blstats.x), (my, mx)):
+            # and not mon.mname in ONLY_RANGED_SLOW_MONSTERS:
             return [(1, 'go_to', my, mx, monster)]
     assert 0, monsters
 

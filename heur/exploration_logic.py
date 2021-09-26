@@ -317,6 +317,11 @@ class ExplorationLogic:
             prio = np.zeros((C.SIZE_Y, C.SIZE_X), np.float32)
             prio[:] = -1
             prio -= level.search_count ** 2 * 2
+
+            counts = level.search_count[level.search_count > 0]
+            if len(counts):
+                self.agent.stats_logger.log_max_value('search_diff', np.max(counts) - np.quantile(counts, 0.3))
+
             # is_on_corridor = utils.isin(level.objects, G.CORRIDOR)
             is_on_door = utils.isin(level.objects, G.DOORS)
 

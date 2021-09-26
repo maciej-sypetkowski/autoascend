@@ -404,12 +404,10 @@ class Visualizer:
         i += 2
 
         stats = list(self.env.agent.stats_logger.get_stats_dict().items())
-        _put_text(ret, ' | '.join(f'{k}={v}' for k, v in stats[:3]),
-                  (0, i * FONT_SIZE), color=(100, 100, 100))
-        i += 1
-        _put_text(ret, ' | '.join(f'{k}={v}' for k, v in stats[3:]),
-                  (0, i * FONT_SIZE), color=(100, 100, 100))
-
+        for j in range((len(stats) + 2) // 3):
+            _put_text(ret, ' | '.join(f'{k}={v}' for k, v in stats[j * 3: (j + 1) * 3]),
+                      (0, i * FONT_SIZE), color=(100, 100, 100))
+            i += 1
         _draw_frame(ret)
         return ret
 

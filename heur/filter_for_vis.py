@@ -4,6 +4,7 @@ import pandas as pd
 
 
 def interesting_reason(txt):
+    return True
     txt = txt.lower()
     # return 'Error' not in txt
     # return 'starved' in txt.lower()
@@ -33,9 +34,10 @@ def process(path='/tmp/nh_sim.json'):
     df['role'] = [ch[:3] for ch in df.character]
 
     for row in df.itertuples():
-        if row.score > 2200:
-            continue
-        if interesting_reason(row.end_reason):
+        # if row.score > 2200:
+        #     continue
+        # if interesting_reason(row.end_reason):
+        if row.search_diff > 300:
             print(row.seed[0], row.steps, row.end_reason)
             ret[row.seed[0]] = row.steps - 128
 

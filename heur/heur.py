@@ -15,7 +15,7 @@ import tty
 import warnings
 from argparse import ArgumentParser
 from collections import Counter
-from multiprocessing import Process, Queue
+from multiprocessing import Pool, Process, Queue
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from pprint import pprint
@@ -436,11 +436,10 @@ def single_simulation(args, seed_offset, timeout=720):
     start_time = time.time()
     env = prepare_env(args, seed_offset)
 
-    if timeout is not None:
-        pool = ThreadPool(processes=1)
     try:
         if timeout is not None:
-            pool.apply_async(env.main).get(timeout)
+            with ThreadPool(1) as pool:
+                pool.apply_async(env.main).get(timeout)
         else:
             env.main()
     except multiprocessing.context.TimeoutError:
@@ -457,6 +456,7 @@ def single_simulation(args, seed_offset, timeout=720):
         env.visualizer.save_end_history()
 
     env.env.close()
+
     return summary
 
 
@@ -655,18 +655,33 @@ def run_simulations(args):
     refs = []
 
     @ray.remote
-    def remote_simulation(args, seed_offset):
+    def remote_simulation(args, seed_offset, timeout=500):
         # I think there is some nondeterminism in nle environment when playing
         # multiple episodes (maybe bones?). That should do the trick
         q = Queue()
 
         def sim():
-            q.put(single_simulation(args, seed_offset))
+            q.put(single_simulation(args, seed_offset, timeout=timeout))
 
-        p = Process(target=sim)
-        p.start()
-        p.join()
-        return q.get()
+        try:
+            p = Process(target=sim, daemon=False)
+            p.start()
+            return q.get()
+        finally:
+            p.terminate()
+            p.join()
+
+        # uncomment to debug why join doesn't work properly
+        # from multiprocessing.pool import ThreadPool
+        # with ThreadPool(1) as thrpool:
+        #     def fun():
+        #         import time
+        #         while True:
+        #             time.sleep(1)
+        #             print(p.pid, p.is_alive(), p.exitcode, p)
+        #     thrpool.apply_async(fun)
+        # p.join(timeout=timeout + 1)
+        # assert not q.empty()
 
     for seed_offset in range(args.episodes):
         if args.visualize_ends is None or seed_offset in [k % 10 ** 9 for k in args.visualize_ends]:
