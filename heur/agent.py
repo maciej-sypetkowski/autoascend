@@ -73,7 +73,8 @@ class Agent:
         self._last_terrain_check = None
         self._forbidden_engrave_position = (-1, -1)
 
-        self._init_fight3_model()
+        self._init_fight2_model()
+        # self._init_fight3_model()
 
         self.stats_logger = StatsLogger()
 
@@ -1106,7 +1107,7 @@ class Agent:
             'walkable': ((7, 7), bool),
             'monster_mask': ((7, 7), bool),
         },
-            [(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
+            action_space=[(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
             train=self.rl_model_to_train == 'fight3',
             training_comm=self.rl_model_training_comm,
         )
@@ -1135,24 +1136,8 @@ class Agent:
                 continue
 
             dis = self.bfs()
-            level = self.current_level()
-            walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
-                       ~self.monster_tracker.peaceful_monster_mask & \
-                       ~utils.isin(level.objects, G.TRAPS)
-
-            radius_y = self._fight3_model.observation_def['walkable'][0][0] // 2
-            radius_x = self._fight3_model.observation_def['walkable'][0][1] // 2
-            y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
-                             self.blstats.x - radius_x, self.blstats.x + radius_x + 1
-
-            observation = {
-                'walkable': utils.slice_with_padding(walkable, y1, y2, x1, x2),
-                'monster_mask': utils.slice_with_padding(self.monster_tracker.monster_mask, y1, y2, x1, x2),
-            }
-            actions = [(y, x) for y, x in self._fight3_model.action_space
-                       if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
-                       and level.walkable[self.blstats.y + y, self.blstats.x + x]]
-
+            observation = self._fight3_get_observation()
+            actions = self._fight_3_get_actions()
             off_y, off_x = self._fight3_model.choose_action(observation, actions)
 
             y, x = self.blstats.y + off_y, self.blstats.x + off_x
@@ -1162,6 +1147,39 @@ class Agent:
                 self.fight(y, x)
             else:
                 self.move(y, x)
+
+    def _fight_3_get_actions(self):
+        level = self.current_level()
+        actions = [(y, x) for y, x in self._fight3_model.action_space
+                   if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
+                   and level.walkable[self.blstats.y + y, self.blstats.x + x]]
+        return actions
+
+    def _fight3_get_observation(self):
+        level = self.current_level()
+        walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
+                   ~self.monster_tracker.peaceful_monster_mask & \
+                   ~utils.isin(level.objects, G.TRAPS)
+        radius_y = self._fight3_model.observation_def['walkable'][0][0] // 2
+        radius_x = self._fight3_model.observation_def['walkable'][0][1] // 2
+        y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
+                         self.blstats.x - radius_x, self.blstats.x + radius_x + 1
+        observation = {
+            'walkable': utils.slice_with_padding(walkable, y1, y2, x1, x2),
+            'monster_mask': utils.slice_with_padding(self.monster_tracker.monster_mask, y1, y2, x1, x2),
+        }
+        return observation
+
+    def _init_fight2_model(self):
+        # TODO
+        self._fight3_model = rl_utils.RLModel({
+            'walkable': ((7, 7), bool),
+            'monster_mask': ((7, 7), bool),
+        },
+            action_space=[(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
+            train=self.rl_model_to_train == 'fight2',
+            training_comm=self.rl_model_training_comm,
+        )
 
     @utils.debug_log('fight2')
     @Strategy.wrap
@@ -1194,121 +1212,145 @@ class Agent:
                 self.character.parse_enhance_view()
 
             move_priority_heatmap, actions = fight_heur.get_priorities(self)
-
-            best_move_score, best_x, best_y, possible_move_to = self._fight2_get_best_move(dis, move_priority_heatmap)
+            actions.extend(self._fight2_get_move_actions(dis, move_priority_heatmap))
 
             if self.character.prop.polymorph:
-                actions = list(filter(lambda x: x[1] != 'ranged', actions))
-            best_action = max(actions, key=lambda x: x[0]) if actions else None
+                actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
 
-            if best_y is None and best_action is None:
+            # observation = self._fight2_get_observation()
+            # actions = self._fight_2_get_actions()
+            # off_y, off_x = self._fight2_model.choose_action(observation, actions)
+
+            priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
+
+            if best_action is None:
                 assert 0, 'No possible action available during fight2'
 
             with self.env.debug_tiles(move_priority_heatmap, color='turbo', is_heatmap=True):
-                def action_str(a):
-                    if a[1] == 'pickup':
-                        return f'{a[0]}{a[1][0]}:{len(a[2])}'
-                    elif a[1] == 'zap':
-                        wand = a[4]
+                def action_str(action):
+                    priority, a = action
+                    if a[0] == 'move':
+                        return f'{priority}m:{a[1]},{a[2]}'
+                    elif a[0] == 'melee':
+                        return f'{priority}me:{a[1]},{a[2]}'
+                    elif a[0] == 'pickup':
+                        return f'{priority}{a[0][0]}:{len(a[1])}'
+                    elif a[0] == 'zap':
+                        wand = a[3]
                         letter = self.inventory.items.get_letter(wand)
-                        return f'{a[0]}z{letter}:{a[2]},{a[3]}'
-                    elif a[1] == 'elbereth':
-                        return f'{a[0]:.1f}e'
-                    elif a[1] == 'wait':
-                        return f'{a[0]:.1f}w'
-                    elif a[1] == 'go_to':
-                        return f'{a[0]}goto:{a[2]},{a[3]}'
+                        return f'{priority}z{letter}:{a[1]},{a[2]}'
+                    elif a[0] == 'elbereth':
+                        return f'{priority:.1f}e'
+                    elif a[0] == 'wait':
+                        return f'{priority:.1f}w'
+                    elif a[0] == 'go_to':
+                        return f'{priority}goto:{a[1]},{a[2]}'
                     else:
-                        return f'{a[0]}{a[1][0]}:{a[2]},{a[3]}'
+                        return f'{priority}{a[0][0]}:{a[1]},{a[2]}'
 
                 actions_str = '|'.join([action_str(a) for a in sorted(actions, key=lambda x: x[0])])
-                with self.env.debug_log(actions_str + f'|{best_move_score}|' + '|'.join(map(str, possible_move_to))):
-                    wait_counter = self._fight2_perform_action(best_action, best_move_score, best_x, best_y,
-                                                               wait_counter)
+                with self.env.debug_log(actions_str):
+                    wait_counter = self._fight2_perform_action(best_action, wait_counter)
 
-    def _fight2_get_best_move(self, dis, move_priority_heatmap):
-        mask = ~np.isnan(move_priority_heatmap)
-        if not mask.any():
-            return None, None, None, []
-        move_priority_heatmap[~mask] = np.min(move_priority_heatmap[mask]) - 1
-        adjacent = dis == 1
-        assert np.sum(adjacent) <= 8, np.sum(adjacent)
-        possible_move_to = []
-        if adjacent.any():
-            possible_move_to = list(
-                zip(*np.nonzero((move_priority_heatmap == np.max(move_priority_heatmap[adjacent])) & adjacent)))
-            possible_move_to = [(y, x) for y, x in possible_move_to if mask[y, x]]
-        assert len(possible_move_to) <= 8
-        best_y, best_x = None, None
-        if possible_move_to:
-            best_y, best_x = possible_move_to[self.rng.randint(0, len(possible_move_to))]
-            if move_priority_heatmap[best_y, best_x] < -2 ** 15:
-                best_y, best_x = None, None
-        best_move_score = None
-        if best_y is not None:
-            best_move_score = move_priority_heatmap[best_y, best_x]
-        move_priority_heatmap[~mask] = float('nan')
-        if best_y is not None:
-            assert mask[best_y, best_x]
-        return best_move_score, best_x, best_y, possible_move_to
+    def _fight_2_get_actions(self):
+        # TODO
+        level = self.current_level()
+        actions = [(y, x) for y, x in self._fight2_model.action_space
+                   if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
+                   and level.walkable[self.blstats.y + y, self.blstats.x + x]]
+        return actions
 
-    def _fight2_perform_action(self, best_action, best_move_score, best_x, best_y, wait_counter):
-        if best_action is None or (best_y is not None and best_move_score > best_action[0]):
+    def _fight2_get_observation(self):
+        # TODO
+        level = self.current_level()
+        walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
+                   ~self.monster_tracker.peaceful_monster_mask & \
+                   ~utils.isin(level.objects, G.TRAPS)
+        radius_y = self._fight2_model.observation_def['walkable'][0][0] // 2
+        radius_x = self._fight2_model.observation_def['walkable'][0][1] // 2
+        y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
+                         self.blstats.x - radius_x, self.blstats.x + radius_x + 1
+        observation = {
+            'walkable': utils.slice_with_padding(walkable, y1, y2, x1, x2),
+            'monster_mask': utils.slice_with_padding(self.monster_tracker.monster_mask, y1, y2, x1, x2),
+        }
+        return observation
+
+    def _fight2_get_move_actions(self, dis, move_priority_heatmap):
+        """ Returns list of tuples (priority, ('move', dy, dx)) """
+        ret = []
+        for dy, dx in [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]:
+            y, x = self.blstats.y + dy, self.blstats.x + dx
+            if not 0 <= y < dis.shape[0] or not 0 <= x < dis.shape[1]:
+                continue
+            if not dis[y, x] == 1:
+                continue
+
+            if not np.isnan(move_priority_heatmap[y, x]):
+                ret.append((move_priority_heatmap[y, x], ('move', dy, dx)))
+        return ret
+
+    def _fight2_perform_action(self, best_action, wait_counter):
+        if best_action[0] == 'move':
+            _, dy, dx = best_action
+            target_y, target_x = self.blstats.y + dy, self.blstats.x + dx
             with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
-                                       [best_y, best_x]], color=(0, 255, 0), is_path=True):
+                                       [target_y, target_x]], color=(0, 255, 0), is_path=True):
                 wait_counter = 5
-                self.move(best_y, best_x)
+                self.move(target_y, target_x)
                 return wait_counter
-        else:
-            if best_action[1] == 'melee':
-                _, _, target_y, target_x, monster = best_action
-                if self.wield_best_melee_weapon():
-                    return wait_counter
-                with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
-                                           [target_y, target_x]], color=(255, 0, 255), is_path=True):
-                    self.fight(target_y, target_x)
-                    wait_counter = 0
-                    return wait_counter
-            elif best_action[1] == 'ranged':
-                _, _, target_y, target_x, monster = best_action
-                launcher, ammo = self.inventory.get_best_ranged_set()
-                assert ammo is not None
-                if launcher is not None and not launcher.equipped:
-                    if self.inventory.wield(launcher):
-                        return wait_counter
-                with self.env.debug_tiles([[target_y, target_x]], (0, 0, 255, 255), mode='frame'):
-                    dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
-                                              allow_nonunit_distance=True)
-                    assert self.fire(ammo, dir)
-                    return wait_counter
-            elif best_action[1] == 'elbereth':
-                assert self.inventory.engraving_below_me.lower() != 'elbereth'
-                self.engrave("Elbereth")
+        elif best_action[0] == 'melee':
+            _, target_y, target_x = best_action
+            if self.wield_best_melee_weapon():
                 return wait_counter
-            elif best_action[1] == 'wait':
-                assert self.inventory.engraving_below_me.lower() == 'elbereth'
-                self.search()
+            with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
+                                       [target_y, target_x]], color=(255, 0, 255), is_path=True):
+                self.fight(target_y, target_x)
+                wait_counter = 0
                 return wait_counter
-            elif best_action[1] == 'zap':
-                _, _, dy, dx, wand, targeted_monsters = best_action
-                dir = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx,
+
+        elif best_action[0] == 'ranged':
+            _, target_y, target_x = best_action
+            launcher, ammo = self.inventory.get_best_ranged_set()
+            assert ammo is not None
+            if launcher is not None and not launcher.equipped:
+                if self.inventory.wield(launcher):
+                    return wait_counter
+            with self.env.debug_tiles([[target_y, target_x]], (0, 0, 255, 255), mode='frame'):
+                dir = self.calc_direction(self.blstats.y, self.blstats.x, target_y, target_x,
                                           allow_nonunit_distance=True)
-
-                with self.env.debug_tiles([[my, mx] for my, mx, _ in targeted_monsters],
-                                          (255, 0, 255, 255), mode='frame'):
-                    self.zap(wand, dir)
-
-            elif best_action[1] == 'pickup':
-                _, _, items_to_pickup = best_action
-                self.inventory.pickup(items_to_pickup)
-            elif best_action[1] == 'go_to':
-                _, _, target_y, target_x, monster = best_action
-                self.go_to(target_y, target_x, stop_one_before=True, max_steps=1,
-                           debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
+                fired = self.fire(ammo, dir)
+                assert fired, (ammo, dir)
                 return wait_counter
-            else:
-                raise NotImplementedError()
-        return wait_counter
+
+        elif best_action[0] == 'elbereth':
+            assert self.inventory.engraving_below_me.lower() != 'elbereth'
+            self.engrave("Elbereth")
+            return wait_counter
+        elif best_action[0] == 'wait':
+            assert self.inventory.engraving_below_me.lower() == 'elbereth'
+            self.search()
+            return wait_counter
+        elif best_action[0] == 'zap':
+            _, dy, dx, wand, targeted_monsters = best_action
+            dir = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx,
+                                      allow_nonunit_distance=True)
+
+            with self.env.debug_tiles([[my, mx] for my, mx, _ in targeted_monsters],
+                                      (255, 0, 255, 255), mode='frame'):
+                self.zap(wand, dir)
+            return wait_counter
+
+        elif best_action[0] == 'pickup':
+            _, items_to_pickup = best_action
+            self.inventory.pickup(items_to_pickup)
+            return wait_counter
+        elif best_action[0] == 'go_to':
+            _, target_y, target_x = best_action
+            self.go_to(target_y, target_x, stop_one_before=True, max_steps=1,
+                       debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
+            return wait_counter
+        raise NotImplementedError(best_action)
 
     @utils.debug_log('engulfed_fight')
     @Strategy.wrap

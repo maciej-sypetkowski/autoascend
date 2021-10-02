@@ -374,7 +374,7 @@ def get_potential_wand_usages(agent, monsters, dy, dx):
             priority = priority - 15
             if agent.inventory.engraving_below_me.lower() == 'elbereth':
                 priority -= 100
-            ret.append((priority, 'zap', dy, dx, item, targeted_monsters))
+            ret.append((priority, ('zap', dy, dx, item, targeted_monsters)))
     return ret
 
 
@@ -410,7 +410,7 @@ def wait_action(agent, monsters):
     if agent.inventory.engraving_below_me.lower() == 'elbereth':
         player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
         priority = 25 - player_hp_ratio * 40
-        return [(priority, 'wait')]
+        return [(priority, ('wait',))]
     return []
 
 
@@ -424,7 +424,7 @@ def get_available_actions(agent, monsters):
             priority = melee_monster_priority(agent, monsters, monster)
             if agent.inventory.engraving_below_me.lower() == 'elbereth':
                 priority -= 100
-            actions.append((priority, 'melee', y, x, monster))
+            actions.append((priority, ('melee', y, x)))
 
     # ranged attack actions
     for dy, dx in product([-1, 0, 1], [-1, 0, 1]):
@@ -436,7 +436,7 @@ def get_available_actions(agent, monsters):
                     pri -= 100
                 if all(monster[3].mname in ONLY_RANGED_SLOW_MONSTERS for monster in monsters):
                     pri += 10
-                actions.append((pri, 'ranged', y, x, monster))
+                actions.append((pri, ('ranged', y, x)))
 
             actions.extend(get_potential_wand_usages(agent, monsters, dy, dx))
 
@@ -449,7 +449,7 @@ def get_available_actions(agent, monsters):
         if item.is_thrown_projectile() or (my_launcher is not None and item.is_fired_projectile(launcher=my_launcher)):
             to_pickup.append(item)
     if to_pickup:
-        actions.append((15, 'pickup', to_pickup))
+        actions.append((15, ('pickup', to_pickup)))
 
     # actions.extend(elbereth_action(agent, monsters))
     # actions.extend(wait_action(agent, monsters))
@@ -474,7 +474,7 @@ def goto_action(agent, priority, monsters):
         _, my, mx, mon, _ = monster
         if not utils.adjacent((agent.blstats.y, agent.blstats.x), (my, mx)):
             # and not mon.mname in ONLY_RANGED_SLOW_MONSTERS:
-            return [(1, 'go_to', my, mx, monster)]
+            return [(1, ('go_to', my, mx))]
     assert 0, monsters
 
 
