@@ -1204,6 +1204,8 @@ class Agent:
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
 
+            if not actions:
+                assert 0, 'No possible action available during fight2'
 
             action_priorities_for_rl = dict()
             for pr, action in actions:
@@ -1222,9 +1224,6 @@ class Agent:
             rl_action = self._fight2_model.choose_action(observation, list(action_priorities_for_rl.keys()))
             # TODO: use RL
             # best_action = rl_action
-
-            if best_action is None:
-                assert 0, 'No possible action available during fight2'
 
             with self.env.debug_tiles(move_priority_heatmap, color='turbo', is_heatmap=True):
                 def action_str(action):
