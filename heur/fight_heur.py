@@ -374,7 +374,7 @@ def get_potential_wand_usages(agent, monsters, dy, dx):
             priority = priority - 15
             if agent.inventory.engraving_below_me.lower() == 'elbereth':
                 priority -= 100
-            ret.append((priority, 'zap', dy, dx, item, targeted_monsters))
+            ret.append((priority, ('zap', dy, dx, item, targeted_monsters)))
     return ret
 
 
@@ -410,7 +410,7 @@ def wait_action(agent, monsters):
     if agent.inventory.engraving_below_me.lower() == 'elbereth':
         player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
         priority = 25 - player_hp_ratio * 40
-        return [(priority, 'wait')]
+        return [(priority, ('wait',))]
     return []
 
 
@@ -424,7 +424,9 @@ def get_available_actions(agent, monsters):
             priority = melee_monster_priority(agent, monsters, monster)
             if agent.inventory.engraving_below_me.lower() == 'elbereth':
                 priority -= 100
-            actions.append((priority, 'melee', y, x, monster))
+            dy = y - agent.blstats.y
+            dx = x - agent.blstats.x
+            actions.append((priority, ('melee', dy, dx)))
 
     # ranged attack actions
     for dy, dx in product([-1, 0, 1], [-1, 0, 1]):
@@ -436,11 +438,21 @@ def get_available_actions(agent, monsters):
                     pri -= 100
                 if all(monster[3].mname in ONLY_RANGED_SLOW_MONSTERS for monster in monsters):
                     pri += 10
-                actions.append((pri, 'ranged', y, x, monster))
+                actions.append((pri, ('ranged', dy, dx)))
 
             actions.extend(get_potential_wand_usages(agent, monsters, dy, dx))
 
-    # pickup items actions
+    to_pickup = decide_what_to_pickup(agent)
+    if to_pickup:
+        actions.append((15, ('pickup', to_pickup)))
+
+    # actions.extend(elbereth_action(agent, monsters))
+    # actions.extend(wait_action(agent, monsters))
+
+    return actions
+
+
+def decide_what_to_pickup(agent):
     projectiles_below_me = [i for i in agent.inventory.items_below_me
                             if i.is_thrown_projectile() or i.is_fired_projectile()]
     my_launcher, ammo = agent.inventory.get_best_ranged_set(additional_ammo=[i for i in projectiles_below_me])
@@ -448,13 +460,7 @@ def get_available_actions(agent, monsters):
     for item in agent.inventory.items_below_me:
         if item.is_thrown_projectile() or (my_launcher is not None and item.is_fired_projectile(launcher=my_launcher)):
             to_pickup.append(item)
-    if to_pickup:
-        actions.append((15, 'pickup', to_pickup))
-
-    # actions.extend(elbereth_action(agent, monsters))
-    # actions.extend(wait_action(agent, monsters))
-
-    return actions
+    return to_pickup
 
 
 def goto_action(agent, priority, monsters):
@@ -474,7 +480,7 @@ def goto_action(agent, priority, monsters):
         _, my, mx, mon, _ = monster
         if not utils.adjacent((agent.blstats.y, agent.blstats.x), (my, mx)):
             # and not mon.mname in ONLY_RANGED_SLOW_MONSTERS:
-            return [(1, 'go_to', my, mx, monster)]
+            return [(1, ('go_to', my, mx))]
     assert 0, monsters
 
 
@@ -513,3 +519,18 @@ def get_priorities(agent):
     if not actions:
         actions.extend(goto_action(agent, priority, monsters))
     return priority, actions
+
+
+def get_move_actions(agent, dis, move_priority_heatmap):
+    """ Returns list of tuples (priority, ('move', dy, dx)) """
+    ret = []
+    for dy, dx in [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]:
+        y, x = agent.blstats.y + dy, agent.blstats.x + dx
+        if not 0 <= y < dis.shape[0] or not 0 <= x < dis.shape[1]:
+            continue
+        if not dis[y, x] == 1:
+            continue
+
+        if not np.isnan(move_priority_heatmap[y, x]):
+            ret.append((move_priority_heatmap[y, x], ('move', dy, dx)))
+    return ret
