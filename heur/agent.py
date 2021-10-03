@@ -8,6 +8,7 @@ import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
+import fight_heur
 import rl_utils
 import utils
 from character import Character
@@ -22,6 +23,8 @@ from strategy import Strategy
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number prop_mask')
+
+RL_CONTEXT_SIZE = 7
 
 
 class Agent:
@@ -892,7 +895,6 @@ class Agent:
 
         for my, mx in list(zip(*np.nonzero(utils.isin(self.glyphs, G.MONS)))):
             mon = MON.permonst(self.glyphs[my][mx])
-            import fight_heur
             if mon.mname in fight_heur.ONLY_RANGED_SLOW_MONSTERS:
                 walkable[my, mx] = False
 
@@ -1149,11 +1151,8 @@ class Agent:
                 self.move(y, x)
 
     def _fight_3_get_actions(self):
-        level = self.current_level()
-        actions = [(y, x) for y, x in self._fight3_model.action_space
-                   if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
-                   and level.walkable[self.blstats.y + y, self.blstats.x + x]]
-        return actions
+        # TODO
+        return []
 
     def _fight3_get_observation(self):
         level = self.current_level()
@@ -1170,21 +1169,9 @@ class Agent:
         }
         return observation
 
-    def _init_fight2_model(self):
-        # TODO
-        self._fight3_model = rl_utils.RLModel({
-            'walkable': ((7, 7), bool),
-            'monster_mask': ((7, 7), bool),
-        },
-            action_space=[(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
-            train=self.rl_model_to_train == 'fight2',
-            training_comm=self.rl_model_training_comm,
-        )
-
     @utils.debug_log('fight2')
     @Strategy.wrap
     def fight2(self):
-        import fight_heur
         yielded = False
         wait_counter = 0
         while 1:
@@ -1212,16 +1199,29 @@ class Agent:
                 self.character.parse_enhance_view()
 
             move_priority_heatmap, actions = fight_heur.get_priorities(self)
-            actions.extend(self._fight2_get_move_actions(dis, move_priority_heatmap))
+            actions.extend(fight_heur.get_move_actions(self, dis, move_priority_heatmap))
 
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
 
-            # observation = self._fight2_get_observation()
-            # actions = self._fight_2_get_actions()
-            # off_y, off_x = self._fight2_model.choose_action(observation, actions)
+
+            action_priorities_for_rl = dict()
+            for pr, action in actions:
+                if action[0] == 'go_to':
+                    continue
+                if action[0] == 'pickup':
+                    action = (action[0], )
+                if action[0] == 'zap':
+                    action = action[:3]
+                assert action in self._fight2_model.action_space, action
+                action_priorities_for_rl[action] = pr
+
+            observation = self._fight2_get_observation(action_priorities_for_rl)
 
             priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
+            rl_action = self._fight2_model.choose_action(observation, list(action_priorities_for_rl.keys()))
+            # TODO: use RL
+            # best_action = rl_action
 
             if best_action is None:
                 assert 0, 'No possible action available during fight2'
@@ -1252,43 +1252,72 @@ class Agent:
                 with self.env.debug_log(actions_str):
                     wait_counter = self._fight2_perform_action(best_action, wait_counter)
 
-    def _fight_2_get_actions(self):
-        # TODO
-        level = self.current_level()
-        actions = [(y, x) for y, x in self._fight2_model.action_space
-                   if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
-                   and level.walkable[self.blstats.y + y, self.blstats.x + x]]
-        return actions
+    def _fight2_action_space(self):
+        directions = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]
+        return [
+            *[('move', dy, dx) for dy, dx in directions],
+            *[('melee', dy, dx) for dy, dx in directions],
+            *[('ranged', dy, dx) for dy, dx in directions],
+            *[('zap', dy, dx) for dy, dx in directions],
+            ('pickup',),
+        ]
 
-    def _fight2_get_observation(self):
+    def _init_fight2_model(self):
         # TODO
+        self._fight2_model = rl_utils.RLModel({
+            'player_scalar_stats': ((5,), np.float32),
+            'semantic_maps': ((RL_CONTEXT_SIZE, RL_CONTEXT_SIZE, 3), np.float32),
+            'heur_action_priorities': ((8 * 4 + 1,), np.float32),
+        },
+            action_space=self._fight2_action_space(),
+            train=self.rl_model_to_train == 'fight2',
+            training_comm=self.rl_model_training_comm,
+        )
+
+    def _fight2_player_scalar_stats(self):
+        ret = [self.blstats.hitpoints,
+               self.blstats.max_hitpoints,
+               self.blstats.hitpoints / self.blstats.max_hitpoints,
+               fight_heur.wielding_ranged_weapon(self),
+               fight_heur.wielding_melee_weapon(self)]
+        ret = np.array(ret, dtype=np.float32)
+        assert not np.isnan(ret).any()
+        return ret
+
+    def _fight2_semantic_maps(self):
+        radius_y = self._fight2_model.observation_def['semantic_maps'][0][0] // 2
+        radius_x = self._fight2_model.observation_def['semantic_maps'][0][1] // 2
+        y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
+                         self.blstats.x - radius_x, self.blstats.x + radius_x + 1
         level = self.current_level()
         walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
                    ~self.monster_tracker.peaceful_monster_mask & \
                    ~utils.isin(level.objects, G.TRAPS)
-        radius_y = self._fight2_model.observation_def['walkable'][0][0] // 2
-        radius_x = self._fight2_model.observation_def['walkable'][0][1] // 2
-        y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
-                         self.blstats.x - radius_x, self.blstats.x + radius_x + 1
-        observation = {
-            'walkable': utils.slice_with_padding(walkable, y1, y2, x1, x2),
-            'monster_mask': utils.slice_with_padding(self.monster_tracker.monster_mask, y1, y2, x1, x2),
-        }
-        return observation
 
-    def _fight2_get_move_actions(self, dis, move_priority_heatmap):
-        """ Returns list of tuples (priority, ('move', dy, dx)) """
+        mspeed = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=int)
+        for _, y, x, mon, _ in self.get_visible_monsters():
+            mspeed[y][x] = mon.mmove
+
+        ret = list(map(lambda q: utils.slice_with_padding(q, y1, y2, x1, x2), (
+            walkable, self.monster_tracker.monster_mask, mspeed,
+        )))
+        return np.stack(ret, axis=0).astype(np.float32)
+
+    def _fight_2_encoded_heur_action_priorities(self, heur_priorities):
         ret = []
-        for dy, dx in [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]:
-            y, x = self.blstats.y + dy, self.blstats.x + dx
-            if not 0 <= y < dis.shape[0] or not 0 <= x < dis.shape[1]:
-                continue
-            if not dis[y, x] == 1:
-                continue
+        for action in self._fight2_model.action_space:
+            if action in heur_priorities:
+                ret.append(heur_priorities[action])
+            else:
+                ret.append(-350)
+        return np.array(ret).astype(np.float32)
 
-            if not np.isnan(move_priority_heatmap[y, x]):
-                ret.append((move_priority_heatmap[y, x], ('move', dy, dx)))
-        return ret
+    def _fight2_get_observation(self, heur_priorities):
+        return {
+            'player_scalar_stats': self._fight2_player_scalar_stats(),
+            'semantic_maps': self._fight2_semantic_maps(),
+            'heur_actions_priorities': self._fight_2_encoded_heur_action_priorities(heur_priorities)
+        }
 
     def _fight2_perform_action(self, best_action, wait_counter):
         if best_action[0] == 'move':
@@ -1300,7 +1329,9 @@ class Agent:
                 self.move(target_y, target_x)
                 return wait_counter
         elif best_action[0] == 'melee':
-            _, target_y, target_x = best_action
+            _, dy, dx = best_action
+            target_y = self.blstats.y + dy
+            target_x = self.blstats.x + dx
             if self.wield_best_melee_weapon():
                 return wait_counter
             with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
@@ -1310,7 +1341,9 @@ class Agent:
                 return wait_counter
 
         elif best_action[0] == 'ranged':
-            _, target_y, target_x = best_action
+            _, dy, dx = best_action
+            target_y = self.blstats.y + dy
+            target_x = self.blstats.x + dx
             launcher, ammo = self.inventory.get_best_ranged_set()
             assert ammo is not None
             if launcher is not None and not launcher.equipped:
@@ -1332,7 +1365,17 @@ class Agent:
             self.search()
             return wait_counter
         elif best_action[0] == 'zap':
-            _, dy, dx, wand, targeted_monsters = best_action
+            if len(best_action) == 5:
+                _, dy, dx, wand, targeted_monsters = best_action
+            else:
+                _, dy, dx, = best_action
+                for item in self.inventory.items:
+                    if item.is_offensive_usable_wand():
+                        wand = item
+                        break
+                else:
+                    assert 0
+                targeted_monsters = []
             dir = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx,
                                       allow_nonunit_distance=True)
 
@@ -1342,7 +1385,10 @@ class Agent:
             return wait_counter
 
         elif best_action[0] == 'pickup':
-            _, items_to_pickup = best_action
+            if len(best_action) == 2:
+                _, items_to_pickup = best_action
+            else:
+                items_to_pickup = fight_heur.decide_what_to_pickup(self)
             self.inventory.pickup(items_to_pickup)
             return wait_counter
         elif best_action[0] == 'go_to':
