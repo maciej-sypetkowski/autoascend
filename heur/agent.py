@@ -1102,10 +1102,12 @@ class Agent:
         return False
 
     def _init_fight3_model(self):
-        self._fight3_model = rl_utils.RLModel({
-            'walkable': ((7, 7), bool),
-            'monster_mask': ((7, 7), bool),
-        },
+        self._fight3_map_size = 7
+        self._fight3_model = rl_utils.RLModel(
+            (
+                ('walkable', ((self._fight3_map_size, self._fight3_map_size), bool)),
+                ('monster_mask', ((self._fight3_map_size, self._fight3_map_size), bool)),
+            ),
             [(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
             train=self.rl_model_to_train == 'fight3',
             training_comm=self.rl_model_training_comm,
@@ -1121,7 +1123,7 @@ class Agent:
             # get only monsters with path to them
             monsters = [m for m in monsters if m[0] != -1]
 
-            if not monsters or all(dis > 7 for dis, *_ in monsters):
+            if not monsters or all(dis > self._fight3_map_size for dis, *_ in monsters):
                 if not yielded:
                     yield False
                 return
@@ -1140,8 +1142,7 @@ class Agent:
                        ~self.monster_tracker.peaceful_monster_mask & \
                        ~utils.isin(level.objects, G.TRAPS)
 
-            radius_y = self._fight3_model.observation_def['walkable'][0][0] // 2
-            radius_x = self._fight3_model.observation_def['walkable'][0][1] // 2
+            radius_y = radius_x = self._fight3_map_size // 2
             y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
                              self.blstats.x - radius_x, self.blstats.x + radius_x + 1
 
@@ -1153,7 +1154,7 @@ class Agent:
                        if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
                        and level.walkable[self.blstats.y + y, self.blstats.x + x]]
 
-            off_y, off_x = self._fight3_model.choose_action(observation, actions)
+            off_y, off_x = self._fight3_model.choose_action(self, observation, actions)
 
             y, x = self.blstats.y + off_y, self.blstats.x + off_x
             if self.monster_tracker.monster_mask[y, x]:

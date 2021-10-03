@@ -2,7 +2,8 @@ import ctypes
 import datetime
 import os
 import queue
-import threading
+import multiprocessing
+import traceback
 
 import gym
 import nle
@@ -16,10 +17,6 @@ from heur import EnvWrapper
 class MuZeroConfig:
     def __init__(self):
 
-        #game = Game(0)
-        #rl_model = game.rl_model
-        #game.close()
-
         # More information is available here: https://github.com/werner-duvaud/muzero-general/wiki/Hyperparameter-Optimization
 
         self.seed = 0  # Seed for numpy, torch and the game
@@ -28,10 +25,18 @@ class MuZeroConfig:
 
 
         ### Game
-        #self.observation_shape = (rl_model.observation_size(), 1, 1)  # Dimensions of the game observation, must be 3D (channel, height, width). For a 1D array, please reshape it to (1, 1, length of array)
-        #self.action_space = list(range(len(rl_model.action_space)))  # Fixed list of all possible actions. You should only edit the length
-        self.observation_shape = (98, 1, 1)
-        self.action_space = list(range(9))
+        game = Game()
+        game._kill_thread()
+
+        self.observation_shape = game.rl_model.observation_shape()  # Dimensions of the game observation, must be 3D (channel, height, width). For a 1D array, please reshape it to (1, 1, length of array)
+        self.action_space = list(range(len(game.rl_model.action_space)))  # Fixed list of all possible actions. You should only edit the length
+
+        del game
+        if 'HACKDIR' in os.environ:
+            del os.environ['HACKDIR']  # nle leave some trashes that need to be clean up
+
+        #self.observation_shape = (98, 1, 1)
+        #self.action_space = list(range(9))
         self.players = list(range(1))  # List of players. You should only edit the length
         self.stacked_observations = 0  # Number of previous observations and previous actions to add to the current observation
 
@@ -44,7 +49,7 @@ class MuZeroConfig:
         ### Self-Play
         self.num_workers = 16  # Number of simultaneous threads/workers self-playing to feed the replay buffer
         self.selfplay_on_gpu = False
-        self.max_moves = 1000  # Maximum number of moves if game is not finished before
+        self.max_moves = 1e6  # Maximum number of moves if game is not finished before
         self.num_simulations = 5  # Number of future moves self-simulated
         self.discount = 0.997  # Chronological discount of the reward
         self.temperature_threshold = None  # Number of moves before dropping the temperature given by visit_softmax_temperature_fn to 0 (ie selecting the best action). If None, visit_softmax_temperature_fn is used every time
@@ -60,11 +65,11 @@ class MuZeroConfig:
 
 
         ### Network
-        self.network = "fullyconnected"  # "resnet" / "fullyconnected"
+        self.network = "resnet"  # "resnet" / "fullyconnected"
         self.support_size = 300  # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range of -support_size to support_size. Choose it so that support_size <= sqrt(max(abs(discounted reward)))
 
         # Residual Network
-        self.downsample = "resnet"  # Downsample observations before representation network, False / "CNN" (lighter) / "resnet" (See paper appendix Network Architecture)
+        self.downsample = None  # Downsample observations before representation network, False / "CNN" (lighter) / "resnet" (See paper appendix Network Architecture)
         self.blocks = 16  # Number of blocks in the ResNet
         self.channels = 256  # Number of channels in the ResNet
         self.reduced_channels_reward = 256  # Number of channels in reward head
@@ -145,43 +150,46 @@ class Game(AbstractGame):
     """
 
     def __init__(self, seed=None):
-        self.env, self.output_queue, self.input_queue = self._create_env(seed)
-        self.current_legal_actions = None
+        self.rl_model = None
         self.last_score = 0
         self._start_thread()
-        self.rl_model = self.output_queue.get()
+        self.current_legal_actions = list(range(len(self.rl_model.action_space)))
 
     @staticmethod
-    def _create_env(seed, env=None):
+    def _create_env(seed, output_queue, input_queue, env=None):
         if env is None:
             env = gym.make('NetHackChallenge-v0')
-        output_queue, input_queue = queue.Queue(), queue.Queue()
         env = EnvWrapper(env,
                          agent_args=dict(rl_model_to_train='fight3',
                                          rl_model_training_comm=(output_queue, input_queue)))
         if seed is not None:
             env.env.seed(seed, seed)
-        return env, output_queue, input_queue
-
+        return env
 
     def _start_thread(self):
+        output_queue, input_queue = multiprocessing.Queue(), multiprocessing.Queue()
+        self.output_queue = output_queue
+        self.input_queue = input_queue
         def f():
             try:
-                self.env.main()
-            except BaseException:
-                self.env.is_done = True
-            self.output_queue.put((self.rl_model.zero_observation(), None))
+                env = Game._create_env(None, output_queue, input_queue)
+                env.main()
+            except BaseException as e:
+                print(f'exception: {"".join(traceback.format_exception(None, e, e.__traceback__))}')
+            finally:
+                output_queue.put((None, None, None))
 
-        self.thread = threading.Thread(target=f)
+        self.thread = multiprocessing.Process(target=f)
         self.thread.start()
+        self.rl_model = self.output_queue.get()
 
     def _kill_thread(self):
         res = ctypes.pythonapi.PyThreadState_SetAsyncExc(self.thread.ident,
               ctypes.py_object(KeyboardInterrupt))
         if res > 1:
             ctypes.pythonapi.PyThreadState_SetAsyncExc(self.thread.ident, 0)
-            assert 0, 'Exception raise failure'
-        self.input_queue.put(None)
+            raise RuntimeError('Exception raise failure')
+        self.thread.terminate()
         self.thread.join()
 
     def step(self, action):
@@ -195,10 +203,17 @@ class Game(AbstractGame):
             The new observation, the reward and a boolean if the game has ended.
         """
         self.input_queue.put(action)
-        observation, self.current_legal_actions = self.output_queue.get()
-        reward = self.env.score - self.last_score
-        self.last_score = self.env.score
-        return self.rl_model.encode_observation(observation).reshape(-1, 1, 1), reward, self.env.is_done
+        val = self.output_queue.get()
+        observation, self.current_legal_actions, score = val
+        if observation is None:
+            is_done = True
+            observation = self.rl_model.zero_observation()
+            score = self.last_score
+        else:
+            is_done = False
+        reward = score - self.last_score
+        self.last_score = score
+        return self.rl_model.encode_observation(observation), reward, is_done
 
     def legal_actions(self):
         """
@@ -222,23 +237,21 @@ class Game(AbstractGame):
         """
         while 1:
             self._kill_thread()
-            self.env.env.reset()
-            self.env, self.output_queue, self.input_queue = self._create_env(seed=None, env=self.env.env)
             self.last_score = 0
             self._start_thread()
-            self.rl_model = self.output_queue.get()
 
-            observation, self.current_legal_actions = self.output_queue.get()
-            if not self.env.is_done:
+            val = self.output_queue.get()
+            observation, self.current_legal_actions, score = val
+            self.last_score = score
+            if observation is not None:
                 break
-        return self.rl_model.encode_observation(observation).reshape(-1, 1, 1)
+        return self.rl_model.encode_observation(observation)
 
     def close(self):
         """
         Properly close the game.
         """
         self._kill_thread()
-        self.env.env.close()
 
     def render(self):
         """

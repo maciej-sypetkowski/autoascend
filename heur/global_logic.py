@@ -603,7 +603,7 @@ class GlobalLogic:
                 self.follow_guard(),
             ])
             .preempt(self.agent, [
-                self.agent.fight2(),
+                self.agent.fight3(),
             ])
             .preempt(self.agent, [
                 self.agent.engulfed_fight(),

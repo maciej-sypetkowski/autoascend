@@ -94,11 +94,14 @@ class EnvWrapper:
 
         self.is_done = False
 
+    def _init_agent(self):
+        self.agent = agent_lib.Agent(self, **self.agent_args)
+
     def main(self):
         self.reset()
         while 1:
             try:
-                self.agent = agent_lib.Agent(self, **self.agent_args)
+                self._init_agent()
                 self.agent.main()
                 break
             except ReloadAgent:
@@ -108,9 +111,6 @@ class EnvWrapper:
 
             self.agent = None
             reload_agent()
-
-    def set_agent(self, agent):
-        self.agent = agent
 
     def reset(self):
         obs = self.env.reset()
