@@ -1,3 +1,4 @@
+import json
 import contextlib
 import re
 from collections import namedtuple, Counter
@@ -1212,10 +1213,18 @@ class Agent:
                     action = (action[0], )
                 if action[0] == 'zap':
                     action = action[:3]
-                assert action in self._fight2_model.action_space, action
+                if action[0] not in ('zap', 'pickup'):
+                    assert action in self._fight2_model.action_space, action
                 action_priorities_for_rl[action] = pr
 
             observation = self._fight2_get_observation(action_priorities_for_rl)
+
+            # uncomment to gather features for get_observations_stats.py
+            # import pickle
+            # import base64
+            # encoded = base64.b64encode(pickle.dumps(observation)).decode()
+            # with open('/tmp/observations.txt', 'a') as f:
+            #     f.write(encoded + '\n')
 
             priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
             rl_action = self._fight2_model.choose_action(self, observation, list(action_priorities_for_rl.keys()))
@@ -1254,8 +1263,8 @@ class Agent:
             *[('move', dy, dx) for dy, dx in directions],
             *[('melee', dy, dx) for dy, dx in directions],
             *[('ranged', dy, dx) for dy, dx in directions],
-            *[('zap', dy, dx) for dy, dx in directions],
-            ('pickup',),
+            # *[('zap', dy, dx) for dy, dx in directions],
+            # ('pickup',),
         ]
 
     def _init_fight2_model(self):
@@ -1263,12 +1272,14 @@ class Agent:
         self._fight2_model = rl_utils.RLModel((
                 ('player_scalar_stats': ((5,), np.float32)),
                 ('semantic_maps': ((RL_CONTEXT_SIZE, RL_CONTEXT_SIZE, 3), np.float32)),
-                ('heur_action_priorities': ((8 * 4 + 1,), np.float32)),
+                ('heur_action_priorities': ((8 * 3 + 1,), np.float32)),
             ),
             action_space=self._fight2_action_space(),
             train=self.rl_model_to_train == 'fight2',
             training_comm=self.rl_model_training_comm,
         )
+        with open('/workspace/rl_features_stats.json', 'r') as f:
+            self._fight2_features_stats = json.load(f)
 
     def _fight2_player_scalar_stats(self):
         ret = [self.blstats.hitpoints,
@@ -1290,7 +1301,7 @@ class Agent:
                    ~self.monster_tracker.peaceful_monster_mask & \
                    ~utils.isin(level.objects, G.TRAPS)
 
-        mspeed = np.zeros((C.SIZE_Y, C.SIZE_X), dtype=int)
+        mspeed = np.ones((C.SIZE_Y, C.SIZE_X), dtype=int) * np.nan
         for _, y, x, mon, _ in self.get_visible_monsters():
             mspeed[y][x] = mon.mmove
 
@@ -1305,15 +1316,27 @@ class Agent:
             if action in heur_priorities:
                 ret.append(heur_priorities[action])
             else:
-                ret.append(-350)
+                ret.append(np.nan)
         return np.array(ret).astype(np.float32)
 
     def _fight2_get_observation(self, heur_priorities):
-        return {
-            'player_scalar_stats': self._fight2_player_scalar_stats(),
-            'semantic_maps': self._fight2_semantic_maps(),
-            'heur_actions_priorities': self._fight_2_encoded_heur_action_priorities(heur_priorities)
-        }
+        def normalize(name, features):
+            mean, std, minv = [self._fight2_features_stats[name][k] for k in ['mean', 'std', 'min']]
+            v_normalized = features.copy()
+            print(features.shape)
+            assert len(mean) == features.shape[0]
+            for i in range(features.shape[0]):
+                v_normalized[i, ...] = (features[i, ...] - mean[i]) / std[i]
+            if name == 'heur_actions_priorities':
+                for i in range(v_normalized.shape[0]):
+                    if np.isnan(v_normalized[i]):
+                        v_normalized[i] = minv[i]
+            else:
+                v_normalized[np.isnan(v_normalized)] = 0
+        return {k: normalize(k, v) for k, v in
+                [('player_scalar_stats', self._fight2_player_scalar_stats()),
+                 ('semantic_maps', self._fight2_semantic_maps()),
+                 ('heur_actions_priorities', self._fight_2_encoded_heur_action_priorities(heur_priorities))]}
 
     def _fight2_perform_action(self, best_action, wait_counter):
         if best_action[0] == 'move':
