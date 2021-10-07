@@ -66,7 +66,7 @@ for k, v in observations.items():
     stats[k]['std'] = mean.tolist()
     stats[k]['min'] = mean.tolist()
 
-    if k == 'heur_actions_priorities':
+    if k == 'heur_action_priorities':
         for i in range(v_normalized.shape[1]):
             v_normalized[:, i][np.isnan(v_normalized[:, i])] = minv[i]
     else:
