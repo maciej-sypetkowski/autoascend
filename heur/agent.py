@@ -78,7 +78,6 @@ class Agent:
         self._forbidden_engrave_position = (-1, -1)
 
         self._init_fight2_model()
-        # self._init_fight3_model()
 
         self.stats_logger = StatsLogger()
 
@@ -1105,68 +1104,6 @@ class Agent:
 
         return False
 
-    def _init_fight3_model(self):
-        self._fight3_map_size = 7
-        self._fight3_model = rl_utils.RLModel(
-            (
-                ('walkable', ((self._fight3_map_size, self._fight3_map_size), bool)),
-                ('monster_mask', ((self._fight3_map_size, self._fight3_map_size), bool)),
-            ),
-            action_space=[(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
-            train=self.rl_model_to_train == 'fight3',
-            training_comm=self.rl_model_training_comm,
-        )
-
-    @utils.debug_log('fight3')
-    @Strategy.wrap
-    def fight3(self):
-        yielded = False
-        while 1:
-            monsters = self.get_visible_monsters()
-
-            # get only monsters with path to them
-            monsters = [m for m in monsters if m[0] != -1]
-
-            if not monsters or all(dis > self._fight3_map_size for dis, *_ in monsters):
-                if not yielded:
-                    yield False
-                return
-
-            if not yielded:
-                yielded = True
-                yield True
-                self.character.parse_enhance_view()
-
-            if self.wield_best_melee_weapon():
-                continue
-
-            level = self.current_level()
-            walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
-                       ~self.monster_tracker.peaceful_monster_mask & \
-                       ~utils.isin(level.objects, G.TRAPS)
-
-            radius_y = radius_x = self._fight3_map_size // 2
-            y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
-                             self.blstats.x - radius_x, self.blstats.x + radius_x + 1
-
-            observation = {
-                'walkable': utils.slice_with_padding(walkable, y1, y2, x1, x2),
-                'monster_mask': utils.slice_with_padding(self.monster_tracker.monster_mask, y1, y2, x1, x2),
-            }
-            actions = [(y, x) for y, x in self._fight3_model.action_space
-                       if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
-                       and level.walkable[self.blstats.y + y, self.blstats.x + x]]
-
-            off_y, off_x = self._fight3_model.choose_action(self, observation, actions)
-
-            y, x = self.blstats.y + off_y, self.blstats.x + off_x
-            if self.monster_tracker.monster_mask[y, x]:
-                # TODO: copied from `flight1`
-                mon_glyph = self.glyphs[y, x]
-                self.fight(y, x)
-            else:
-                self.move(y, x)
-
     @utils.debug_log('fight2')
     @Strategy.wrap
     def fight2(self):
@@ -1227,9 +1164,9 @@ class Agent:
             #     f.writelines([encoded + '\n'])
 
             priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
-            rl_action = self._fight2_model.choose_action(self, observation, list(action_priorities_for_rl.keys()))
+            # rl_action = self._fight2_model.choose_action(self, observation, list(action_priorities_for_rl.keys()))
             # TODO: use RL
-            best_action = rl_action
+            # best_action = rl_action
 
             with self.env.debug_tiles(move_priority_heatmap, color='turbo', is_heatmap=True):
                 def action_str(action):
@@ -1309,7 +1246,7 @@ class Agent:
         )))
         return np.stack(ret, axis=0).astype(np.float32)
 
-    def _fight_2_encoded_heur_action_priorities(self, heur_priorities):
+    def _fight2_encoded_heur_action_priorities(self, heur_priorities):
         ret = []
         for action in self._fight2_model.action_space:
             if action in heur_priorities:
@@ -1335,7 +1272,7 @@ class Agent:
         return {k: normalize(k, v) for k, v in
                 [('player_scalar_stats', self._fight2_player_scalar_stats()),
                  ('semantic_maps', self._fight2_semantic_maps()),
-                 ('heur_action_priorities', self._fight_2_encoded_heur_action_priorities(heur_priorities))]}
+                 ('heur_action_priorities', self._fight2_encoded_heur_action_priorities(heur_priorities))]}
 
     def _fight2_perform_action(self, best_action, wait_counter):
         if best_action[0] == 'move':
@@ -1427,74 +1364,6 @@ class Agent:
             if not mask.any():
                 break
             assert self.fight(*list(zip(*mask.nonzero()))[0])
-
-    @utils.debug_log('fight1')
-    @Strategy.wrap
-    def fight1(self):
-        yielded = False
-        while 1:
-            monsters = self.get_visible_monsters()
-
-            # get only monsters with path to them
-            monsters = [m for m in monsters if m[0] != -1]
-
-            if not monsters or all(dis > 7 for dis, *_ in monsters):
-                if not yielded:
-                    yield False
-                return
-
-            if not yielded:
-                yielded = True
-                yield True
-                self.character.parse_enhance_view()
-
-            assert len(monsters) > 0
-            dis, y, x, _, mon_glyph = monsters[0]
-
-            def is_monster_next_to_me():
-                monsters = self.get_visible_monsters()
-                if not monsters:
-                    return False
-                for _, y, x, _, _ in monsters:
-                    if utils.adjacent((y, x), (self.blstats.y, self.blstats.x)):
-                        return True
-                return False
-
-            with self.context_preempt([
-                is_monster_next_to_me,
-            ]) as outcome:
-                if outcome() is None:
-                    if self.ranged_stance1():
-                        continue
-
-            keep_distance = self.should_keep_distance(monsters)
-            if self.keep_distance(monsters, keep_distance):
-                continue
-            # else:
-            #     if self.emergency_strategy().run(return_condition=True):
-            #         continue
-
-            # TODO: why is this possible
-            if self.bfs()[y, x] == -1:
-                continue
-
-            if abs(self.blstats.y - y) > 1 or abs(self.blstats.x - x) > 1:
-                throwable = [i for i in self.inventory.items if i.is_thrown_projectile() and not i.equipped]
-                # TODO: don't shoot pet !
-                # TODO: limited range
-                if throwable and (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(
-                        self.blstats.x - x)):
-                    dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
-                    self.fire(throwable[0], dir)
-                    continue
-
-                self.go_to(y, x, stop_one_before=True, max_steps=1,
-                           debug_tiles_args=dict(color=(255, 0, 0), is_path=True))
-                continue
-
-            if self.wield_best_melee_weapon():
-                continue
-            self.fight(y, x)
 
     def _is_corpse_editable(self, monster_id, age_turn):
         permonst = MON.permonst(monster_id)
