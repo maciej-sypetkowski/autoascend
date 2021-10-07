@@ -39,7 +39,7 @@
             5.001734256744385
         ]
     },
-    "heur_actions_priorities": {
+    "heur_action_priorities": {
         "mean": [
             0.28764477372169495,
             0.2637222111225128,

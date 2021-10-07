@@ -1106,10 +1106,12 @@ class Agent:
         return False
 
     def _init_fight3_model(self):
-        self._fight3_model = rl_utils.RLModel({
-            'walkable': ((7, 7), bool),
-            'monster_mask': ((7, 7), bool),
-        },
+        self._fight3_map_size = 7
+        self._fight3_model = rl_utils.RLModel(
+            (
+                ('walkable', ((self._fight3_map_size, self._fight3_map_size), bool)),
+                ('monster_mask', ((self._fight3_map_size, self._fight3_map_size), bool)),
+            ),
             action_space=[(y, x) for y in [-1, 0, 1] for x in [-1, 0, 1]],
             train=self.rl_model_to_train == 'fight3',
             training_comm=self.rl_model_training_comm,
@@ -1125,7 +1127,7 @@ class Agent:
             # get only monsters with path to them
             monsters = [m for m in monsters if m[0] != -1]
 
-            if not monsters or all(dis > 7 for dis, *_ in monsters):
+            if not monsters or all(dis > self._fight3_map_size for dis, *_ in monsters):
                 if not yielded:
                     yield False
                 return
@@ -1138,10 +1140,24 @@ class Agent:
             if self.wield_best_melee_weapon():
                 continue
 
-            dis = self.bfs()
-            observation = self._fight3_get_observation()
-            actions = self._fight_3_get_actions()
-            off_y, off_x = self._fight3_model.choose_action(observation, actions)
+            level = self.current_level()
+            walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
+                       ~self.monster_tracker.peaceful_monster_mask & \
+                       ~utils.isin(level.objects, G.TRAPS)
+
+            radius_y = radius_x = self._fight3_map_size // 2
+            y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
+                             self.blstats.x - radius_x, self.blstats.x + radius_x + 1
+
+            observation = {
+                'walkable': utils.slice_with_padding(walkable, y1, y2, x1, x2),
+                'monster_mask': utils.slice_with_padding(self.monster_tracker.monster_mask, y1, y2, x1, x2),
+            }
+            actions = [(y, x) for y, x in self._fight3_model.action_space
+                       if 0 <= self.blstats.y + y < C.SIZE_Y and 0 <= self.blstats.x + x < C.SIZE_X \
+                       and level.walkable[self.blstats.y + y, self.blstats.x + x]]
+
+            off_y, off_x = self._fight3_model.choose_action(self, observation, actions)
 
             y, x = self.blstats.y + off_y, self.blstats.x + off_x
             if self.monster_tracker.monster_mask[y, x]:
@@ -1150,25 +1166,6 @@ class Agent:
                 self.fight(y, x)
             else:
                 self.move(y, x)
-
-    def _fight_3_get_actions(self):
-        # TODO
-        return []
-
-    def _fight3_get_observation(self):
-        level = self.current_level()
-        walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
-                   ~self.monster_tracker.peaceful_monster_mask & \
-                   ~utils.isin(level.objects, G.TRAPS)
-        radius_y = self._fight3_model.observation_def['walkable'][0][0] // 2
-        radius_x = self._fight3_model.observation_def['walkable'][0][1] // 2
-        y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
-                         self.blstats.x - radius_x, self.blstats.x + radius_x + 1
-        observation = {
-            'walkable': utils.slice_with_padding(walkable, y1, y2, x1, x2),
-            'monster_mask': utils.slice_with_padding(self.monster_tracker.monster_mask, y1, y2, x1, x2),
-        }
-        return observation
 
     @utils.debug_log('fight2')
     @Strategy.wrap
@@ -1230,9 +1227,9 @@ class Agent:
             #     f.writelines([encoded + '\n'])
 
             priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
-            # rl_action = self._fight2_model.choose_action(observation, list(action_priorities_for_rl.keys()))
+            rl_action = self._fight2_model.choose_action(self, observation, list(action_priorities_for_rl.keys()))
             # TODO: use RL
-            # best_action = rl_action
+            best_action = rl_action
 
             with self.env.debug_tiles(move_priority_heatmap, color='turbo', is_heatmap=True):
                 def action_str(action):
@@ -1261,7 +1258,7 @@ class Agent:
                     wait_counter = self._fight2_perform_action(best_action, wait_counter)
 
     def _fight2_action_space(self):
-        directions = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]
+        directions = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1)]
         return [
             *[('move', dy, dx) for dy, dx in directions],
             *[('melee', dy, dx) for dy, dx in directions],
@@ -1272,11 +1269,11 @@ class Agent:
 
     def _init_fight2_model(self):
         # TODO
-        self._fight2_model = rl_utils.RLModel({
-            'player_scalar_stats': ((5,), np.float32),
-            'semantic_maps': ((RL_CONTEXT_SIZE, RL_CONTEXT_SIZE, 3), np.float32),
-            'heur_action_priorities': ((8 * 3,), np.float32),
-        },
+        self._fight2_model = rl_utils.RLModel((
+                ('player_scalar_stats', ((5,), np.float32)),
+                ('semantic_maps', ((3, RL_CONTEXT_SIZE, RL_CONTEXT_SIZE), np.float32)),
+                ('heur_action_priorities', ((8 * 3,), np.float32)),
+            ),
             action_space=self._fight2_action_space(),
             train=self.rl_model_to_train == 'fight2',
             training_comm=self.rl_model_training_comm,
@@ -1295,8 +1292,7 @@ class Agent:
         return ret
 
     def _fight2_semantic_maps(self):
-        radius_y = self._fight2_model.observation_def['semantic_maps'][0][0] // 2
-        radius_x = self._fight2_model.observation_def['semantic_maps'][0][1] // 2
+        radius_y = radius_x = RL_CONTEXT_SIZE // 2
         y1, y2, x1, x2 = self.blstats.y - radius_y, self.blstats.y + radius_y + 1, \
                          self.blstats.x - radius_x, self.blstats.x + radius_x + 1
         level = self.current_level()
@@ -1327,10 +1323,10 @@ class Agent:
             return features
             mean, std, minv = [self._fight2_features_stats[name][k] for k in ['mean', 'std', 'min']]
             v_normalized = features.copy()
-            assert len(mean) == features.shape[0]
+            assert len(mean) == features.shape[0], (len(mean), features.shape[0])
             for i in range(features.shape[0]):
                 v_normalized[i, ...] = (features[i, ...] - mean[i]) / std[i]
-            if name == 'heur_actions_priorities':
+            if name == 'heur_action_priorities':
                 for i in range(v_normalized.shape[0]):
                     if np.isnan(v_normalized[i]):
                         v_normalized[i] = minv[i]
@@ -1339,7 +1335,7 @@ class Agent:
         return {k: normalize(k, v) for k, v in
                 [('player_scalar_stats', self._fight2_player_scalar_stats()),
                  ('semantic_maps', self._fight2_semantic_maps()),
-                 ('heur_actions_priorities', self._fight_2_encoded_heur_action_priorities(heur_priorities))]}
+                 ('heur_action_priorities', self._fight_2_encoded_heur_action_priorities(heur_priorities))]}
 
     def _fight2_perform_action(self, best_action, wait_counter):
         if best_action[0] == 'move':

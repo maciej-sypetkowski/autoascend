@@ -94,11 +94,14 @@ class EnvWrapper:
 
         self.is_done = False
 
+    def _init_agent(self):
+        self.agent = agent_lib.Agent(self, **self.agent_args)
+
     def main(self):
         self.reset()
         while 1:
             try:
-                self.agent = agent_lib.Agent(self, **self.agent_args)
+                self._init_agent()
                 self.agent.main()
                 break
             except ReloadAgent:
@@ -108,9 +111,6 @@ class EnvWrapper:
 
             self.agent = None
             reload_agent()
-
-    def set_agent(self, agent):
-        self.agent = agent
 
     def reset(self):
         obs = self.env.reset()
@@ -654,12 +654,11 @@ def run_simulations(args):
     all_res = {}
     refs = []
 
-    @ray.remote
+    @ray.remote(num_gpus=1 / 4 if args.with_gpu else 0)
     def remote_simulation(args, seed_offset, timeout=500):
         # I think there is some nondeterminism in nle environment when playing
         # multiple episodes (maybe bones?). That should do the trick
         q = Queue()
-
         def sim():
             q.put(single_simulation(args, seed_offset, timeout=timeout))
 
@@ -757,6 +756,7 @@ def parse_args():
     parser.add_argument('--visualize-ends', type=Path, default=None,
                         help='Path to json file with dict: seed -> visualization_start_step')
     parser.add_argument('--profiler', choices=('cProfile', 'pyinstrument', 'none'), default='pyinstrument')
+    parser.add_argument('--with-gpu', action='store_true')
 
     args = parser.parse_args()
     if args.seed is None:
