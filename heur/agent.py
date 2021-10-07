@@ -1226,8 +1226,8 @@ class Agent:
             # import pickle
             # import base64
             # encoded = base64.b64encode(pickle.dumps(observation)).decode()
-            # with open('/tmp/observations.txt', 'a') as f:
-            #     f.write(encoded + '\n')
+            # with open('/tmp/vis/observations.txt', 'a', buffering=1) as f:
+            #     f.writelines([encoded + '\n'])
 
             priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
             # rl_action = self._fight2_model.choose_action(observation, list(action_priorities_for_rl.keys()))
@@ -1324,9 +1324,9 @@ class Agent:
 
     def _fight2_get_observation(self, heur_priorities):
         def normalize(name, features):
+            return features
             mean, std, minv = [self._fight2_features_stats[name][k] for k in ['mean', 'std', 'min']]
             v_normalized = features.copy()
-            print(features.shape)
             assert len(mean) == features.shape[0]
             for i in range(features.shape[0]):
                 v_normalized[i, ...] = (features[i, ...] - mean[i]) / std[i]

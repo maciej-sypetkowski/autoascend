@@ -2,13 +2,14 @@ import json
 import base64
 import pickle
 from collections import defaultdict
+from pathlib import Path
 
 import seaborn as sns
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-with open('observations.txt') as f:
+with open('/tmp/vis/observations.txt') as f:
     observations = defaultdict(list)
     for line in f.readlines():
         observation = pickle.loads(base64.b64decode(line))
