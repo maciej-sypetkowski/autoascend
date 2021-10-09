@@ -152,5 +152,5 @@ if __name__ == '__main__':
     pd.set_option('display.width', None)
     pd.set_option('display.max_colwidth', 30)
 
-    filepath = '/tmp/nh_sim.json' if len(sys.argv) <= 1 else sys.argv[1]
+    filepath = '/workspace/nh_sim.json' if len(sys.argv) <= 1 else sys.argv[1]
     main(filepath)

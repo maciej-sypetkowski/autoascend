@@ -734,7 +734,7 @@ def run_simulations(args):
         print('\n'.join(text) + '\n')
 
         if args.visualize_ends is None:
-            with Path('/tmp/nh_sim.json').open('w') as f:
+            with Path('/workspace/nh_sim.json').open('w') as f:
                 json.dump(all_res, f)
 
     print('DONE!')

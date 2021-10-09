@@ -10,7 +10,6 @@ import numpy as np
 from nle.nethack import actions as A
 
 import fight_heur
-import rl_utils
 import utils
 from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
@@ -77,7 +76,7 @@ class Agent:
         self._last_terrain_check = None
         self._forbidden_engrave_position = (-1, -1)
 
-        self._init_fight2_model()
+        # self._init_fight2_model()
 
         self.stats_logger = StatsLogger()
 
@@ -1142,31 +1141,8 @@ class Agent:
             if not actions:
                 assert 0, 'No possible action available during fight2'
 
-            action_priorities_for_rl = dict()
-            for pr, action in actions:
-                if action[0] == 'go_to':
-                    continue
-                if action[0] == 'pickup':
-                    action = (action[0], )
-                if action[0] == 'zap':
-                    action = action[:3]
-                if action[0] not in ('zap', 'pickup'):
-                    assert action in self._fight2_model.action_space, action
-                    action_priorities_for_rl[action] = pr
-
-            observation = self._fight2_get_observation(action_priorities_for_rl)
-
-            # uncomment to gather features for get_observations_stats.py
-            # import pickle
-            # import base64
-            # encoded = base64.b64encode(pickle.dumps(observation)).decode()
-            # with open('/tmp/vis/observations.txt', 'a', buffering=1) as f:
-            #     f.writelines([encoded + '\n'])
-
+            # best_action = self.rl_communicate(actions)
             priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
-            rl_action = self._fight2_model.choose_action(self, observation, list(action_priorities_for_rl.keys()))
-            # TODO: use RL
-            best_action = rl_action
 
             with self.env.debug_tiles(move_priority_heatmap, color='turbo', is_heatmap=True):
                 def action_str(action):
@@ -1194,6 +1170,33 @@ class Agent:
                 with self.env.debug_log(actions_str):
                     wait_counter = self._fight2_perform_action(best_action, wait_counter)
 
+    def rl_communicate(self, actions):
+        action_priorities_for_rl = dict()
+        for pr, action in actions:
+            if action[0] == 'go_to':
+                continue
+            if action[0] == 'pickup':
+                action = (action[0],)
+            if action[0] == 'zap':
+                action = action[:3]
+            if action[0] not in ('zap', 'pickup'):
+                assert action in self._fight2_model.action_space, action
+                action_priorities_for_rl[action] = pr
+        observation = self._fight2_get_observation(action_priorities_for_rl)
+
+        # uncomment to gather features for get_observations_stats.py
+        # import pickle
+        # import base64
+        # encoded = base64.b64encode(pickle.dumps(observation)).decode()
+        # with open('/tmp/vis/observations.txt', 'a', buffering=1) as f:
+        #     f.writelines([encoded + '\n'])
+
+        priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
+        rl_action = self._fight2_model.choose_action(self, observation, list(action_priorities_for_rl.keys()))
+        # TODO: use RL
+        best_action = rl_action
+        return best_action
+
     def _fight2_action_space(self):
         directions = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1)]
         return [
@@ -1205,7 +1208,7 @@ class Agent:
         ]
 
     def _init_fight2_model(self):
-        # TODO
+        import rl_utils
         self._fight2_model = rl_utils.RLModel((
                 ('player_scalar_stats', ((5,), np.float32)),
                 ('semantic_maps', ((3, RL_CONTEXT_SIZE, RL_CONTEXT_SIZE), np.float32)),
