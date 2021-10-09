@@ -84,7 +84,8 @@ class MuZero:
             )
         else:
             total_gpus = 0
-        self.num_gpus = total_gpus / split_resources_in
+        #self.num_gpus = total_gpus / split_resources_in
+        self.num_gpus = 1
         if 1 < self.num_gpus:
             self.num_gpus = math.floor(self.num_gpus)
 

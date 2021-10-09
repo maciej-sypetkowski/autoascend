@@ -9,6 +9,6 @@ docker run --gpus='"device='$devices'"' --ipc=host --net=host -it --rm \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v $HOME/.Xauthority:/root/.Xauthority \
     -v /tmp/vis:/tmp/vis \
+    -v /data2/checkpoints/nethack:/checkpoints \
     -v `pwd`:/workspace nethack $@
 
-# -v /data2/checkpoints/nethack:/checkpoints nethack $@

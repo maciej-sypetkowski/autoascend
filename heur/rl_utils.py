@@ -16,7 +16,7 @@ class RLModel:
         else:
             import self_play
             import games.nethack
-            checkpoint = torch.load('/workspace/2021-10-05--14-14-06/model.checkpoint')
+            checkpoint = torch.load('/checkpoints/nethack/2021-10-08--16-13-24/model.checkpoint')
             config = games.nethack.MuZeroConfig(rl_model=self)
             self.inference_iterator = self_play.SelfPlayNoRay(checkpoint, lambda *a: None, config, 0) \
                     .play_game_generator(0, 0, False, config.opponent, 0)

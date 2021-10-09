@@ -1152,7 +1152,7 @@ class Agent:
                     action = action[:3]
                 if action[0] not in ('zap', 'pickup'):
                     assert action in self._fight2_model.action_space, action
-                action_priorities_for_rl[action] = pr
+                    action_priorities_for_rl[action] = pr
 
             observation = self._fight2_get_observation(action_priorities_for_rl)
 
@@ -1164,9 +1164,9 @@ class Agent:
             #     f.writelines([encoded + '\n'])
 
             priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
-            # rl_action = self._fight2_model.choose_action(self, observation, list(action_priorities_for_rl.keys()))
+            rl_action = self._fight2_model.choose_action(self, observation, list(action_priorities_for_rl.keys()))
             # TODO: use RL
-            # best_action = rl_action
+            best_action = rl_action
 
             with self.env.debug_tiles(move_priority_heatmap, color='turbo', is_heatmap=True):
                 def action_str(action):
@@ -1257,7 +1257,6 @@ class Agent:
 
     def _fight2_get_observation(self, heur_priorities):
         def normalize(name, features):
-            return features
             mean, std, minv = [self._fight2_features_stats[name][k] for k in ['mean', 'std', 'min']]
             v_normalized = features.copy()
             assert len(mean) == features.shape[0], (len(mean), features.shape[0])
@@ -1269,6 +1268,7 @@ class Agent:
                         v_normalized[i] = minv[i]
             else:
                 v_normalized[np.isnan(v_normalized)] = 0
+            return v_normalized
         return {k: normalize(k, v) for k, v in
                 [('player_scalar_stats', self._fight2_player_scalar_stats()),
                  ('semantic_maps', self._fight2_semantic_maps()),
