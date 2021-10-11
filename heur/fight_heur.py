@@ -114,7 +114,7 @@ def is_monster_faster(agent, monster):
 
 def imminent_death_on_melee(agent, monster):
     if is_dangerous_monster(monster):
-        return agent.blstats.hitpoints <= 15
+        return agent.blstats.hitpoints <= 16
     return agent.blstats.hitpoints <= 8
 
 
@@ -208,6 +208,20 @@ def melee_monster_priority(agent, monsters, monster):
             ret -= 100
             if mon.mname == 'floating eye':
                 ret -= 10
+            if mon.mname == 'gas spore':
+                ret -= 5
+
+    if mon.mname == 'gas spore':
+        # handle a specific case when you are trapped by a gas spore
+        if len(agent.get_visible_monsters()) == 1 \
+                and agent.blstats.hitpoints / agent.blstats.max_hitpoints:
+            dis = agent.bfs()
+            for y2, x2 in zip(*np.nonzero(dis != -1)):
+                if not utils.adjacent((y, x), (y2, x2)):
+                    return ret
+            agent.stats_logger.log_event('melee_gas_spore')
+            return 1 # a priority higher than random moving around
+
     return ret
 
 
@@ -340,6 +354,9 @@ def is_dangerous_monster(monster):
     _, y, x, mon, _ = monster
     is_pet = 'dog' in mon.mname or 'cat' in mon.mname or 'kitten' in mon.mname or 'pony' in mon.mname \
              or 'horse' in mon.mname
+    # 'mumak' in mon.mname or 'orc' in mon.mname or 'rothe' in mon.mname \
+    # or 'were' in mon.mname or 'unicorn' in mon.mname or 'elf' in mon.mname or 'leocrotta' in mon.mname \
+    # or 'mimic' in mon.mname
     return is_pet or mon.mname in INSECTS
 
 
@@ -402,14 +419,14 @@ def elbereth_action(agent, monsters):
 
     player_hp_ratio = (agent.blstats.hitpoints / agent.blstats.max_hitpoints) ** 0.5
     if agent.blstats.hitpoints < 30 and adj_monsters_count > 0:
-        return [(-15 + 20 * adj_monsters_count * (1 - player_hp_ratio), 'elbereth')]
+        return [(-15 + 20 * adj_monsters_count * (1 - player_hp_ratio), ('elbereth', ))]
     return []
 
 
 def wait_action(agent, monsters):
     if agent.inventory.engraving_below_me.lower() == 'elbereth':
         player_hp_ratio = agent.blstats.hitpoints / agent.blstats.max_hitpoints
-        priority = 25 - player_hp_ratio * 40
+        priority = 30 - player_hp_ratio * 40
         return [(priority, ('wait',))]
     return []
 
@@ -446,8 +463,8 @@ def get_available_actions(agent, monsters):
     if to_pickup:
         actions.append((15, ('pickup', to_pickup)))
 
-    # actions.extend(elbereth_action(agent, monsters))
-    # actions.extend(wait_action(agent, monsters))
+    actions.extend(elbereth_action(agent, monsters))
+    actions.extend(wait_action(agent, monsters))
 
     return actions
 

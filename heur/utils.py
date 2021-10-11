@@ -1,9 +1,12 @@
-import cv2
 import functools
+from collections import Counter
 from functools import partial, wraps
 from itertools import chain
 
+import cv2
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 import toolz
 
 from strategy import Strategy
@@ -195,3 +198,42 @@ def slice_with_padding(array, a1, a2, b1, b2, pad_value=0):
 def slice_square_with_padding(array, center_y, center_x, radius, pad_value=0):
     return slice_with_padding(array, center_y - radius, center_y + radius + 1,
                               center_x - radius, center_x + radius + 1, pad_value=pad_value)
+
+
+def plot_dashboard(fig, res):
+    histogram_keys = ['score', 'steps', 'turns', 'level_num', 'experience_level', 'milestone']
+    spec = fig.add_gridspec(len(histogram_keys) + 2, 2)
+    for i, k in enumerate(histogram_keys):
+        ax = fig.add_subplot(spec[i, 0])
+        ax.set_title(k)
+        if isinstance(res[k][0], str):
+            counter = Counter(res[k])
+            sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
+        else:
+            if k in ['level_num', 'experience_level', 'milestone']:
+                bins = [b + 0.5 for b in range(max(res[k]) + 1)]
+            else:
+                bins = np.quantile(res[k],
+                                   np.linspace(0, 1, min(len(res[k]) // (20 + len(res[k]) // 50) + 2, 50)))
+            sns.histplot(res[k], bins=bins, stat='density', ax=ax)
+            if k == 'milestone':
+                ticks = sorted(set([(int(m), str(m)) for m in res[k]]))
+                plt.xticks(ticks=[t[0] for t in ticks], labels=[t[1] for t in ticks])
+    ax = fig.add_subplot(spec[:len(histogram_keys) // 2, 1])
+    sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
+    ax = fig.add_subplot(spec[len(histogram_keys) // 2: -2, 1])
+    sns.scatterplot(x='turns', y='score', data=res, ax=ax)
+    ax = fig.add_subplot(spec[-2:, :])
+    res['role'] = [h.split('-')[0] for h in res['character']]
+    res['race'] = [h.split('-')[1] for h in res['character']]
+    res['gender'] = [h.split('-')[2] for h in res['character']]
+    res['alignment'] = [h.split('-')[3] for h in res['character']]
+    res['race-alignment'] = [f'{r}-{a}' for r, a in zip(res['race'], res['alignment'])]
+    sns.violinplot(x='role', y='score', color='white', hue='gender',
+                   hue_order=sorted(set(res['gender'])), split=len(set(res['gender'])) == 2,
+                   order=sorted(set(res['role'])), inner='quartile',
+                   data=res, ax=ax)
+    palette = ['#ff7043', '#cc3311', '#ee3377', '#0077bb', '#33bbee', '#009988', '#bbbbbb']
+    sns.swarmplot(x='role', y='score', hue='race-alignment', hue_order=sorted(set(res['race-alignment'])),
+                  order=sorted(set(res['role'])),
+                  data=res, ax=ax, palette=palette)

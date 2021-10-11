@@ -408,6 +408,11 @@ class Visualizer:
             _put_text(ret, ' | '.join(f'{k}={v}' for k, v in stats[j * 3: (j + 1) * 3]),
                       (0, i * FONT_SIZE), color=(100, 100, 100))
             i += 1
+        i += 1
+
+        monsters = [(dis, y, x, mon.mname) for dis, y, x, mon, _ in self.env.agent.get_visible_monsters()]
+        _put_text(ret, 'Monsters: ' + str(monsters), (0, i * FONT_SIZE))
+
         _draw_frame(ret)
         return ret
 

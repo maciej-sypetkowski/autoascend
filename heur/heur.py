@@ -14,8 +14,7 @@ import traceback
 import tty
 import warnings
 from argparse import ArgumentParser
-from collections import Counter
-from multiprocessing import Pool, Process, Queue
+from multiprocessing import Process, Queue
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from pprint import pprint
@@ -26,6 +25,7 @@ import numpy as np
 
 import agent as agent_lib
 import visualize
+from utils import plot_dashboard
 
 
 def fork_with_nethack_env(env):
@@ -64,9 +64,6 @@ def reload_agent(base_path=str(Path(__file__).parent.absolute())):
         else:
             assert 0, ('cannot unload agent library',
                        {k: sys.getrefcount(sys.modules[k]) for k in modules_to_remove})
-
-    import agent as agent_lib
-    import visualize
 
 
 class ReloadAgent(KeyboardInterrupt):
@@ -601,49 +598,7 @@ def run_simulations(args):
                     continue
 
             fig.clear()
-
-            histogram_keys = ['score', 'steps', 'turns', 'level_num', 'experience_level', 'milestone']
-            spec = fig.add_gridspec(len(histogram_keys) + 2, 2)
-
-            for i, k in enumerate(histogram_keys):
-                ax = fig.add_subplot(spec[i, 0])
-                ax.set_title(k)
-                if isinstance(res[k][0], str):
-                    counter = Counter(res[k])
-                    sns.barplot(x=[k for k, v in counter.most_common()], y=[v for k, v in counter.most_common()])
-                else:
-                    if k in ['level_num', 'experience_level', 'milestone']:
-                        bins = [b + 0.5 for b in range(max(res[k]) + 1)]
-                    else:
-                        bins = np.quantile(res[k],
-                                           np.linspace(0, 1, min(len(res[k]) // (20 + len(res[k]) // 50) + 2, 50)))
-                    sns.histplot(res[k], bins=bins, stat='density', ax=ax)
-                    if k == 'milestone':
-                        ticks = sorted(set([(int(m), m.name) for m in res[k]]))
-                        plt.xticks(ticks=[t[0] for t in ticks], labels=[t[1] for t in ticks])
-
-            ax = fig.add_subplot(spec[:len(histogram_keys) // 2, 1])
-            sns.scatterplot(x='turns', y='steps', data=res, ax=ax)
-
-            ax = fig.add_subplot(spec[len(histogram_keys) // 2: -2, 1])
-            sns.scatterplot(x='turns', y='score', data=res, ax=ax)
-
-            ax = fig.add_subplot(spec[-2:, :])
-            res['role'] = [h.split('-')[0] for h in res['character']]
-            res['race'] = [h.split('-')[1] for h in res['character']]
-            res['gender'] = [h.split('-')[2] for h in res['character']]
-            res['alignment'] = [h.split('-')[3] for h in res['character']]
-            res['race-alignment'] = [f'{r}-{a}' for r, a in zip(res['race'], res['alignment'])]
-            sns.violinplot(x='role', y='score', color='white', hue='gender',
-                           hue_order=sorted(set(res['gender'])), split=len(set(res['gender'])) == 2,
-                           order=sorted(set(res['role'])), inner='quartile',
-                           data=res, ax=ax)
-
-            palette = ['#ff7043', '#cc3311', '#ee3377', '#0077bb', '#33bbee', '#009988', '#bbbbbb']
-            sns.swarmplot(x='role', y='score', hue='race-alignment', hue_order=sorted(set(res['race-alignment'])),
-                          order=sorted(set(res['role'])),
-                          data=res, ax=ax, palette=palette)
-
+            plot_dashboard(fig, res)
             fig.tight_layout()
             plt.show(block=False)
 
@@ -651,7 +606,6 @@ def run_simulations(args):
         plt_process = Process(target=plot_thread_func)
         plt_process.start()
 
-    all_res = {}
     refs = []
 
     @ray.remote(num_gpus=1 / 4 if args.with_gpu else 0)
@@ -682,11 +636,27 @@ def run_simulations(args):
         # p.join(timeout=timeout + 1)
         # assert not q.empty()
 
+    try:
+        with Path('/workspace/nh_sim.json').open('r') as f:
+            all_res = json.load(f)
+        print('Continue running: ', (len(all_res['seed'])))
+    except FileNotFoundError:
+        all_res = {}
+
+    done_seeds = set()
+    if 'seed' in all_res:
+        done_seeds = set(s[0] for s in all_res['seed'])
+
+    print('skipping seeds', done_seeds)
     for seed_offset in range(args.episodes):
+        seed = args.seed + seed_offset
+        if seed in done_seeds:
+            continue
         if args.visualize_ends is None or seed_offset in [k % 10 ** 9 for k in args.visualize_ends]:
             refs.append(remote_simulation.remote(args, seed_offset))
 
-    count = 0
+    count = len(done_seeds)
+    initial_count = count
     for handle in refs:
         ref, refs = ray.wait(refs, num_returns=1, timeout=None)
         single_res = ray.get(ref[0])
@@ -711,7 +681,7 @@ def run_simulations(args):
         text.append(f'count                         : {count}')
         text.append(f'time_per_simulation           : {np.mean(all_res["duration"])}')
         text.append(f'simulations_per_hour          : {3600 / np.mean(all_res["duration"])}')
-        text.append(f'simulations_per_hour(multi)   : {3600 * count / total_duration}')
+        text.append(f'simulations_per_hour(multi)   : {3600 * (count - initial_count) / total_duration}')
         text.append(f'time_per_turn                 : {np.sum(all_res["duration"]) / np.sum(all_res["turns"])}')
         text.append(f'turns_per_second              : {np.sum(all_res["turns"]) / np.sum(all_res["duration"])}')
         text.append(f'turns_per_second(multi)       : {np.sum(all_res["turns"]) / total_duration}')

@@ -76,6 +76,11 @@ class Agent:
         self._last_terrain_check = None
         self._forbidden_engrave_position = (-1, -1)
 
+        # when (number of turn) there was last decision about allowing these actions (e.g. agent is somewhat stuck)
+        self._allow_walking_through_traps_turn = -float('inf')
+        self._allow_attack_all_turn = -float('inf')
+
+        # uncomment to use RL-based fight decisions
         # self._init_fight2_model()
 
         self.stats_logger = StatsLogger()
@@ -437,6 +442,12 @@ class Agent:
 
         self.blstats = BLStats(*self.last_observation['blstats'])
         self.glyphs = self.last_observation['glyphs']
+
+        self.stats_logger.log_cumulative_value('max_turns_on_position',
+            key=(self.current_level().dungeon_number,
+                self.current_level().level_number,
+                self.blstats.y, self.blstats.x),
+            value=self.blstats.time - self._last_turn)
 
         self._inactivity_counter += 1
         if self._last_turn != self.blstats.time:
@@ -821,7 +832,7 @@ class Agent:
                                  f'expected ({expected_y}, {expected_x}), got ({self.blstats.y}, {self.blstats.x})')
 
     def can_engrave(self):
-        if self.agent.character.prop.polymorph:
+        if self.character.prop.polymorph:
             return False  # TODO: only for handless monsters (which cannot write)
         return (self.blstats.y, self.blstats.x) != self._forbidden_engrave_position
 
@@ -889,8 +900,10 @@ class Agent:
         level = self.current_level()
 
         walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
-                   ~self.monster_tracker.peaceful_monster_mask & \
-                   ~utils.isin(level.objects, G.TRAPS)
+                   ~self.monster_tracker.peaceful_monster_mask
+
+        if self._last_turn - self._allow_walking_through_traps_turn > 50:
+            walkable &= ~utils.isin(level.objects, G.TRAPS)
 
         for my, mx in list(zip(*np.nonzero(utils.isin(self.glyphs, G.MONS)))):
             mon = MON.permonst(self.glyphs[my][mx])
@@ -1110,6 +1123,7 @@ class Agent:
         wait_counter = 0
         while 1:
             monsters = self.get_visible_monsters()
+            allow_attack_all = self._last_turn - self._allow_attack_all_turn < 3
             only_ranged_slow_monsters = all([monster[3].mname in fight_heur.ONLY_RANGED_SLOW_MONSTERS
                                              and not fight_heur.consider_melee_only_ranged_if_hp_full(self, monster)
                                              for monster in monsters])
@@ -1117,8 +1131,8 @@ class Agent:
             dis = self.bfs()
 
             if not monsters or all(dis > 7 for dis, *_ in monsters) or \
-                    (only_ranged_slow_monsters and not self.inventory.get_ranged_combinations() and np.sum(
-                        dis != -1) > 1):
+                    (only_ranged_slow_monsters and not self.inventory.get_ranged_combinations()
+                     and np.sum(dis != -1) > 1 and not allow_attack_all):
                 if wait_counter:
                     self.search()
                     wait_counter -= 1
@@ -1137,6 +1151,11 @@ class Agent:
 
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
+
+            if allow_attack_all:
+                attack_actions = [a for a in actions if a[1][0] in ('melee', 'ranged', 'zap')]
+                if attack_actions:
+                    actions = attack_actions
 
             if not actions:
                 assert 0, 'No possible action available during fight2'
@@ -1320,6 +1339,7 @@ class Agent:
             return wait_counter
         elif best_action[0] == 'wait':
             assert self.inventory.engraving_below_me.lower() == 'elbereth'
+            self.stats_logger.log_event('wait_in_fight')
             self.search()
             return wait_counter
         elif best_action[0] == 'zap':

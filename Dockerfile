@@ -36,3 +36,8 @@ RUN python -c 'from pathlib import Path ; text = Path("/nle/src/tile.c").read_te
                print("glyph2tile = [", text[text.find("{") + 1 : text.find("};")], "]")' >/glyph2tile.py
 RUN cd / && python -c 'import nle ; from glyph2tile import glyph2tile ; \
                        assert isinstance(glyph2tile, list) and len(glyph2tile) == nle.nethack.MAX_GLYPH'
+
+RUN apt update && apt install -y npm
+RUN pip install -U jupyterlab==1.2.14
+RUN jupyter labextension uninstall jupyterlab-jupytext jupyterlab_tensorboard
+RUN jupyter labextension install jupyterlab_vim
