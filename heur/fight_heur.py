@@ -535,7 +535,7 @@ def get_priorities(agent):
     actions = get_available_actions(agent, monsters)
     if not actions:
         actions.extend(goto_action(agent, priority, monsters))
-    return priority, actions
+    return priority, actions 
 
 
 def get_move_actions(agent, dis, move_priority_heatmap):
