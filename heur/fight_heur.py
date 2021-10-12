@@ -533,9 +533,9 @@ def get_priorities(agent):
     priority -= priority[agent.blstats.y, agent.blstats.x]
 
     actions = get_available_actions(agent, monsters)
-    if not actions:
+    if not any(a[1][0] in ('melee', 'ranged') for a in actions):
         actions.extend(goto_action(agent, priority, monsters))
-    return priority, actions 
+    return priority, actions
 
 
 def get_move_actions(agent, dis, move_priority_heatmap):
