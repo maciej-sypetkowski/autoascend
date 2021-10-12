@@ -4,6 +4,7 @@ import numpy as np
 from nle.nethack import actions as A
 
 import utils
+from exceptions import AgentPanic
 from glyph import C, G
 
 try:
@@ -65,8 +66,12 @@ class MonsterTracker:
         self.monster_mask = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
 
     def take_all_monsters(self):
+        if utils.any_in(self.agent.glyphs, G.SWALLOW):
+            return {}
         with self.agent.atom_operation():
             self.agent.step(A.Command.WHATIS, iter(['M']))
+            if 'No monsters are currently shown on the map.' in self.agent.message:
+                return {}
             try:
                 index = self.agent.popup.index('All monsters currently shown on the map:')
             except IndexError:
@@ -114,8 +119,8 @@ class MonsterTracker:
                 all_monsters = self.take_all_monsters()
                 self.monster_mask, pet_mask = self._get_current_masks()  # glyphs can change sometimes after calling `take_all_monsters`
                 for (y, x), name in all_monsters.items():
-                    assert self.monster_mask[y, x] or pet_mask[y, x] or (y, x) == (self.agent.blstats.y, self.agent.blstats.x), \
-                           (name, (y, x), list(zip(*self.monster_mask.nonzero())))
+                    if not (self.monster_mask[y, x] or pet_mask[y, x] or (y, x) == (self.agent.blstats.y, self.agent.blstats.x)):
+                        raise AgentPanic('monsters differs between list and glyphs')
                     if 'peaceful' in name and not pet_mask[y, x]:
                         self.peaceful_monster_mask[y, x] = 1
             else:

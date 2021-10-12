@@ -704,6 +704,8 @@ class Agent:
                     (' trap here.' in self.message or ' field here.' in self.message) and \
                     ('trap?' in self.message or 'field?' in self.message):
                 self.type_text('n')
+            if 'You cannot disable this trap.' in self.single_message:
+                return
             assert 'Check it for traps?' in self.single_message, self.single_message
             self.type_text('y')
             if self.message.startswith('You find no traps on the'):

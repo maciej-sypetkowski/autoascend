@@ -573,7 +573,7 @@ class ItemManager:
             r'( ([+-]\d+))? '
             r"([a-zA-z0-9-!'# ]+)"
             r'( \(([0-9]+:[0-9]+|no charge)\))?'
-            r'( \(([a-zA-Z0-9; ]+(, flickering|, gleaming)?[a-zA-Z0-9; ]*)\))?'
+            r'( \(([a-zA-Z0-9; ]+(, flickering|, gleaming|, glimmering)?[a-zA-Z0-9; ]*)\))?'
             r'( \((for sale|unpaid), (\d+ aum, )?((\d+)[a-zA-Z- ]+|no charge)\))?'
             r'$',
             text)
@@ -925,7 +925,9 @@ class ItemManager:
         appearance_ids = list(appearance_ids)
         assert len(appearance_ids) == 0 or len({ord(nh.objclass(i).oc_class) for i in appearance_ids}), name
 
-        assert (len(obj_ids) > 0) ^ (len(appearance_ids) > 0), (name, obj_ids, appearance_ids)
+        #assert (len(obj_ids) > 0) ^ (len(appearance_ids) > 0), (name, obj_ids, appearance_ids)
+        if (len(obj_ids) > 0) == (len(appearance_ids) > 0):
+            return [O.from_name('unknown')], O.possible_glyphs_from_object(O.from_name('unknown'))
 
         if obj_ids:
             assert len(obj_ids) == 1, name
@@ -1009,6 +1011,7 @@ class InventoryItems:
                 (self.agent.last_observation['inv_strs'] != self._previous_inv_strs).any():
             self._clear()
             self._previous_inv_strs = self.agent.last_observation['inv_strs']
+            previous_inv_strs = self._previous_inv_strs
 
             # For some reasons sometime the inventory entries in last_observation may be duplicated
             iterable = set()
@@ -1053,9 +1056,10 @@ class InventoryItems:
 
                 if item.is_possible_container() or (item.is_container() and self._recheck_containers):
                     self.agent.inventory.check_container_content(item)
-                    if (self.agent.last_observation['inv_strs'] != self._previous_inv_strs).any():
-                        self.update()
-                        return
+
+                if (self.agent.last_observation['inv_strs'] != previous_inv_strs).any():
+                    self.update()
+                    return
 
                 self.total_weight += item.weight()
                 # weight is sometimes unambiguous for unidentified items. All exceptions:
@@ -1318,7 +1322,9 @@ class Inventory:
                 assert 'Take out what?' in self.agent.single_popup[0]
                 yield from self._select_items_in_popup(items_to_take, items_to_take_counts)
 
-                if 'You have ' in self.agent.single_message and ' removing ' in self.agent.single_message and \
+                if self.agent._observation['misc'][2]:
+                    yield ' '
+                while 'You have ' in self.agent.single_message and ' removing ' in self.agent.single_message and \
                         'Continue? [ynq] (q)' in self.agent.single_message:
                     yield 'y'
 
@@ -1479,7 +1485,8 @@ class Inventory:
         assert counts is None or len(counts) == len(items)
         items = list(items)
         while 1:
-            assert self.agent.single_popup, (self.agent.single_message, items)
+            if not self.agent.single_popup:
+                raise AgentPanic('no popup, but some items were not selected yet')
             for line_i in range(len(self.agent.single_popup)):
                 line = self.agent.single_popup[line_i]
                 if line[1:4] != ' - ':
@@ -1609,7 +1616,7 @@ class Inventory:
                     for current_screen in range(max(screens) + 1)))
                 self.agent.step(A.Command.PICKUP, iter(list(text) + [A.MiscAction.MORE]))
 
-            if re.search('You have [a-z ]+ lifting ', self.agent.message) and \
+            while re.search('You have [a-z ]+ lifting ', self.agent.message) and \
                     'Continue?' in self.agent.message:
                 self.agent.type_text('y')
             if one_item and drop_count:
@@ -1755,7 +1762,7 @@ class Inventory:
             else:
                 self.agent.step(A.Command.EAT)
             if item in self.items.all_items:
-                while re.search('There (is|are)[a-zA-z0-9 ]* here; eat (it|one)\?', self.agent.message):
+                while re.search('There (is|are)[a-zA-Z0-9- ]* here; eat (it|one)\?', self.agent.message):
                     self.agent.type_text('n')
                 self.agent.type_text(letter)
                 return True
