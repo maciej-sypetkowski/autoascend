@@ -299,7 +299,7 @@ class Item:
         return self.objs[0].desc != 'bag'
 
     def is_container(self):
-        # bag of tricks is not considered to be a container.
+        # don't consider bag of tricks as a container.
         # If the identifier doesn't exist yet, it's not consider a container
         return self.content is not None
 
