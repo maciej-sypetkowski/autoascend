@@ -107,6 +107,7 @@ class ItemPriority(ItemPriorityBase):
                         not item.is_possible_container():
                     to_bag = O.from_name('cancellation', nh.WAND_CLASS) not in item.objs and \
                              not item.is_offensive_usable_wand()
+                    to_bag = False
                     if not item.is_container():  # remove condition to pick up bags
                         add_item(item, to_bag=to_bag)
 
@@ -117,6 +118,7 @@ class ItemPriority(ItemPriorityBase):
                 if item.status == Item.UNKNOWN:
                     to_bag = O.from_name('cancellation', nh.WAND_CLASS) not in item.objs and \
                              not item.is_offensive_usable_wand()
+                    to_bag = False
                     if not item.is_container():  # remove condition to pick up bags
                         add_item(item, to_bag=to_bag)
 
