@@ -134,6 +134,8 @@ class ItemPriority(ItemPriorityBase):
 class Milestone(IntEnum):
     BE_ON_FIRST_LEVEL = auto()
     FIND_GNOMISH_MINES = auto()
+    FIND_LIGHT_GNOMISH_MINES = auto()
+    FARM_LIGHT_GNOMISH_MINES = auto()
     FIND_MINETOWN = auto()
     FIND_SOKOBAN = auto()
     SOLVE_SOKOBAN = auto()
@@ -509,6 +511,15 @@ class GlobalLogic:
             elif self.milestone == Milestone.FIND_GNOMISH_MINES:
                 condition = lambda: self.agent.current_level().dungeon_number == Level.GNOMISH_MINES
                 level = (Level.GNOMISH_MINES, 1)
+
+            elif self.milestone == Milestone.FIND_LIGHT_GNOMISH_MINES:
+                condition = lambda: self.agent.current_level().dungeon_number == Level.GNOMISH_MINES \
+                        and self.agent.current_level().is_light_level()
+                level = (Level.GNOMISH_MINES, 9)
+
+            elif self.milestone == Milestone.FARM_LIGHT_GNOMISH_MINES:
+                condition = lambda: self.agent.blstats.experience_level >= 11
+                level = (Level.GNOMISH_MINES, self.agent.current_level().level_number)
 
             elif self.milestone == Milestone.FIND_MINETOWN:
                 condition = lambda: self.minetown_level is not None

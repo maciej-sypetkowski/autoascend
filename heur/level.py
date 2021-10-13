@@ -3,7 +3,7 @@ from collections import defaultdict
 import numpy as np
 
 import utils
-from glyph import C, G, SHOP
+from glyph import C, G, SHOP, SS
 
 
 class Level:
@@ -59,3 +59,6 @@ class Level:
             elems.append(G.STAIR_UP)
         mask = utils.isin(self.objects, *elems)
         return {(y, x): self.stair_destination.get((y, x), None) for y, x in zip(*mask.nonzero())}
+
+    def is_light_level(self):
+        return np.sum(utils.isin(self.objects, [SS.S_room, SS.S_litcorr])) > 15
