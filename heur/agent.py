@@ -1599,7 +1599,7 @@ class Agent:
     ####### MAIN
 
     def handle_exception(self, exc):
-        if isinstance(exc, (KeyboardInterrupt, AgentFinished)):
+        if isinstance(exc, (KeyboardInterrupt, AgentFinished, SystemExit)):
             raise exc
         if isinstance(exc, BaseException):
             if not isinstance(exc, AgentPanic) and not self.panic_on_errors:
