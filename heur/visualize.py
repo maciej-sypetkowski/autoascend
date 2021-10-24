@@ -376,11 +376,13 @@ class Visualizer:
         i += 1
         txt = [f'HP: {self.env.agent.blstats.hitpoints} / {self.env.agent.blstats.max_hitpoints}',
                f'LVL: {self.env.agent.blstats.experience_level}',
+               f'ENERGY: {self.env.agent.blstats.energy} / {self.env.agent.blstats.max_energy}',
                ]
         hp_ratio = self.env.agent.blstats.hitpoints / self.env.agent.blstats.max_hitpoints
         hp_color = cv2.applyColorMap(np.array([[130 - int((1 - hp_ratio) * 110)]], dtype=np.uint8), cv2.COLORMAP_TURBO)[0, 0]
         _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE), color=tuple(map(int, hp_color)))
         i += 2
+
 
         # proficiency info
         colors = {
@@ -404,10 +406,14 @@ class Visualizer:
         i += 2
 
         stats = list(self.env.agent.stats_logger.get_stats_dict().items())
+        stats = [(k, v) for k, v in stats if v != 0]
         for j in range((len(stats) + 2) // 3):
             _put_text(ret, ' | '.join(f'{k}={v}' for k, v in stats[j * 3: (j + 1) * 3]),
                       (0, i * FONT_SIZE), color=(100, 100, 100))
             i += 1
+        i += 1
+
+        _put_text(ret, 'Known spells: ' + str(list(self.env.agent.character.known_spells)), (0, i * FONT_SIZE))
         i += 1
 
         monsters = [(dis, y, x, mon.mname) for dis, y, x, mon, _ in self.env.agent.get_visible_monsters()]

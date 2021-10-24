@@ -1758,7 +1758,10 @@ class Inventory:
         letter = self.items.get_letter(item)
         with self.agent.atom_operation():
             if quaff:
-                self.agent.step(A.Command.QUAFF)
+                def text_gen():
+                    if self.agent.message.startswith('Drink from the fountain?'):
+                        yield 'n'
+                self.agent.step(A.Command.QUAFF, text_gen())
             else:
                 self.agent.step(A.Command.EAT)
             if item in self.items.all_items:

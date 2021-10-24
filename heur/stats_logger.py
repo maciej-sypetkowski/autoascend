@@ -1,5 +1,7 @@
 from collections import defaultdict
 
+import character
+
 
 class StatsLogger:
     def __init__(self):
@@ -15,6 +17,8 @@ class StatsLogger:
             "sokoban_dropped": 0,
             "wait_in_fight": 0,
             "melee_gas_spore": 0,
+            **{f"cast_{n}": 0 for n in character.ALL_SPELL_NAMES},
+            **{f"cast_fail_{n}": 0 for n in character.ALL_SPELL_NAMES},
         }
         self._max_values = {
             "search_diff": -float('inf'),

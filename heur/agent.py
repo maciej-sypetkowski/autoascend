@@ -1,7 +1,7 @@
 import json
 import contextlib
 import re
-from collections import namedtuple, Counter
+from collections import namedtuple, Counter, defaultdict
 from functools import partial
 from stats_logger import StatsLogger
 
@@ -79,6 +79,8 @@ class Agent:
         # when (number of turn) there was last decision about allowing these actions (e.g. agent is somewhat stuck)
         self._allow_walking_through_traps_turn = -float('inf')
         self._allow_attack_all_turn = -float('inf')
+
+        self.last_cast_fail_turn = defaultdict(lambda: -float('inf'))
 
         # uncomment to use RL-based fight decisions
         # self._init_fight2_model()
@@ -763,6 +765,35 @@ class Agent:
             self.direction(direction)
         return True
 
+    def cast(self, spell_name, direction):
+        with self.atom_operation():
+            dy, dx = direction
+            direction = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx)
+            success = [False]
+            def type_letters():
+                # while f'{letter} - ' not in '\n'.join(self.single_popup):
+                #     yield A.TextCharacters.SPACE
+                # if self.single_message.startswith("You fail to cast the spell correctly."):
+                #     return
+                if 'You are too impaired' in self.message:
+                    return
+                yield self.character.known_spells[spell_name]
+                for _ in range(3):
+                    if 'In what direction?' in self.message:
+                        break
+                    yield ' '
+                if 'In what direction?' in self.message:
+                    print('asdasdasdasdasd')
+                    success[0] = True
+                    yield direction
+
+            self.step(A.Command.CAST, type_letters())
+            if success[0]:
+                self.stats_logger.log_event(f'cast_{spell_name}')
+            else:
+                self.last_cast_fail_turn[spell_name] = self._last_turn
+                self.stats_logger.log_event(f'cast_fail_{spell_name}')
+
     def kick(self, y, x=None):
         with self.panic_if_position_changes():
             with self.atom_operation():
@@ -1030,35 +1061,6 @@ class Agent:
 
     ######## LOW-LEVEL STRATEGIES
 
-    @utils.debug_log('ranged_stance1')
-    def ranged_stance1(self):
-        while True:
-            valid_combinations = self.inventory.get_ranged_combinations(throwing=False)
-
-            # TODO: select best combination
-            if not valid_combinations:
-                self.wield_best_melee_weapon()
-                return False
-
-            # TODO: consider using monster information to select the best combination
-            launcher, ammo = valid_combinations[0]
-            if not launcher.equipped:
-                if not self.inventory.wield(launcher):
-                    return False
-                continue
-
-            for _, y, x, _, _ in self.get_visible_monsters():
-                if (self.blstats.y == y or self.blstats.x == x or abs(self.blstats.y - y) == abs(self.blstats.x - x)):
-                    # TODO: don't shoot pet !
-                    # TODO: limited range
-                    with self.env.debug_tiles([[y, x]], (0, 0, 255, 100)):
-                        dir = self.calc_direction(self.blstats.y, self.blstats.x, y, x, allow_nonunit_distance=True)
-                        if not self.fire(ammo, dir):
-                            return False
-                        break
-            else:
-                return False
-
     def get_visible_monsters(self):
         """ Returns list of tuples (distance, y, x, permonst, monster_glyph)
         """
@@ -1083,40 +1085,6 @@ class Agent:
                     ret.append((dis[y][x], y, x, MON.permonst(self.glyphs[y][x]), self.glyphs[y][x]))
         ret.sort()
         return ret
-
-    def should_keep_distance(self, monsters):
-        ret = np.zeros(len(monsters), dtype=bool)
-        for i, (dis, y, x, mon, _) in enumerate(monsters):
-            if max(abs(x - self.blstats.x), abs(y - self.blstats.y)) not in (1, 2):
-                continue
-            # if mon.mname == 'goblin':
-            #     ret[i] = True
-            if self.blstats.hitpoints <= 8:
-                ret[i] = True
-        return ret
-
-    @utils.debug_log('keep_distance')
-    def keep_distance(self, monsters, keep_distance):
-        if not keep_distance.any():
-            return False
-        monsters = [m for m, k in zip(monsters, keep_distance) if k]
-        bad_tiles = ~self.current_level().walkable
-        for _, y, x, _, _ in monsters:
-            for y1 in (y - 1, y, y + 1):
-                for x1 in (x - 1, x, x + 1):
-                    if 0 <= y1 <= bad_tiles.shape[0] and 0 <= x1 <= bad_tiles.shape[1]:
-                        bad_tiles[y1, x1] = True
-
-        with self.env.debug_tiles(bad_tiles, color=(255, 0, 0, 64)):
-            for y1 in (y - 1, y, y + 1):
-                for x1 in (x - 1, x, x + 1):
-                    if 0 <= y1 <= bad_tiles.shape[0] and 0 <= x1 <= bad_tiles.shape[1]:
-                        if not bad_tiles[y1][x1]:
-                            with self.env.debug_tiles([[y1, x1]], color=(0, 255, 0, 64)):
-                                self.move(y1, x1)
-                            return True
-
-        return False
 
     @utils.debug_log('fight2')
     @Strategy.wrap
@@ -1147,6 +1115,7 @@ class Agent:
                 yielded = True
                 yield True
                 self.character.parse_enhance_view()
+                self.character.parse_spellcast_view()
 
             move_priority_heatmap, actions = fight_heur.get_priorities(self)
             actions.extend(fight_heur.get_move_actions(self, dis, move_priority_heatmap))
@@ -1519,9 +1488,26 @@ class Agent:
         if not yielded:
             yield False
 
+    def should_cast_heal(self):
+        if 'healing' not in self.character.known_spells:
+            return False
+        if self.blstats.hunger_state >= Hunger.FAINTING:
+            return False
+        if self._last_turn - self.last_cast_fail_turn['healing'] < 10:
+            return False
+        hp_ratio = self.blstats.hitpoints / self.blstats.max_hitpoints
+        low_hp = hp_ratio < 0.5 or (self.blstats.hitpoints < 10 and self.blstats.max_hitpoints > 10)
+        return self.blstats.energy >= 5 and low_hp
+
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
     def emergency_strategy(self):
+
+        if self.should_cast_heal():
+            yield True
+            self.cast('healing', direction=(0, 0))
+            return
+
         if (
                 self.is_safe_to_pray() and
                 (self.blstats.hitpoints < 1 / (5 if self.blstats.experience_level < 6 else 6)
@@ -1621,6 +1607,7 @@ class Agent:
                         ((Level.PLANE, 1), (None, None))  # TODO: check level num
                     self.character.parse()
                     self.character.parse_enhance_view()
+                    self.character.parse_spellcast_view()
                     self.step(A.Command.AUTOPICKUP)
                     if 'Autopickup: ON' in self.message:
                         self.step(A.Command.AUTOPICKUP)
