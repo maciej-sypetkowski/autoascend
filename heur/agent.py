@@ -783,7 +783,6 @@ class Agent:
                         break
                     yield ' '
                 if 'In what direction?' in self.message:
-                    print('asdasdasdasdasd')
                     success[0] = True
                     yield direction
 
@@ -1495,9 +1494,22 @@ class Agent:
             return False
         if self._last_turn - self.last_cast_fail_turn['healing'] < 10:
             return False
+        if self.character.spell_fail_chance['healing'] > 0.2:
+            return False
         hp_ratio = self.blstats.hitpoints / self.blstats.max_hitpoints
-        low_hp = hp_ratio < 0.5 or (self.blstats.hitpoints < 10 and self.blstats.max_hitpoints > 10)
+        low_hp = hp_ratio < 0.5 or (self.blstats.hitpoints < 10 and self.blstats.max_hitpoints > 12)
         return self.blstats.energy >= 5 and low_hp
+
+    def should_cast_extra_heal(self):
+        if 'extra healing' not in self.character.known_spells:
+            return False
+        if self.blstats.hunger_state >= Hunger.FAINTING:
+            return False
+        if self._last_turn - self.last_cast_fail_turn['extra healing'] < 15:
+            return False
+        hp_ratio = self.blstats.hitpoints / self.blstats.max_hitpoints
+        low_hp = hp_ratio < 0.3 or (self.blstats.max_hitpoints - self.blstats.hitpoints >= 20)
+        return self.blstats.energy >= 15 and low_hp
 
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
@@ -1506,6 +1518,28 @@ class Agent:
         if self.should_cast_heal():
             yield True
             self.cast('healing', direction=(0, 0))
+            return
+
+        # if self.should_cast_extra_heal():
+        #     yield True
+        #     self.cast('extra healing', direction=(0, 0))
+        #     return
+
+        items = [item for item in flatten_items(self.inventory.items) if item.is_unambiguous() and
+                 item.category == nh.POTION_CLASS and item.object.name in ['healing', 'extra healing', 'full healing']]
+        if (
+                (self.blstats.hitpoints < 1 / 3 * self.blstats.max_hitpoints
+                 or self.blstats.hitpoints < 8) and items
+        ):
+            yield True
+            self.inventory.quaff(items[0])
+            return
+
+        items = [item for item in flatten_items(self.inventory.items) if item.is_unambiguous() and
+                 item.category == nh.POTION_CLASS and item.object.name in ['fruit juice']]
+        if items and self.blstats.hunger_state >= Hunger.FAINTING:
+            yield True
+            self.inventory.quaff(items[0])
             return
 
         if (
@@ -1518,16 +1552,6 @@ class Agent:
             self.pray()
             return
 
-        items = [item for item in flatten_items(self.inventory.items) if item.is_unambiguous() and
-                 item.category == nh.POTION_CLASS and item.object.name in ['healing', 'extra healing', 'full healing']]
-        if (
-                (self.blstats.hitpoints < 1 / 3 * self.blstats.max_hitpoints
-                 or self.blstats.hitpoints < 8 or self.blstats.hunger_state >= Hunger.FAINTING) and
-                items
-        ):
-            yield True
-            self.inventory.quaff(items[0])
-            return
 
         # if self.inventory.engraving_below_me.lower() != 'elbereth' and self.can_engrave() and \
         #         (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5):

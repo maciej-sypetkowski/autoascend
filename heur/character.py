@@ -50,6 +50,16 @@ ALL_SPELL_NAMES = [
     "cancellation",
 ]
 
+ALL_SPELL_CATEGORIES = [
+    "attack",
+    "healing",
+    "divination",
+    "enchantment",
+    "clerical",
+    "escape",
+    "matter",
+]
+
 
 class Property:
     def __init__(self, agent):
@@ -316,6 +326,7 @@ class Character:
 
     def parse_spellcast_view(self):
         self.known_spells = dict()
+        self.spell_fail_chance = dict()
         with self.agent.atom_operation():
             self.agent.step(A.Command.CAST)
             if not self.agent.popup:
@@ -326,11 +337,16 @@ class Character:
                 raise ValueError(f'Invalid cast popup text format: {self.agent.popup}')
             for line in self.agent.popup[2:]:
                 matches = re.findall(r'^([a-zA-Z]) - *' +
-                                     r'(' + '|'.join(ALL_SPELL_NAMES) + ')', line)
+                                     r'(' + '|'.join(ALL_SPELL_NAMES) + ') *' +
+                                     r'([0-9]*) *' +
+                                     r'(' + '|'.join(ALL_SPELL_CATEGORIES) + ') *' +
+                                     r'([0-9]*)\% *' +
+                                     r'([0-9]*\%|\(gone\))', line)
                 assert len(matches) == 1, (matches, line)
-                letter, spell_name = matches[0]
+                letter, spell_name, level, category, fail, retention = matches[0]
                 assert len(letter) == 1, letter
                 self.known_spells[spell_name] = letter
+                self.spell_fail_chance[spell_name] = int(fail) / 100
         self.agent.step(A.Command.ESC)
 
     def parse_enhance_view(self):
