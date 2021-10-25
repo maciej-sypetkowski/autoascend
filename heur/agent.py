@@ -1114,7 +1114,7 @@ class Agent:
                 yielded = True
                 yield True
                 self.character.parse_enhance_view()
-                self.character.parse_spellcast_view()
+                # self.character.parse_spellcast_view()
 
             move_priority_heatmap, actions = fight_heur.get_priorities(self)
             actions.extend(fight_heur.get_move_actions(self, dis, move_priority_heatmap))
@@ -1515,10 +1515,10 @@ class Agent:
     @Strategy.wrap
     def emergency_strategy(self):
 
-        if self.should_cast_heal():
-            yield True
-            self.cast('healing', direction=(0, 0))
-            return
+        # if self.should_cast_heal():
+        #     yield True
+        #     self.cast('healing', direction=(0, 0))
+        #     return
 
         # if self.should_cast_extra_heal():
         #     yield True
@@ -1631,7 +1631,7 @@ class Agent:
                         ((Level.PLANE, 1), (None, None))  # TODO: check level num
                     self.character.parse()
                     self.character.parse_enhance_view()
-                    self.character.parse_spellcast_view()
+                    # self.character.parse_spellcast_view()
                     self.step(A.Command.AUTOPICKUP)
                     if 'Autopickup: ON' in self.message:
                         self.step(A.Command.AUTOPICKUP)
