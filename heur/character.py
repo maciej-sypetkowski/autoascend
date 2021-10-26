@@ -327,6 +327,11 @@ class Character:
     def parse_spellcast_view(self):
         self.known_spells = dict()
         self.spell_fail_chance = dict()
+
+        # TODO: parse for other spellcaster classes
+        if self.role not in (self.HEALER, ):
+            return
+
         with self.agent.atom_operation():
             self.agent.step(A.Command.CAST)
             if not self.agent.popup:

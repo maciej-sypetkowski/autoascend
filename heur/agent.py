@@ -1114,7 +1114,7 @@ class Agent:
                 yielded = True
                 yield True
                 self.character.parse_enhance_view()
-                # self.character.parse_spellcast_view()
+                self.character.parse_spellcast_view()
 
             move_priority_heatmap, actions = fight_heur.get_priorities(self)
             actions.extend(fight_heur.get_move_actions(self, dis, move_priority_heatmap))
@@ -1488,16 +1488,19 @@ class Agent:
             yield False
 
     def should_cast_heal(self):
+        # TODO: consider casting for other classes
+        if self.character.role != self.character.HEALER:
+            return False
         if 'healing' not in self.character.known_spells:
             return False
         if self.blstats.hunger_state >= Hunger.FAINTING:
             return False
-        if self._last_turn - self.last_cast_fail_turn['healing'] < 10:
+        if self._last_turn - self.last_cast_fail_turn['healing'] < 2:
             return False
         if self.character.spell_fail_chance['healing'] > 0.2:
             return False
         hp_ratio = self.blstats.hitpoints / self.blstats.max_hitpoints
-        low_hp = hp_ratio < 0.5 or (self.blstats.hitpoints < 10 and self.blstats.max_hitpoints > 12)
+        low_hp = hp_ratio < 0.5 or (self.blstats.hitpoints < 10 and self.blstats.max_hitpoints > 10)
         return self.blstats.energy >= 5 and low_hp
 
     def should_cast_extra_heal(self):
@@ -1505,25 +1508,27 @@ class Agent:
             return False
         if self.blstats.hunger_state >= Hunger.FAINTING:
             return False
-        if self._last_turn - self.last_cast_fail_turn['extra healing'] < 15:
+        if self._last_turn - self.last_cast_fail_turn['extra healing'] < 2:
+            return False
+        if self.character.spell_fail_chance['extra healing'] > 0.15:
             return False
         hp_ratio = self.blstats.hitpoints / self.blstats.max_hitpoints
-        low_hp = hp_ratio < 0.3 or (self.blstats.max_hitpoints - self.blstats.hitpoints >= 20)
+        low_hp = hp_ratio < 0.5 and (self.blstats.max_hitpoints - self.blstats.hitpoints > 25)
         return self.blstats.energy >= 15 and low_hp
 
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
     def emergency_strategy(self):
 
-        # if self.should_cast_heal():
-        #     yield True
-        #     self.cast('healing', direction=(0, 0))
-        #     return
-
         # if self.should_cast_extra_heal():
         #     yield True
         #     self.cast('extra healing', direction=(0, 0))
         #     return
+
+        if self.should_cast_heal():
+            yield True
+            self.cast('healing', direction=(0, 0))
+            return
 
         items = [item for item in flatten_items(self.inventory.items) if item.is_unambiguous() and
                  item.category == nh.POTION_CLASS and item.object.name in ['healing', 'extra healing', 'full healing']]
@@ -1631,7 +1636,7 @@ class Agent:
                         ((Level.PLANE, 1), (None, None))  # TODO: check level num
                     self.character.parse()
                     self.character.parse_enhance_view()
-                    # self.character.parse_spellcast_view()
+                    self.character.parse_spellcast_view()
                     self.step(A.Command.AUTOPICKUP)
                     if 'Autopickup: ON' in self.message:
                         self.step(A.Command.AUTOPICKUP)
