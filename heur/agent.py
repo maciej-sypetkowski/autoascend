@@ -1647,14 +1647,22 @@ class Agent:
                 inactivity_counter += 1
                 if self.step_count != last_step:
                     inactivity_counter = 0
-                assert inactivity_counter < 5, ('cyclic panic', sorted({p.args[0] for p in self.all_panics[-5:]}))
+
+                if inactivity_counter >= 5:
+                    try:
+                        panics = sorted({p.args[0] for p in self.all_panics[-5:]})
+                    except (TypeError, IndexError):
+                        panics = 'UNKNOWN'
+
+                    raise RuntimeError(f'Cyclic Panic: {panics}')
 
                 try:
-                    self.step(A.Command.ESC)
-                    self.step(A.Command.ESC)
-                    self.on_panic()
-
-                    last_step = self.step_count
+                    try:
+                        self.step(A.Command.ESC)
+                        self.step(A.Command.ESC)
+                        self.on_panic()
+                    finally:
+                        last_step = self.step_count
 
                     self.global_logic.global_strategy().run()
                     assert 0

@@ -413,8 +413,9 @@ class Visualizer:
             i += 1
         i += 1
 
-        _put_text(ret, 'Known spells: ' + str(list(self.env.agent.character.known_spells)), (0, i * FONT_SIZE))
-        i += 1
+        if hasattr(self.env.agent.character, 'known_spells'):
+            _put_text(ret, 'Known spells: ' + str(list(self.env.agent.character.known_spells)), (0, i * FONT_SIZE))
+            i += 1
 
         monsters = [(dis, y, x, mon.mname) for dis, y, x, mon, _ in self.env.agent.get_visible_monsters()]
         _put_text(ret, 'Monsters: ' + str(monsters), (0, i * FONT_SIZE))
