@@ -720,10 +720,10 @@ class Agent:
             self.stats_logger.log_event('container_untrap_fail')
             return self.message
 
-    def is_safe_to_pray(self):
+    def is_safe_to_pray(self, limit=500):
         return (
                 (self.last_prayer_turn is None and self.blstats.time > 300) or
-                (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > 900)
+                (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > limit)
         )
 
     def pray(self):
@@ -1548,10 +1548,10 @@ class Agent:
             return
 
         if (
-                self.is_safe_to_pray() and
-                (self.blstats.hitpoints < 1 / (5 if self.blstats.experience_level < 6 else 6)
-                 * self.blstats.max_hitpoints or self.blstats.hitpoints < 6
-                 or self.blstats.hunger_state >= Hunger.FAINTING)
+                (self.is_safe_to_pray(500) and
+                    (self.blstats.hitpoints < 1 / (5 if self.blstats.experience_level < 6 else 6)
+                        * self.blstats.max_hitpoints or self.blstats.hitpoints < 6))
+                 or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.FAINTING)
         ):
             yield True
             self.pray()
