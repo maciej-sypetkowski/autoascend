@@ -83,8 +83,6 @@ class Agent:
 
         self.last_cast_fail_turn = defaultdict(lambda: -float('inf'))
 
-        # self.drop_gold_till_turn = -float('inf')
-
         # uncomment to use RL-based fight decisions
         # self._init_fight2_model()
 
@@ -380,6 +378,13 @@ class Agent:
 
         self.cursor_pos = (observation['tty_cursor'][0] - 1, observation['tty_cursor'][1])
 
+        if hasattr(self, 'blstats'):
+            for item in flatten_items(self.inventory.items):
+                if item.category == nh.COIN_CLASS:
+                    self.stats_logger.log_gold(item.count)
+            else:
+                self.stats_logger.log_gold(0)
+
         if done:
             raise AgentFinished()
 
@@ -638,10 +643,6 @@ class Agent:
                 if (0 <= y < level.forbidden.shape[0] and 0 <= x < level.forbidden.shape[1]) \
                         and not level.walkable[y, x]:
                     level.forbidden[y, x] = True
-
-        # if 'Please drop that gold and follow me.' in self.message:
-        #     self.stats_logger.log_event('drop_gold')
-        #     self.drop_gold_till_turn = self._last_turn + 100
 
 
     ######## TRIVIAL HELPERS

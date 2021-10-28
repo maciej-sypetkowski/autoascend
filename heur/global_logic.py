@@ -20,6 +20,7 @@ class ItemPriority(ItemPriorityBase):
     def __init__(self, agent):
         self.agent = agent
         self._take_sacrificial_corpses = False
+        self._drop_gold_till_turn = -float('inf')
 
     def _split(self, items, forced_items, weight_capacity):
         remaining_weight = weight_capacity
@@ -55,6 +56,11 @@ class ItemPriority(ItemPriorityBase):
             if item.is_container() and item.status in [Item.UNCURSED, Item.BLESSED] and item.objs[0].desc == 'bag':
                 bag = item  # TODO: select the best
                 add_item(bag)
+
+        if self._drop_gold_till_turn < self.agent.blstats.time:
+            for item in items:
+                if item.category == nh.COIN_CLASS:
+                    add_item(item)
 
         for allow_unknown_status in [False, True]:
             item = self.agent.inventory.get_best_melee_weapon(items=forced_items + items,
@@ -102,7 +108,7 @@ class ItemPriority(ItemPriorityBase):
         # You have to drop all coins not to be attacked by a vault guard
 
         for item in sorted(items, key=lambda i: i.unit_weight(with_content=False)):
-            if item.category in [nh.POTION_CLASS, nh.RING_CLASS, nh.AMULET_CLASS, nh.WAND_CLASS, nh.SCROLL_CLASS, nh.TOOL_CLASS, nh.COIN_CLASS]:
+            if item.category in [nh.POTION_CLASS, nh.RING_CLASS, nh.AMULET_CLASS, nh.WAND_CLASS, nh.SCROLL_CLASS, nh.TOOL_CLASS]:
                 if (not isinstance(item.objs[0], O.Container) or not item.is_chest()) and \
                         not item.is_possible_container():
                     to_bag = O.from_name('cancellation', nh.WAND_CLASS) not in item.objs and \
@@ -484,6 +490,14 @@ class GlobalLogic:
         if not utils.isin(self.agent.glyphs, G.GUARD).any():
             yield False
 
+        if any(item.category == nh.COIN_CLASS for item in flatten_items(self.agent.inventory.items)):
+            yield True
+            # if 'Please drop that gold and follow me.' in self.message:
+            self.agent.stats_logger.log_event('drop_gold')
+            self.item_priority._drop_gold_till_turn = self.agent.blstats.time + 100
+            self.agent.inventory.arrange_items().run()
+            return
+
         ys, xs = utils.isin(self.agent.glyphs, G.GUARD).nonzero()
         y, x = ys[0], xs[0]
 
@@ -491,6 +505,7 @@ class GlobalLogic:
             yield False
 
         yield True
+
         self.agent.go_to(y, x, stop_one_before=True)
 
     @Strategy.wrap
