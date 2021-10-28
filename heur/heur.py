@@ -334,10 +334,10 @@ class EnvWrapper:
         #     agent_lib.G.assert_map(obs['glyphs'], obs['chars'])
 
         # uncomment to debug measure up to assumed median
-        if self.score >= 5000:
-            done = True
-            self.end_reason = 'quit after median'
-        elif done:
+        # if self.score >= 7000:
+        #     done = True
+        #     self.end_reason = 'quit after median'
+        if done:
             if self.visualizer is not None:
                 self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
 
