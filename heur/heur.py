@@ -646,6 +646,17 @@ def run_simulations(args):
     if 'seed' in all_res:
         done_seeds = set(s[0] for s in all_res['seed'])
 
+    # remove runs finished with exceptions if rerunning with --panic-on-errors
+    if args.panic_on_errors:
+        idx_to_repeat = set()
+        for i, (seed, reason) in enumerate(zip(all_res['seed'], all_res['end_reason'])):
+            if reason.startswith('exception'):
+                idx_to_repeat.add(i)
+                done_seeds.remove(seed[0])
+        print('Repeating idx:', idx_to_repeat)
+        for k, v in all_res.items():
+            all_res[k] = [v for i, v in enumerate(v) if i not in idx_to_repeat]
+
     print('skipping seeds', done_seeds)
     for seed_offset in range(args.episodes):
         seed = args.seed + seed_offset
