@@ -41,3 +41,4 @@ RUN apt update && apt install -y npm
 RUN pip install -U jupyterlab==1.2.14
 RUN jupyter labextension uninstall jupyterlab-jupytext jupyterlab_tensorboard
 RUN jupyter labextension install jupyterlab_vim
+RUN pip install nltk

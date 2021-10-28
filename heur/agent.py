@@ -5,6 +5,7 @@ from collections import namedtuple, Counter, defaultdict
 from functools import partial
 from stats_logger import StatsLogger
 
+import nltk
 import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
@@ -81,6 +82,8 @@ class Agent:
         self._allow_attack_all_turn = -float('inf')
 
         self.last_cast_fail_turn = defaultdict(lambda: -float('inf'))
+
+        # self.drop_gold_till_turn = -float('inf')
 
         # uncomment to use RL-based fight decisions
         # self._init_fight2_model()
@@ -627,6 +630,20 @@ class Agent:
                 level.objects[y, x] = self.glyphs[y, x]
                 level.walkable[y, x] = False  # necessary for the exit route from vaults
 
+        # ad aerarium -- avoid valut entrance
+        if self.inventory.engraving_below_me and nltk.edit_distance(self.inventory.engraving_below_me, "ad aerarium") <= 6:
+            self.stats_logger.log_event('ad_aerarium_below_me')
+            for dy, dx in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                y, x = self.blstats.y + dy, self.blstats.x + dx
+                if (0 <= y < level.forbidden.shape[0] and 0 <= x < level.forbidden.shape[1]) \
+                        and not level.walkable[y, x]:
+                    level.forbidden[y, x] = True
+
+        # if 'Please drop that gold and follow me.' in self.message:
+        #     self.stats_logger.log_event('drop_gold')
+        #     self.drop_gold_till_turn = self._last_turn + 100
+
+
     ######## TRIVIAL HELPERS
 
     def current_level(self):
@@ -932,7 +949,8 @@ class Agent:
         level = self.current_level()
 
         walkable = level.walkable & ~utils.isin(self.glyphs, G.BOULDER) & \
-                   ~self.monster_tracker.peaceful_monster_mask
+                   ~self.monster_tracker.peaceful_monster_mask & \
+                   ~level.forbidden
 
         if self._last_turn - self._allow_walking_through_traps_turn > 50:
             walkable &= ~utils.isin(level.objects, G.TRAPS)
