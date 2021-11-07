@@ -5,6 +5,7 @@ import time
 import cv2
 import nle.nethack as nh
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 # avoid importing agent modules here, because it makes agent reloading less reliable
 from .scopes import DrawTilesScope, DebugLogScope
@@ -84,6 +85,10 @@ class Visualizer:
         self.video_writer = None
         if output_video_path is not None:
             self.video_writer = VideoWriter(output_video_path, fps=10)
+
+        self.tty_downscale = 1.0  # consider changing for better performance
+        self.font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                                       int(26 * self.tty_downscale))
 
     def debug_tiles(self, *args, **kwargs):
         return DrawTilesScope(self, *args, **kwargs)
@@ -416,10 +421,18 @@ class Visualizer:
         self.popup_history.append(txt)
 
     def _draw_tty(self, obs, width, height):
-        vis = np.zeros((height, width, 3)).astype(np.uint8)
+        vis = np.zeros((int(height * self.tty_downscale),
+                        int(width * self.tty_downscale), 3)).astype(np.uint8)
+
+        vis = Image.fromarray(vis)
+        draw = ImageDraw.Draw(vis)
+
         for i, line in enumerate(obs['tty_chars']):
             txt = ''.join([chr(i) for i in line])
-            put_text(vis, txt, (0, i * FONT_SIZE), console=True)
+            draw.text((int(5 * self.tty_downscale), int((5 + i * 31) * self.tty_downscale)),
+                      txt, (255, 255, 255), font=self.font)
+
+        vis = np.array(vis.resize((width, height), Image.ANTIALIAS))
         draw_frame(vis)
         return vis
 
