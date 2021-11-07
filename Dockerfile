@@ -5,6 +5,9 @@ RUN apt-get update
 RUN apt-get install -y build-essential autoconf libtool pkg-config python3-dev python3-pip python3-numpy git flex \
                        bison libbz2-dev xterm gfortran xdot
 
+RUN pip install numpy tensorboard gym==0.19.0 ray seaborn nevergrad \
+    ray[default] gprof2dot opencv-python toolz pyinstrument nltk
+
 RUN git clone https://github.com/facebookresearch/nle.git /nle --recursive \
  && cd /nle && git checkout v0.7.3 \
  && sed '/#define NLE_ALLOW_SEEDING 1/i#define NLE_ALLOW_SEEDING 1' /nle/include/nleobs.h -i \
@@ -14,10 +17,9 @@ RUN git clone https://github.com/facebookresearch/nle.git /nle --recursive \
  && sed '/def seed(self, core=None, disp=None, reseed=True):/d' /nle/nle/env/tasks.py -i \
  && sed '/raise RuntimeError("NetHackChallenge doesn.t allow seed changes")/d' /nle/nle/env/tasks.py -i
 
-RUN pip install numpy tensorboard gym ray seaborn nevergrad ray[default] gprof2dot opencv-python toolz pyinstrument
 RUN cd /nle && python setup.py install
 
-# PyPy
+# uncomment for PyPy support
 # RUN conda create -n pypy pypy
 # RUN printf '#!/bin/bash\nexec conda run --no-capture-output -n pypy pypy "$@"' >/usr/bin/pypy3 \
 #  && chmod +x /usr/bin/pypy3 \
@@ -37,8 +39,8 @@ RUN python -c 'from pathlib import Path ; text = Path("/nle/src/tile.c").read_te
 RUN cd / && python -c 'import nle ; from glyph2tile import glyph2tile ; \
                        assert isinstance(glyph2tile, list) and len(glyph2tile) == nle.nethack.MAX_GLYPH'
 
-RUN apt update && apt install -y npm
-RUN pip install -U jupyterlab==1.2.14
-RUN jupyter labextension uninstall jupyterlab-jupytext jupyterlab_tensorboard
-RUN jupyter labextension install jupyterlab_vim
-RUN pip install nltk
+# uncomment to install jupyter vim plugin
+# RUN apt update && apt install -y npm
+# RUN pip install -U jupyterlab==1.2.14
+# RUN jupyter labextension uninstall jupyterlab-jupytext jupyterlab_tensorboard
+# RUN jupyter labextension install jupyterlab_vim

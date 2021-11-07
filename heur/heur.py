@@ -24,7 +24,7 @@ import nle.nethack as nh
 import numpy as np
 
 import agent as agent_lib
-import visualize
+from visualization import visualizer
 from utils import plot_dashboard
 
 
@@ -72,7 +72,8 @@ class ReloadAgent(KeyboardInterrupt):
 
 
 class EnvWrapper:
-    def __init__(self, env, to_skip=0, visualizer_args=dict(enable=False), step_limit=None, agent_args={}, interactive=False):
+    def __init__(self, env, to_skip=0, visualizer_args=dict(enable=False),
+                 step_limit=None, agent_args={}, interactive=False):
         self.env = env
         self.agent_args = agent_args
         self.interactive = interactive
@@ -81,7 +82,7 @@ class EnvWrapper:
         self.visualizer = None
         if visualizer_args['enable']:
             visualizer_args.pop('enable')
-            self.visualizer = visualize.Visualizer(self, **visualizer_args)
+            self.visualizer = visualizer.Visualizer(self, **visualizer_args)
         self.last_observation = None
         self.agent = None
 
@@ -174,7 +175,7 @@ class EnvWrapper:
                         with self.debug_tiles(self.agent.current_level().shop_interior, color=(0, 0, 255, 64)) \
                                 if self.draw_shop else contextlib.suppress():
                             with self.debug_tiles((self.last_observation['specials'] & nh.MG_OBJPILE) > 0,
-                                                color=(0, 255, 255, 128)):
+                                                  color=(0, 255, 255, 128)):
                                 with self.debug_tiles([self.agent.cursor_pos],
                                                       color=(255, 255, 255, 128)):
                                     if force:
@@ -300,7 +301,7 @@ class EnvWrapper:
                 return action
 
     def step(self, agent_action):
-        if self.visualizer is not None:
+        if self.visualizer is not None and self.visualizer.video_writer is None:
             self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
 
             if self.interactive and self.to_skip <= 1:
@@ -325,6 +326,8 @@ class EnvWrapper:
                 print('action:', action)
                 print()
         else:
+            if self.visualizer.video_writer is not None:
+                self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
             action = agent_action
 
         obs, reward, done, info = self.env.step(self.env._actions.index(action))
@@ -414,11 +417,15 @@ def prepare_env(args, seed, step_limit=None):
     if args.visualize_ends is not None:
         assert args.mode == 'simulate'
         args.skip_to = 2 ** 32
-    visualizer_args = dict(enable=args.mode == 'run' or args.visualize_ends is not None,
+
+    visualize_with_simulate = args.visualize_ends is not None or args.output_video_dir is not None
+    visualizer_args = dict(enable=args.mode == 'run' or visualize_with_simulate,
                            start_visualize=args.visualize_ends[seed] if args.visualize_ends is not None else None,
                            show=args.mode == 'run',
                            output_dir=Path('/tmp/vis/') / str(seed),
-                           frame_skipping=None if args.visualize_ends is None else 1)
+                           frame_skipping=None if not visualize_with_simulate else 1,
+                           output_video_path=(args.output_video_dir / f'{seed}.mp4'
+                                              if args.output_video_dir is not None else None))
     env = EnvWrapper(gym.make('NetHackChallenge-v0', no_progress_timeout=1000),
                      to_skip=args.skip_to, visualizer_args=visualizer_args,
                      agent_args=dict(panic_on_errors=args.panic_on_errors,
@@ -451,6 +458,8 @@ def single_simulation(args, seed_offset, timeout=720):
     if args.visualize_ends is not None:
         env.visualizer.save_end_history()
 
+    if env.visualizer.video_writer is not None:
+        env.visualizer.video_writer.close()
     env.env.close()
 
     return summary
@@ -500,7 +509,6 @@ def run_profiling(args):
         print(f'starting {i + 1} game...')
         res.append(single_simulation(args, i, timeout=None))
     duration = time.time() - start_time
-
 
     if args.profiler == 'cProfile':
         pr.disable()
@@ -612,6 +620,10 @@ def run_simulations(args):
         # I think there is some nondeterminism in nle environment when playing
         # multiple episodes (maybe bones?). That should do the trick
         q = Queue()
+
+        if args.output_video_dir is not None:
+            timeout = 8 * 60 * 60
+
         def sim():
             q.put(single_simulation(args, seed_offset, timeout=timeout))
 
@@ -735,6 +747,8 @@ def parse_args():
     parser.add_argument('--no-plot', action='store_true')
     parser.add_argument('--visualize-ends', type=Path, default=None,
                         help='Path to json file with dict: seed -> visualization_start_step')
+    parser.add_argument('--output-video-dir', type=Path, default=None,
+                        help="Episode visualization video directory -- valid only with 'simulate' mode")
     parser.add_argument('--profiler', choices=('cProfile', 'pyinstrument', 'none'), default='pyinstrument')
     parser.add_argument('--with-gpu', action='store_true')
 
@@ -745,6 +759,9 @@ def parse_args():
     if args.visualize_ends is not None:
         with args.visualize_ends.open('r') as f:
             args.visualize_ends = {int(k): int(v) for k, v in json.load(f).items()}
+
+    if args.output_video_dir is not None:
+        assert args.mode == 'simulate', "Video output only valid in 'simulate' mode"
 
     print('ARGS:', args)
     return args

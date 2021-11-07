@@ -1,144 +1,23 @@
 import multiprocessing
-import nle.nethack as nh
 import queue
 import time
 
 import cv2
+import nle.nethack as nh
 import numpy as np
 
 # avoid importing agent modules here, because it makes agent reloading less reliable
+from .scopes import DrawTilesScope, DebugLogScope
+from .utils import put_text, draw_frame, draw_grid, FONT_SIZE, VideoWriter
 
 HISTORY_SIZE = 13
-FONT_SIZE = 32
 RENDERS_HISTORY_SIZE = 128
-
-
-def _put_text(img, text, pos, scale=FONT_SIZE / 35, thickness=1, color=(255, 255, 0), console=False):
-    # TODO: figure out how exactly opencv anchors the text
-    pos = (pos[0] + FONT_SIZE // 2, pos[1] + FONT_SIZE // 2 + 8)
-
-    if console:
-        # TODO: implement equal characters size font
-        # scale *= 2
-        # font = cv2.FONT_HERSHEY_PLAIN
-        font = cv2.FONT_HERSHEY_SIMPLEX
-    else:
-        font = cv2.FONT_HERSHEY_SIMPLEX
-    return cv2.putText(img, text, pos, font,
-                       scale, color, thickness, cv2.LINE_AA)
-
-
-def _draw_frame(img, color=(90, 90, 90), thickness=3):
-    return cv2.rectangle(img, (0, 0), (img.shape[1] - 1, img.shape[0] - 1), color, thickness)
-
-
-def _draw_grid(imgs, ncol):
-    grid = imgs.reshape((-1, ncol, *imgs[0].shape))
-    rows = []
-    for row in grid:
-        rows.append(np.concatenate(row, axis=1))
-    return np.concatenate(rows, axis=0)
-    return img
-
-
-class DrawTilesScope():
-
-    def __init__(self, visualizer, tiles, color, is_path=False, is_heatmap=False, mode='fill'):
-        from glyph import C
-        self.visualizer = visualizer
-        self.is_heatmap = is_heatmap
-        self.color = color
-        self.mode = mode
-        if self.is_heatmap:
-            assert not is_path
-            assert self.mode == 'fill'
-            assert isinstance(self.color, str)
-            self.tiles = tiles
-        else:
-            if isinstance(tiles, np.ndarray) and tiles.shape == (C.SIZE_Y, C.SIZE_X):
-                self.tiles = list(zip(*tiles.nonzero()))
-            else:
-                self.tiles = tiles
-            self.is_path = is_path
-
-    def draw_fun(self, rendered):
-        if self.is_heatmap:
-            if self.is_heatmap:
-                grayscale = np.zeros(rendered.shape, dtype=float)
-                mask = np.ones_like(grayscale).astype(bool)
-                for y in range(self.tiles.shape[0]):
-                    for x in range(self.tiles.shape[1]):
-                        y1 = y * self.visualizer.tile_size
-                        x1 = x * self.visualizer.tile_size
-                        if np.isnan(self.tiles[y, x]):
-                            mask[y1:y1 + self.visualizer.tile_size,
-                                 x1:x1 + self.visualizer.tile_size] = False
-                        else:
-                            grayscale[y1:y1 + self.visualizer.tile_size,
-                                      x1:x1 + self.visualizer.tile_size] = self.tiles[y, x]
-                grayscale[mask] -= np.min(grayscale[mask])
-                grayscale[mask] /= np.max(grayscale[mask])
-                grayscale = (grayscale * 255).astype(np.uint8)
-                grayscale = cv2.blur(grayscale, (15, 15))
-                # https://docs.opencv.org/4.5.2/d3/d50/group__imgproc__colormap.html
-                heatmap = cv2.applyColorMap(grayscale, cv2.__dict__[f'COLORMAP_{self.color.upper()}'])[..., ::-1]
-                return (rendered * 0.5 + heatmap * 0.5).astype(np.uint8) * mask + (rendered * ~mask)
-
-        color = self.color
-        alpha = 1
-        if len(color) == 4:
-            alpha = color[-1] / 255
-            color = color[:-1]
-
-        if alpha != 1:
-            orig_rendered, rendered = rendered, np.zeros_like(rendered)
-
-        if self.is_path:
-            for p1, p2 in zip(self.tiles, self.tiles[1:]):
-                p1 = [round((i + 0.5) * self.visualizer.tile_size) for i in p1][::-1]
-                p2 = [round((i + 0.5) * self.visualizer.tile_size) for i in p2][::-1]
-                cv2.line(rendered, p1, p2, color, 2)
-        else:
-            for p in self.tiles:
-                p1 = [round(i * self.visualizer.tile_size) for i in p][::-1]
-                p2 = [round((i + 1) * self.visualizer.tile_size) for i in p][::-1]
-                if self.mode == 'fill':
-                    cv2.rectangle(rendered, p1, p2, color, -1)
-                if self.mode == 'frame':
-                    cv2.rectangle(rendered, p1, p2, color, 3)
-
-        if alpha != 1:
-            rendered = np.clip(orig_rendered.astype(np.int16) + (rendered * alpha).astype(np.int16), 0, 255).astype(
-                np.uint8)
-
-        return rendered.copy()
-
-    def __enter__(self):
-        self.fun_instance = lambda x: self.draw_fun(x)
-        self.visualizer.drawers.append(self.fun_instance)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.visualizer.drawers.remove(self.fun_instance)
-
-
-class DebugLogScope():
-
-    def __init__(self, visualizer, txt, color):
-        self.visualizer = visualizer
-        self.txt = txt
-        self.color = color
-
-    def __enter__(self):
-        self.visualizer.log_messages.append(self.txt)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.visualizer.log_messages.remove(self.txt)
 
 
 class Visualizer:
 
     def __init__(self, env, tileset_path='/workspace/heur/tilesets/3.6.1tiles32.png', tile_size=32,
-                 start_visualize=None, show=False, output_dir=None, frame_skipping=None):
+                 start_visualize=None, show=False, output_dir=None, frame_skipping=None, output_video_path=None):
         self.env = env
         self.tile_size = tile_size
         self._window_name = 'NetHackVis'
@@ -164,7 +43,9 @@ class Visualizer:
                 tiles.append(self.tileset[y:y + tile_size, x:x + tile_size])
         self.tileset = np.array(tiles)
 
+        # note that this file is a symlink (acutall file is in the docker container)
         from glyph2tile import glyph2tile
+
         self.glyph2tile = np.array(glyph2tile)
 
         if self.show:
@@ -196,9 +77,111 @@ class Visualizer:
             self.output_dir = output_dir
             self.output_dir.mkdir(exist_ok=True, parents=True)
 
-        self.start_display_thread()
+        self._start_display_thread()
 
         self.last_obs = None
+
+        self.video_writer = None
+        if output_video_path is not None:
+            self.video_writer = VideoWriter(output_video_path, fps=10)
+
+    def debug_tiles(self, *args, **kwargs):
+        return DrawTilesScope(self, *args, **kwargs)
+
+    def debug_log(self, txt, color):
+        return DebugLogScope(self, txt, color)
+
+    def step(self, obs, action):
+        self.last_obs = obs
+        self.action_history.append(action)
+        self._update_log_message_history()
+        self._update_message_history()
+        self._update_popup_history()
+
+        if self.video_writer is not None:
+            frame = self._render()
+            if frame is not None:
+                self.video_writer.write(frame)
+
+    def render(self):
+        if self.video_writer is not None:
+            return False
+
+        self.frame_counter += 1
+        render_start_time = None
+
+        try:
+            t = time.time()
+            frame = self._render()
+            if frame is None:
+                return False
+            render_start_time = t
+
+            if self.show:
+                self._display_queue.put(frame[..., ::-1].copy())
+
+            if self.renders_history is not None:
+                self.renders_history.append(frame)
+
+        finally:
+            self._update_dynamic_frame_skipping(render_start_time)
+
+        return True
+
+    def _render(self):
+        if not self._force_next_frame and self.frame_skipping is not None:
+            # static frame skipping
+            if self.frame_counter % self.frame_skipping != 0:
+                return None
+
+        if self.frame_skipping is None:
+            # dynamic frame skipping
+            frame_skipping = self._dynamic_frame_skipping_render_time / self._dynamic_frame_skipping_agent_time / \
+                             self._dynamic_frame_skipping_threshold
+            if not self._force_next_frame and self.frame_counter <= frame_skipping:
+                return None
+            else:
+                self.frame_counter = 0
+
+        if self.last_obs is None:
+            return None
+
+        if self.start_visualize is not None:
+            if self.env.step_count < self.start_visualize:
+                return None
+
+        if self._force_next_frame:
+            self.frame_counter = 0
+        self._force_next_frame = False
+
+        glyphs = self.last_obs['glyphs']
+        tiles_idx = self.glyph2tile[glyphs]
+        tiles = self.tileset[tiles_idx.reshape(-1)]
+        scene_vis = draw_grid(tiles, glyphs.shape[1])
+        for drawer in self.drawers:
+            scene_vis = drawer(scene_vis)
+        draw_frame(scene_vis)
+        topbar = self._draw_topbar(scene_vis.shape[1])
+        bottombar = self._draw_bottombar(scene_vis.shape[1])
+
+        rendered = np.concatenate([topbar, scene_vis, bottombar], axis=0)
+        inventory = self._draw_inventory(rendered.shape[0])
+        return np.concatenate([rendered, inventory], axis=1)
+
+    def save_end_history(self):
+        print('SAVING', self.output_dir)
+        for i, render in enumerate(list(self.renders_history)):
+            render = render[..., ::-1]
+            out_path = self.output_dir / (str(i).rjust(5, '0') + '.jpg')
+            cv2.imwrite(str(out_path), render)
+
+    def force_next_frame(self):
+        self._force_next_frame = True
+
+    def stop_display_thread(self):
+        if self.show:
+            self._display_process.terminate()
+            self._display_process.join()
 
     def _display_thread(self):
         cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
@@ -238,32 +221,11 @@ class Visualizer:
 
         cv2.destroyWindow(self._window_name)
 
-    def start_display_thread(self):
+    def _start_display_thread(self):
         if self.show:
             self._display_queue = multiprocessing.Manager().Queue()
             self._display_process = multiprocessing.Process(target=self._display_thread, daemon=False)
             self._display_process.start()
-
-    def stop_display_thread(self):
-        if self.show:
-            self._display_process.terminate()
-            self._display_process.join()
-
-    def debug_tiles(self, *args, **kwargs):
-        return DrawTilesScope(self, *args, **kwargs)
-
-    def debug_log(self, txt, color):
-        return DebugLogScope(self, txt, color)
-
-    def step(self, obs, action):
-        self.last_obs = obs
-        self.action_history.append(action)
-        self._update_log_message_history()
-        self._update_message_history()
-        self._update_popup_history()
-
-    def force_next_frame(self):
-        self._force_next_frame = True
 
     def _update_dynamic_frame_skipping(self, render_start_time):
         if self._dynamic_frame_skipping_last_end_time is not None:
@@ -285,63 +247,6 @@ class Visualizer:
 
         self._dynamic_frame_skipping_last_end_time = time.time()
 
-    def render(self):
-        self.frame_counter += 1
-        render_start_time = None
-
-        try:
-            if not self._force_next_frame and self.frame_skipping is not None:
-                # static frame skipping
-                if self.frame_counter % self.frame_skipping != 0:
-                    return False
-
-            if self.frame_skipping is None:
-                # dynamic frame skipping
-                frame_skipping = self._dynamic_frame_skipping_render_time / self._dynamic_frame_skipping_agent_time / \
-                                 self._dynamic_frame_skipping_threshold
-                if not self._force_next_frame and self.frame_counter <= frame_skipping:
-                    return False
-                else:
-                    self.frame_counter = 0
-
-            if self.last_obs is None:
-                return False
-
-            if self.start_visualize is not None:
-                if self.env.step_count < self.start_visualize:
-                    return False
-
-            if self._force_next_frame:
-                self.frame_counter = 0
-            self._force_next_frame = False
-
-            render_start_time = time.time()
-
-            glyphs = self.last_obs['glyphs']
-            tiles_idx = self.glyph2tile[glyphs]
-            tiles = self.tileset[tiles_idx.reshape(-1)]
-            scene_vis = _draw_grid(tiles, glyphs.shape[1])
-            for drawer in self.drawers:
-                scene_vis = drawer(scene_vis)
-            _draw_frame(scene_vis)
-            topbar = self._draw_topbar(scene_vis.shape[1])
-            bottombar = self._draw_bottombar(scene_vis.shape[1])
-
-            rendered = np.concatenate([topbar, scene_vis, bottombar], axis=0)
-            inventory = self._draw_inventory(rendered.shape[0])
-            rendered = np.concatenate([rendered, inventory], axis=1)
-
-            if self.show:
-                self._display_queue.put(rendered[..., ::-1].copy())
-
-            if self.renders_history is not None:
-                self.renders_history.append(rendered)
-
-        finally:
-            self._update_dynamic_frame_skipping(render_start_time)
-
-        return True
-
     def _draw_bottombar(self, width):
         height = FONT_SIZE * len(self.last_obs['tty_chars'])
         tty = self._draw_tty(self.last_obs, width - width // 2, height)
@@ -362,7 +267,7 @@ class Visualizer:
                f'Turn: {self.env.agent._last_turn}',
                f'Score: {self.env.score}',
                ]
-        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE), color=(255, 255, 255))
+        put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE), color=(255, 255, 255))
         i += 3
 
         # general character info
@@ -372,17 +277,17 @@ class Visualizer:
             {v: k for k, v in ch.name_to_alignment.items()}[ch.alignment],
             {v: k for k, v in ch.name_to_gender.items()}[ch.gender],
         ]
-        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE))
+        put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE))
         i += 1
         txt = [f'HP: {self.env.agent.blstats.hitpoints} / {self.env.agent.blstats.max_hitpoints}',
                f'LVL: {self.env.agent.blstats.experience_level}',
                f'ENERGY: {self.env.agent.blstats.energy} / {self.env.agent.blstats.max_energy}',
                ]
         hp_ratio = self.env.agent.blstats.hitpoints / self.env.agent.blstats.max_hitpoints
-        hp_color = cv2.applyColorMap(np.array([[130 - int((1 - hp_ratio) * 110)]], dtype=np.uint8), cv2.COLORMAP_TURBO)[0, 0]
-        _put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE), color=tuple(map(int, hp_color)))
+        hp_color = cv2.applyColorMap(np.array([[130 - int((1 - hp_ratio) * 110)]], dtype=np.uint8),
+                                     cv2.COLORMAP_TURBO)[0, 0]
+        put_text(ret, ' | '.join(txt), (0, i * FONT_SIZE), color=tuple(map(int, hp_color)))
         i += 2
-
 
         # proficiency info
         colors = {
@@ -394,33 +299,38 @@ class Visualizer:
         }
         for line in ch.get_skill_str_list():
             if 'Unskilled' not in line:
-                _put_text(ret, line, (0, i * FONT_SIZE), color=colors[line.split('-')[-1]])
+                put_text(ret, line, (0, i * FONT_SIZE), color=colors[line.split('-')[-1]])
                 i += 1
         unskilled = []
         for line in ch.get_skill_str_list():
             if 'Unskilled' in line:
                 unskilled.append(line.split('-')[0])
-        _put_text(ret, '|'.join(unskilled), (0, i * FONT_SIZE), color=(100, 100, 100))
+        put_text(ret, '|'.join(unskilled), (0, i * FONT_SIZE), color=(100, 100, 100))
         i += 2
-        _put_text(ret, 'Unarmed bonus: ' + str(ch.get_melee_bonus(None)), (0, i * FONT_SIZE))
+        put_text(ret, 'Unarmed bonus: ' + str(ch.get_melee_bonus(None)), (0, i * FONT_SIZE))
         i += 2
 
         stats = list(self.env.agent.stats_logger.get_stats_dict().items())
         stats = [(k, v) for k, v in stats if v != 0]
         for j in range((len(stats) + 2) // 3):
-            _put_text(ret, ' | '.join(f'{k}={v}' for k, v in stats[j * 3: (j + 1) * 3]),
-                      (0, i * FONT_SIZE), color=(100, 100, 100))
+            def format_value(v):
+                if isinstance(v, float):
+                    return f'{v:.2f}'
+                return str(v)
+
+            put_text(ret, ' | '.join(f'{k}={format_value(v)}' for k, v in stats[j * 3: (j + 1) * 3]),
+                     (0, i * FONT_SIZE), color=(100, 100, 100))
             i += 1
         i += 1
 
         if hasattr(self.env.agent.character, 'known_spells'):
-            _put_text(ret, 'Known spells: ' + str(list(self.env.agent.character.known_spells)), (0, i * FONT_SIZE))
+            put_text(ret, 'Known spells: ' + str(list(self.env.agent.character.known_spells)), (0, i * FONT_SIZE))
             i += 1
 
         monsters = [(dis, y, x, mon.mname) for dis, y, x, mon, _ in self.env.agent.get_visible_monsters()]
-        _put_text(ret, 'Monsters: ' + str(monsters), (0, i * FONT_SIZE))
+        put_text(ret, 'Monsters: ' + str(monsters), (0, i * FONT_SIZE))
 
-        _draw_frame(ret)
+        draw_frame(ret)
         return ret
 
     def _draw_topbar(self, width):
@@ -439,10 +349,10 @@ class Visualizer:
                 break
             txt = self.log_messages_history[-i - 1]
             if i == 0:
-                _put_text(vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+                put_text(vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
             else:
-                _put_text(vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
-        _draw_frame(vis)
+                put_text(vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        draw_frame(vis)
         return vis
 
     def _update_log_message_history(self):
@@ -459,10 +369,10 @@ class Visualizer:
                 break
             txt = self.action_history[-i - 1]
             if i == 0:
-                _put_text(vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+                put_text(vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
             else:
-                _put_text(vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
-        _draw_frame(vis)
+                put_text(vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        draw_frame(vis)
         return vis
 
     def _draw_message_history(self, width):
@@ -472,10 +382,10 @@ class Visualizer:
                 break
             txt = self.message_history[-i - 1]
             if i == 0:
-                _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+                put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
             else:
-                _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
-        _draw_frame(messages_vis)
+                put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        draw_frame(messages_vis)
         return messages_vis
 
     def _draw_popup_history(self, width):
@@ -485,10 +395,10 @@ class Visualizer:
                 break
             txt = '|'.join(self.popup_history[-i - 1])
             if i == 0:
-                _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
+                put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(255, 255, 255))
             else:
-                _put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
-        _draw_frame(messages_vis)
+                put_text(messages_vis, txt, (0, i * FONT_SIZE), color=(120, 120, 120))
+        draw_frame(messages_vis)
         return messages_vis
 
     def _update_message_history(self):
@@ -509,15 +419,15 @@ class Visualizer:
         vis = np.zeros((height, width, 3)).astype(np.uint8)
         for i, line in enumerate(obs['tty_chars']):
             txt = ''.join([chr(i) for i in line])
-            _put_text(vis, txt, (0, i * FONT_SIZE), console=True)
-        _draw_frame(vis)
+            put_text(vis, txt, (0, i * FONT_SIZE), console=True)
+        draw_frame(vis)
         return vis
 
     def _draw_item(self, letter, item, width, height, indent=0):
         from item import Item
 
         bg_color = {
-            nh.WAND_CLASS : np.array([0, 50, 50], dtype=np.uint8),
+            nh.WAND_CLASS: np.array([0, 50, 50], dtype=np.uint8),
             nh.FOOD_CLASS: np.array([0, 50, 0], dtype=np.uint8),
             nh.ARMOR_CLASS: np.array([50, 50, 0], dtype=np.uint8),
             nh.RING_CLASS: np.array([50, 50, 0], dtype=np.uint8),
@@ -536,7 +446,7 @@ class Visualizer:
             else:
                 vis += np.array([50, 0, 0], dtype=np.uint8)
         if letter is not None:
-            _put_text(vis, str(letter), (0, 0))
+            put_text(vis, str(letter), (0, 0))
 
         status_str, status_col = {
             Item.UNKNOWN: (' ', (255, 255, 255)),
@@ -544,30 +454,30 @@ class Visualizer:
             Item.UNCURSED: ('U', (0, 255, 255)),
             Item.BLESSED: ('B', (0, 255, 0)),
         }[item.status]
-        _put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)
+        put_text(vis, status_str, (FONT_SIZE, 0), color=status_col)
 
         if item.modifier is not None:
-            _put_text(vis, str(item.modifier), (FONT_SIZE * 2, 0))
+            put_text(vis, str(item.modifier), (FONT_SIZE * 2, 0))
 
         best_launcher, best_ammo = self.env.agent.inventory.get_best_ranged_set()
         best_melee = self.env.agent.inventory.get_best_melee_weapon()
         if item == best_launcher:
-            _put_text(vis, 'L', (FONT_SIZE * 3, 0), color=(255, 255, 255))
+            put_text(vis, 'L', (FONT_SIZE * 3, 0), color=(255, 255, 255))
         if item == best_ammo:
-            _put_text(vis, 'A', (FONT_SIZE * 3, 0), color=(255, 255, 255))
+            put_text(vis, 'A', (FONT_SIZE * 3, 0), color=(255, 255, 255))
         if item == best_melee:
-            _put_text(vis, 'M', (FONT_SIZE * 3, 0), color=(255, 255, 255))
+            put_text(vis, 'M', (FONT_SIZE * 3, 0), color=(255, 255, 255))
 
         if item.is_weapon():
-            _put_text(vis, str(self.env.agent.character.get_melee_bonus(item)), (FONT_SIZE * 4, 0))
+            put_text(vis, str(self.env.agent.character.get_melee_bonus(item)), (FONT_SIZE * 4, 0))
 
-        _put_text(vis, str(item), (FONT_SIZE * 8, round(FONT_SIZE * -0.1)), scale=FONT_SIZE / 40)
+        put_text(vis, str(item), (FONT_SIZE * 8, round(FONT_SIZE * -0.1)), scale=FONT_SIZE / 40)
         # if len(item.objs) > 1:
         vis = np.concatenate([vis, np.zeros((vis.shape[0] // 2, vis.shape[1], 3), dtype=np.uint8)])
-        _put_text(vis, str(len(item.objs)) + ' | ' + ' | '.join((o.name for o in item.objs)),
-                  (0, round(FONT_SIZE * 0.8)), scale=FONT_SIZE / 40)
+        put_text(vis, str(len(item.objs)) + ' | ' + ' | '.join((o.name for o in item.objs)),
+                 (0, round(FONT_SIZE * 0.8)), scale=FONT_SIZE / 40)
 
-        _draw_frame(vis, color=(80, 80, 80), thickness=2)
+        draw_frame(vis, color=(80, 80, 80), thickness=2)
 
         if item.equipped:
             cv2.rectangle(vis, (0, 0), (int(FONT_SIZE * 1.4), vis.shape[0] - 1), (0, 255, 255), 6)
@@ -599,12 +509,5 @@ class Visualizer:
                     vis = np.concatenate([vis, np.zeros((height - vis.shape[0], width, 3), dtype=np.uint8)], axis=0)
                 else:
                     vis = cv2.resize(vis, (width, height))
-        _draw_frame(vis)
+        draw_frame(vis)
         return vis
-
-    def save_end_history(self):
-        print('SAVING', self.output_dir)
-        for i, render in enumerate(list(self.renders_history)):
-            render = render[..., ::-1]
-            out_path = self.output_dir / (str(i).rjust(5, '0') + '.jpg')
-            cv2.imwrite(str(out_path), render)
