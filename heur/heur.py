@@ -326,7 +326,7 @@ class EnvWrapper:
                 print('action:', action)
                 print()
         else:
-            if self.visualizer.video_writer is not None:
+            if self.visualizer is not None:
                 self.visualizer.step(self.last_observation, repr(chr(int(agent_action))))
             action = agent_action
 
@@ -458,7 +458,7 @@ def single_simulation(args, seed_offset, timeout=720):
     if args.visualize_ends is not None:
         env.visualizer.save_end_history()
 
-    if env.visualizer.video_writer is not None:
+    if env.visualizer is not None and env.visualizer.video_writer is not None:
         env.visualizer.video_writer.close()
     env.env.close()
 
@@ -659,7 +659,7 @@ def run_simulations(args):
         done_seeds = set(s[0] for s in all_res['seed'])
 
     # remove runs finished with exceptions if rerunning with --panic-on-errors
-    if args.panic_on_errors:
+    if args.panic_on_errors and all_res:
         idx_to_repeat = set()
         for i, (seed, reason) in enumerate(zip(all_res['seed'], all_res['end_reason'])):
             if reason.startswith('exception'):
