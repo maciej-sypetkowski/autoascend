@@ -757,7 +757,7 @@ class Agent:
             self.current_level().door_open_count[y, x] += 1
             return self.glyphs[y, x] not in G.DOOR_CLOSED
 
-    def fight(self, y, x):
+    def melee_attack(self, y, x):
         with self.panic_if_position_changes():
             assert self.glyphs[y, x] in G.MONS or self.glyphs[y, x] in G.INVISIBLE_MON or \
                    self.glyphs[y, x] in G.SWALLOW
@@ -1302,7 +1302,7 @@ class Agent:
                 return wait_counter
             with self.env.debug_tiles([[self.blstats.y, self.blstats.x],
                                        [target_y, target_x]], color=(255, 0, 255), is_path=True):
-                self.fight(target_y, target_x)
+                self.melee_attack(target_y, target_x)
                 wait_counter = 0
                 return wait_counter
 
@@ -1375,7 +1375,7 @@ class Agent:
             mask = utils.isin(self.glyphs, G.SWALLOW)
             if not mask.any():
                 break
-            assert self.fight(*list(zip(*mask.nonzero()))[0])
+            assert self.melee_attack(*list(zip(*mask.nonzero()))[0])
 
     def _is_corpse_editable(self, monster_id, age_turn):
         permonst = MON.permonst(monster_id)

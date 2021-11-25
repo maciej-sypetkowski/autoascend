@@ -42,7 +42,7 @@ RUN cd / && python -c 'import nle ; from glyph2tile import glyph2tile ; \
                        assert isinstance(glyph2tile, list) and len(glyph2tile) == nle.nethack.MAX_GLYPH'
 
 # uncomment to install jupyter vim plugin
-# RUN apt update && apt install -y npm
-# RUN pip install -U jupyterlab==1.2.14
-# RUN jupyter labextension uninstall jupyterlab-jupytext jupyterlab_tensorboard
-# RUN jupyter labextension install jupyterlab_vim
+RUN apt update && apt install -y npm
+RUN pip install -U jupyterlab==1.2.14
+RUN jupyter labextension uninstall jupyterlab-jupytext jupyterlab_tensorboard
+RUN jupyter labextension install jupyterlab_vim

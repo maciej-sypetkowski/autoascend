@@ -622,7 +622,7 @@ def run_simulations(args):
         q = Queue()
 
         if args.output_video_dir is not None:
-            timeout = 8 * 60 * 60
+            timeout = 4 * 24 * 60 * 60
 
         def sim():
             q.put(single_simulation(args, seed_offset, timeout=timeout))
@@ -673,6 +673,8 @@ def run_simulations(args):
     for seed_offset in range(args.episodes):
         seed = args.seed + seed_offset
         if seed in done_seeds:
+            continue
+        if args.seeds and seed not in args.seeds:
             continue
         if args.visualize_ends is None or seed_offset in [k % 10 ** 9 for k in args.visualize_ends]:
             refs.append(remote_simulation.remote(args, seed_offset))
@@ -736,7 +738,8 @@ def run_simulations(args):
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument('mode', choices=('simulate', 'run', 'profile'))
-    parser.add_argument('--seed', type=int)
+    parser.add_argument('--seed', type=int, help='Starting random seed')
+    parser.add_argument('--seeds', nargs="*", type=int, help='Run only these specific seeds (only relevant in simulate mode)')
     parser.add_argument('--skip-to', type=int, default=0)
     parser.add_argument('-n', '--episodes', type=int, default=1)
     parser.add_argument('--role', choices=('arc', 'bar', 'cav', 'hea', 'kni',
