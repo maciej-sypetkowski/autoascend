@@ -44,7 +44,7 @@ class Level:
 
         self.corpses_to_eat = defaultdict(lambda: defaultdict(lambda: -10000))  # {(y, x) -> {monster_id -> age_turn}}
 
-        # ad aerarium -- avoid valut entrance
+        # e.g. ad aerarium -- avoid valut entrance
         self.forbidden = np.zeros((C.SIZE_Y, C.SIZE_X), bool)
 
     def key(self):

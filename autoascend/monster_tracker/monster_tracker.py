@@ -3,56 +3,10 @@ import re
 import numpy as np
 from nle.nethack import actions as A
 
-from . import utils
-from .exceptions import AgentPanic
-from .glyph import C, G
-
-try:
-    import numba as nb
-except ImportError:
-    class nb:
-        b1 = bool
-        njit = lambda *a, **k: (lambda f: f)
-
-
-@nb.njit('b1[:,:](i2[:,:],i2[:,:],i4)', cache=True)
-def disappearance_mask(old_mons, new_mons, max_radius):
-    ret = np.zeros_like(new_mons, dtype=nb.b1)
-    for y in range(new_mons.shape[0]):
-        for x in range(new_mons.shape[1]):
-            glyph = old_mons[y, x]
-            if glyph == -1:
-                continue
-            ret[y, x] = (new_mons[max(0, y - max_radius) : min(y + max_radius + 1, new_mons.shape[0]),
-                                  max(0, x - max_radius) : min(x + max_radius + 1, new_mons.shape[1])] != glyph).all()
-    return ret
-
-
-@nb.njit('optional(b1[:,:])(i2[:,:],i2[:,:],i2[:,:],i4)', cache=True)
-def figure_out_monster_movement(peaceful_mons, aggressive_mons, new_mons, max_radius):
-    ret_peaceful_mons = np.zeros_like(peaceful_mons, dtype=nb.b1)
-    for y in range(new_mons.shape[0]):
-        for x in range(new_mons.shape[1]):
-            glyph = new_mons[y, x]
-            if glyph == -1:
-                continue
-
-            can_be_peaceful = False
-            can_be_aggressive = False
-            for py in range(max(0, y - max_radius),
-                            min(y + max_radius + 1, new_mons.shape[0])):
-                for px in range(max(0, x - max_radius),
-                                min(x + max_radius + 1, new_mons.shape[1])):
-                    if peaceful_mons[py, px] == glyph:
-                        can_be_peaceful = True
-                    if aggressive_mons[py, px] == glyph:
-                        can_be_aggressive = True
-            if can_be_peaceful == can_be_aggressive:
-                return None
-            if can_be_peaceful:
-                ret_peaceful_mons[y, x] = True
-
-    return ret_peaceful_mons
+from .kernels import figure_out_monster_movement
+from .. import utils
+from ..exceptions import AgentPanic
+from ..glyph import C, G
 
 
 class MonsterTracker:
@@ -119,7 +73,8 @@ class MonsterTracker:
                 all_monsters = self.take_all_monsters()
                 self.monster_mask, pet_mask = self._get_current_masks()  # glyphs can change sometimes after calling `take_all_monsters`
                 for (y, x), name in all_monsters.items():
-                    if not (self.monster_mask[y, x] or pet_mask[y, x] or (y, x) == (self.agent.blstats.y, self.agent.blstats.x)):
+                    if not (self.monster_mask[y, x] or pet_mask[y, x] or (y, x) == (
+                    self.agent.blstats.y, self.agent.blstats.x)):
                         raise AgentPanic('monsters differs between list and glyphs')
                     if 'peaceful' in name and not pet_mask[y, x]:
                         self.peaceful_monster_mask[y, x] = 1
