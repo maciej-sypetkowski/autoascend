@@ -4,26 +4,25 @@ import re
 from collections import namedtuple, Counter, defaultdict
 from functools import partial
 
-from combat.utils import action_str
-from stats_logger import StatsLogger
+from .combat.utils import action_str
+from .stats_logger import StatsLogger
 
 import nltk
 import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
-import combat.monster_utils
-import combat.fight_heur
-import utils
-from character import Character
-from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
-from exploration_logic import ExplorationLogic
-from global_logic import GlobalLogic
-from glyph import MON, C, Hunger, G, SHOP
-from item import Inventory, Item, flatten_items
-from level import Level
-from monster_tracker import MonsterTracker, disappearance_mask
-from strategy import Strategy
+from . import combat
+from . import utils
+from .character import Character
+from .exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
+from .exploration_logic import ExplorationLogic
+from .global_logic import GlobalLogic
+from .glyph import MON, C, Hunger, G, SHOP
+from .item import Inventory, Item, flatten_items
+from .level import Level
+from .monster_tracker import MonsterTracker, disappearance_mask
+from .strategy import Strategy
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number prop_mask')

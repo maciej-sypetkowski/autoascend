@@ -4,15 +4,15 @@ import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
-import objects as O
-import soko_solver
-import utils
-from character import Character
-from exceptions import AgentPanic
-from glyph import Hunger, G, MON
-from item import Item, ItemPriorityBase, flatten_items
-from level import Level
-from strategy import Strategy
+from . import objects as O
+from . import soko_solver
+from . import utils
+from .character import Character
+from .exceptions import AgentPanic
+from .glyph import Hunger, G, MON
+from .item import Item, ItemPriorityBase, flatten_items
+from .level import Level
+from .strategy import Strategy
 
 
 class ItemPriority(ItemPriorityBase):

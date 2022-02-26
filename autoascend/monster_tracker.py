@@ -3,9 +3,9 @@ import re
 import numpy as np
 from nle.nethack import actions as A
 
-import utils
-from exceptions import AgentPanic
-from glyph import C, G
+from . import utils
+from .exceptions import AgentPanic
+from .glyph import C, G
 
 try:
     import numba as nb

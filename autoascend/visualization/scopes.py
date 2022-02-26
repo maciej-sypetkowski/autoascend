@@ -7,7 +7,7 @@ from .utils import VideoWriter
 class DrawTilesScope():
 
     def __init__(self, visualizer, tiles, color, is_path=False, is_heatmap=False, mode='fill'):
-        from glyph import C
+        from ..glyph import C  # imported here to allow agent reloading
         self.visualizer = visualizer
         self.is_heatmap = is_heatmap
         self.color = color

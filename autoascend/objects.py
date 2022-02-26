@@ -2,7 +2,7 @@ import functools
 from collections import namedtuple
 from enum import Enum
 
-import utils
+from . import utils
 
 
 Weapon = namedtuple('Weapon', 'name,desc,kn,mg,bi,prob,wt,cost,sdam,ldam,hitbon,typ,sub,metal,color,damage_small,damage_large'.split(','))

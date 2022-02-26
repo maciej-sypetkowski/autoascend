@@ -1,4 +1,4 @@
-from utils import adjacent
+from ..utils import adjacent
 from . import utils
 from .monster_utils import WEAK_MONSTERS, ONLY_RANGED_SLOW_MONSTERS, consider_melee_only_ranged_if_hp_full, \
     imminent_death_on_melee, EXPLODING_MONSTERS, WEIRD_MONSTERS

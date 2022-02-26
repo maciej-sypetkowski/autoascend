@@ -23,9 +23,9 @@ import gym
 import nle.nethack as nh
 import numpy as np
 
-import agent as agent_lib
-from visualization import visualizer
-from utils import plot_dashboard
+from autoascend import agent as agent_lib
+from autoascend.visualization import visualizer
+from autoascend.utils import plot_dashboard
 
 
 def fork_with_nethack_env(env):

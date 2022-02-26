@@ -8,12 +8,12 @@ import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
-import objects as O
-import utils
-from character import Character
-from exceptions import AgentPanic
-from glyph import WEA, G, MON
-from strategy import Strategy
+from . import objects as O
+from . import utils
+from .character import Character
+from .exceptions import AgentPanic
+from .glyph import WEA, G, MON
+from .strategy import Strategy
 
 
 def flatten_items(iterable):

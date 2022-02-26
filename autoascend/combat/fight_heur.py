@@ -4,8 +4,8 @@ from itertools import product
 import numpy as np
 from scipy import signal
 
-from glyph import G
-from utils import adjacent
+from ..glyph import G
+from ..utils import adjacent
 from .monster_utils import is_monster_faster, is_dangerous_monster, \
     ONLY_RANGED_SLOW_MONSTERS, EXPLODING_MONSTERS, WEAK_MONSTERS, consider_melee_only_ranged_if_hp_full
 from .movement_priority import draw_monster_priority_positive, draw_monster_priority_negative

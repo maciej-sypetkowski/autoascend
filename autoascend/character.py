@@ -4,7 +4,7 @@ import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
-import objects as O
+from . import objects as O
 
 
 ALL_SPELL_NAMES = [

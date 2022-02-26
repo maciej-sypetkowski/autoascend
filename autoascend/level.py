@@ -2,8 +2,8 @@ from collections import defaultdict
 
 import numpy as np
 
-import utils
-from glyph import C, G, SHOP, SS
+from . import utils
+from .glyph import C, G, SHOP, SS
 
 
 class Level:

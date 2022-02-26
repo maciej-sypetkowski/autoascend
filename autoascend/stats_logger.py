@@ -2,7 +2,7 @@ from collections import defaultdict
 
 import numpy as np
 
-import character
+from . import character
 
 
 class StatsLogger:

@@ -9,7 +9,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import toolz
 
-from strategy import Strategy
+from .strategy import Strategy
 
 try:
     import numba as nb
