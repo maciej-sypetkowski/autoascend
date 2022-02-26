@@ -3,6 +3,8 @@ import contextlib
 import re
 from collections import namedtuple, Counter, defaultdict
 from functools import partial
+
+from combat.utils import action_str
 from stats_logger import StatsLogger
 
 import nltk
@@ -10,13 +12,14 @@ import nle.nethack as nh
 import numpy as np
 from nle.nethack import actions as A
 
-import fight_heur
+import combat.monster_utils
+import combat.fight_heur
 import utils
 from character import Character
 from exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from exploration_logic import ExplorationLogic
 from global_logic import GlobalLogic
-from glyph import MON, C, Hunger, G, SHOP, ALL
+from glyph import MON, C, Hunger, G, SHOP
 from item import Inventory, Item, flatten_items
 from level import Level
 from monster_tracker import MonsterTracker, disappearance_mask
@@ -24,8 +27,6 @@ from strategy import Strategy
 
 BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number prop_mask')
-
-RL_CONTEXT_SIZE = 7
 
 
 class Agent:
@@ -958,7 +959,7 @@ class Agent:
 
         for my, mx in list(zip(*np.nonzero(utils.isin(self.glyphs, G.MONS)))):
             mon = MON.permonst(self.glyphs[my][mx])
-            if mon.mname in fight_heur.ONLY_RANGED_SLOW_MONSTERS:
+            if mon.mname in combat.monster_utils.ONLY_RANGED_SLOW_MONSTERS:
                 walkable[my, mx] = False
 
         dis = utils.bfs(y, x,
@@ -1112,8 +1113,8 @@ class Agent:
         while 1:
             monsters = self.get_visible_monsters()
             allow_attack_all = self._last_turn - self._allow_attack_all_turn < 3
-            only_ranged_slow_monsters = all([monster[3].mname in fight_heur.ONLY_RANGED_SLOW_MONSTERS
-                                             and not fight_heur.consider_melee_only_ranged_if_hp_full(self, monster)
+            only_ranged_slow_monsters = all([monster[3].mname in combat.monster_utils.ONLY_RANGED_SLOW_MONSTERS
+                                             and not combat.monster_utils.consider_melee_only_ranged_if_hp_full(self, monster)
                                              for monster in monsters])
 
             dis = self.bfs()
@@ -1135,8 +1136,8 @@ class Agent:
                 self.character.parse_enhance_view()
                 # self.character.parse_spellcast_view()
 
-            move_priority_heatmap, actions = fight_heur.get_priorities(self)
-            actions.extend(fight_heur.get_move_actions(self, dis, move_priority_heatmap))
+            move_priority_heatmap, actions = combat.fight_heur.get_priorities(self)
+            actions.extend(combat.fight_heur.get_move_actions(self, dis, move_priority_heatmap))
 
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
@@ -1153,26 +1154,7 @@ class Agent:
             priority, best_action = max(actions, key=lambda x: x[0]) if actions else None
 
             with self.env.debug_tiles(move_priority_heatmap, color='turbo', is_heatmap=True):
-                def action_str(action):
-                    priority, a = action
-                    if a[0] == 'move':
-                        return f'{priority}m:{a[1]},{a[2]}'
-                    elif a[0] == 'melee':
-                        return f'{priority}me:{a[1]},{a[2]}'
-                    elif a[0] == 'pickup':
-                        return f'{priority}{a[0][0]}:{len(a[1])}'
-                    elif a[0] == 'zap':
-                        wand = a[3]
-                        letter = self.inventory.items.get_letter(wand)
-                        return f'{priority}z{letter}:{a[1]},{a[2]}'
-                    elif a[0] == 'elbereth':
-                        return f'{priority:.1f}e'
-                    elif a[0] == 'wait':
-                        return f'{priority:.1f}w'
-                    elif a[0] == 'go_to':
-                        return f'{priority}goto:{a[1]},{a[2]}'
-                    else:
-                        return f'{priority}{a[0][0]}:{a[1]},{a[2]}'
+
 
                 actions_str = '|'.join([action_str(a) for a in sorted(actions, key=lambda x: x[0])])
                 with self.env.debug_log(actions_str):
@@ -1233,8 +1215,8 @@ class Agent:
         ret = [self.blstats.hitpoints,
                self.blstats.max_hitpoints,
                self.blstats.hitpoints / self.blstats.max_hitpoints,
-               fight_heur.wielding_ranged_weapon(self),
-               fight_heur.wielding_melee_weapon(self)]
+               combat.utils.wielding_ranged_weapon(self),
+               combat.utils.wielding_melee_weapon(self)]
         ret = np.array(ret, dtype=np.float32)
         assert not np.isnan(ret).any()
         return ret
@@ -1355,7 +1337,7 @@ class Agent:
             if len(best_action) == 2:
                 _, items_to_pickup = best_action
             else:
-                items_to_pickup = fight_heur.decide_what_to_pickup(self)
+                items_to_pickup = combat.fight_heur.decide_what_to_pickup(self)
             self.inventory.pickup(items_to_pickup)
             return wait_counter
         elif best_action[0] == 'go_to':
