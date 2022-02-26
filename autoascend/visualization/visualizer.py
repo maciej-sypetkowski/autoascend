@@ -437,7 +437,7 @@ class Visualizer:
         return vis
 
     def _draw_item(self, letter, item, width, height, indent=0):
-        from ..item import Item  # imported here to allow agent reloading
+        from ..item import Item
 
         bg_color = {
             nh.WAND_CLASS: np.array([0, 50, 50], dtype=np.uint8),

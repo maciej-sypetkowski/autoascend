@@ -19,7 +19,8 @@ from .exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from .exploration_logic import ExplorationLogic
 from .global_logic import GlobalLogic
 from .glyph import MON, C, Hunger, G, SHOP
-from .item import Inventory, Item, flatten_items
+from .item import Item, flatten_items
+from .item.inventory import Inventory
 from .level import Level
 from .monster_tracker import MonsterTracker, disappearance_mask
 from .strategy import Strategy

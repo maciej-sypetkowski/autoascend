@@ -10,7 +10,8 @@ from . import utils
 from .character import Character
 from .exceptions import AgentPanic
 from .glyph import Hunger, G, MON
-from .item import Item, ItemPriorityBase, flatten_items
+from .item import Item, flatten_items
+from .item.item_priority_base import ItemPriorityBase
 from .level import Level
 from .strategy import Strategy
 
