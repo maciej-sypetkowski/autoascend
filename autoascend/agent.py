@@ -1480,7 +1480,7 @@ class Agent:
     @Strategy.wrap
     def cure_disease(self):
         if self.character.is_lycanthrope:
-            # spring of wolfbane
+            # spring of wolfsbane
             for item in flatten_items(self.inventory.items):
                 if item.objs[0].name == 'sprig of wolfsbane':
                     yield True

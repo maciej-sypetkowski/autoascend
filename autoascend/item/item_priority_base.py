@@ -17,7 +17,7 @@ class ItemPriorityBase:
         Order of `items` matters. First items are more important.
         Otherwise the agent will drop and pickup items repeatedly.
 
-        The function should motonic (i.e. removing an item from the argument,
+        The function should be monotonic (i.e. removing an item from the argument,
         shouldn't decrease counts of other items). Otherwise the agent may
         go to the item, don't take it, and repeat infinitely
 
