@@ -72,7 +72,7 @@ class Visualizer:
         self.total_time = 0
 
         self.renders_history = None
-        if not self.show:
+        if not self.show and output_video_path is None:
             assert output_dir is not None
             self.renders_history = queue.deque(maxlen=RENDERS_HISTORY_SIZE)
             self.output_dir = output_dir
