@@ -20,7 +20,7 @@ def inside(agent, y, x):
     return 0 <= y < agent.glyphs.shape[0] and 0 <= x < agent.glyphs.shape[1]
 
 
-def action_str(action):
+def action_str(agent, action):
     priority, a = action
     if a[0] == 'move':
         return f'{priority}m:{a[1]},{a[2]}'
@@ -30,7 +30,7 @@ def action_str(action):
         return f'{priority}{a[0][0]}:{len(a[1])}'
     elif a[0] == 'zap':
         wand = a[3]
-        letter = self.inventory.items.get_letter(wand)
+        letter = agent.inventory.items.get_letter(wand)
         return f'{priority}z{letter}:{a[1]},{a[2]}'
     elif a[0] == 'elbereth':
         return f'{priority:.1f}e'
@@ -40,4 +40,3 @@ def action_str(action):
         return f'{priority}goto:{a[1]},{a[2]}'
     else:
         return f'{priority}{a[0][0]}:{a[1]},{a[2]}'
-        L_CONTEXT_SIZE = 7

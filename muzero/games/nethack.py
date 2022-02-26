@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 from .abstract_game import AbstractGame
-from src import EnvWrapper
+from bin.heur import EnvWrapper
 
 
 class MuZeroConfig:
