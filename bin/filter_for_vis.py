@@ -51,4 +51,3 @@ def process(path='/tmp/nh_sim.json'):
 
 
 process()
-

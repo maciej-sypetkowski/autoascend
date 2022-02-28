@@ -1,13 +1,11 @@
-import json
 import base64
+import json
 import pickle
 from collections import defaultdict
-from pathlib import Path
 
-import seaborn as sns
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
 
 with open('/tmp/vis/observations.txt') as f:
     observations = defaultdict(list)

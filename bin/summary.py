@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
 HEADER = '-' * 50
 
 
@@ -36,7 +35,7 @@ def print_exceptions(df, ref_df):
     counter = Counter([extract_last_place_from_exception(r) for r in df.end_reason if r.startswith('exception:')])
     for k, v in counter.most_common():
         d = df[[r.startswith('exception:') and k == extract_last_place_from_exception(r) for r in df.end_reason]]
-        print(k, '\n', extract_last_part_from_exception(d.end_reason.iloc[0]) ,':', give_examples(d, df))
+        print(k, '\n', extract_last_part_from_exception(d.end_reason.iloc[0]), ':', give_examples(d, df))
         print()
     print()
     print()
@@ -84,13 +83,14 @@ def print_summary(comment, df, ref_df, indent=0):
 
     print(indent_chars + ' ', '*' * 8, 'stats')
     for stat_name, stat_values in [
-            ('score        ', df.score),
-            *[(f'score-{role}    ', df[df.role == role].score) for role in sorted(df.role.unique())],
-            *[(f'score-mile-{milestone} ', df[df.milestone == milestone].score) for milestone in sorted(df.milestone.unique())],
-            ('exp_level    ', df.experience_level),
-            ('dung_level   ', df.level_num),
-            ('runtime_dur  ', df.duration),
-            ]:
+        ('score        ', df.score),
+        *[(f'score-{role}    ', df[df.role == role].score) for role in sorted(df.role.unique())],
+        *[(f'score-mile-{milestone} ', df[df.milestone == milestone].score) for milestone in
+          sorted(df.milestone.unique())],
+        ('exp_level    ', df.experience_level),
+        ('dung_level   ', df.level_num),
+        ('runtime_dur  ', df.duration),
+    ]:
         mean = np.mean(stat_values)
         std = np.std(stat_values)
         quantiles = np.quantile(stat_values, [0, 0.05, 0.25, 0.5, 0.75, 0.95, 1])
@@ -108,7 +108,7 @@ def print_summary(comment, df, ref_df, indent=0):
 
 def main(filepath):
     df = load_df(filepath)
-    df.seed = [s[0] for s in  df.seed]
+    df.seed = [s[0] for s in df.seed]
     df['end_reason_group'] = [get_group_from_end_reason(e) for e in df.end_reason]
     df['role'] = [c[:3] for c in df.character]
     median = np.median(df.score)

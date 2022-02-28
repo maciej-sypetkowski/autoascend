@@ -1,13 +1,10 @@
-import json
 import contextlib
 import re
 from collections import namedtuple, Counter, defaultdict
 from functools import partial
 
-from .stats_logger import StatsLogger
-
-import nltk
 import nle.nethack as nh
+import nltk
 import numpy as np
 from nle.nethack import actions as A
 
@@ -22,6 +19,7 @@ from .item import Item, flatten_items
 from .item.inventory import Inventory
 from .level import Level
 from .monster_tracker import MonsterTracker, disappearance_mask
+from .stats_logger import StatsLogger
 from .strategy import Strategy
 
 BLStats = namedtuple('BLStats',
@@ -454,10 +452,10 @@ class Agent:
         self.glyphs = self.last_observation['glyphs']
 
         self.stats_logger.log_cumulative_value('max_turns_on_position',
-            key=(self.current_level().dungeon_number,
-                self.current_level().level_number,
-                self.blstats.y, self.blstats.x),
-            value=self.blstats.time - self._last_turn)
+                                               key=(self.current_level().dungeon_number,
+                                                    self.current_level().level_number,
+                                                    self.blstats.y, self.blstats.x),
+                                               value=self.blstats.time - self._last_turn)
 
         self._inactivity_counter += 1
         if self._last_turn != self.blstats.time:
@@ -593,7 +591,7 @@ class Agent:
                 continue
 
             level.corpses_to_eat[self.blstats.y, self.blstats.x][item.monster_id] = \
-                    old_possible_corpses[item.monster_id]
+                old_possible_corpses[item.monster_id]
 
     def update_level(self):
         if utils.isin(self.glyphs, G.SWALLOW).any():
@@ -636,14 +634,14 @@ class Agent:
                 level.walkable[y, x] = False  # necessary for the exit route from vaults
 
         # ad aerarium -- avoid valut entrance
-        if self.inventory.engraving_below_me and nltk.edit_distance(self.inventory.engraving_below_me, "ad aerarium") <= 6:
+        if self.inventory.engraving_below_me and nltk.edit_distance(self.inventory.engraving_below_me,
+                                                                    "ad aerarium") <= 6:
             self.stats_logger.log_event('ad_aerarium_below_me')
             for dy, dx in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                 y, x = self.blstats.y + dy, self.blstats.x + dx
                 if (0 <= y < level.forbidden.shape[0] and 0 <= x < level.forbidden.shape[1]) \
                         and not level.walkable[y, x]:
                     level.forbidden[y, x] = True
-
 
     ######## TRIVIAL HELPERS
 
@@ -788,6 +786,7 @@ class Agent:
             dy, dx = direction
             direction = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx)
             success = [False]
+
             def type_letters():
                 # while f'{letter} - ' not in '\n'.join(self.single_popup):
                 #     yield A.TextCharacters.SPACE
@@ -1113,7 +1112,8 @@ class Agent:
             monsters = self.get_visible_monsters()
             allow_attack_all = self._last_turn - self._allow_attack_all_turn < 3
             only_ranged_slow_monsters = all([monster[3].mname in combat.monster_utils.ONLY_RANGED_SLOW_MONSTERS
-                                             and not combat.monster_utils.consider_melee_only_ranged_if_hp_full(self, monster)
+                                             and not combat.monster_utils.consider_melee_only_ranged_if_hp_full(self,
+                                                                                                                monster)
                                              for monster in monsters])
 
             dis = self.bfs()
@@ -1440,14 +1440,13 @@ class Agent:
 
         if (
                 (self.is_safe_to_pray(500) and
-                    (self.blstats.hitpoints < 1 / (5 if self.blstats.experience_level < 6 else 6)
-                        * self.blstats.max_hitpoints or self.blstats.hitpoints < 6))
-                 or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.FAINTING)
+                 (self.blstats.hitpoints < 1 / (5 if self.blstats.experience_level < 6 else 6)
+                  * self.blstats.max_hitpoints or self.blstats.hitpoints < 6))
+                or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.FAINTING)
         ):
             yield True
             self.pray()
             return
-
 
         # if self.inventory.engraving_below_me.lower() != 'elbereth' and self.can_engrave() and \
         #         (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5):

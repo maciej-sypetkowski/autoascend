@@ -1,5 +1,6 @@
-import numpy as np
 import pickle
+
+import numpy as np
 import torch
 
 
@@ -19,7 +20,7 @@ class RLModel:
             checkpoint = torch.load('/checkpoints/nethack/2021-10-08--16-13-24/model.checkpoint')
             config = games.nethack.MuZeroConfig(rl_model=self)
             self.inference_iterator = self_play.SelfPlayNoRay(checkpoint, lambda *a: None, config, 0) \
-                    .play_game_generator(0, 0, False, config.opponent, 0)
+                .play_game_generator(0, 0, False, config.opponent, 0)
             assert next(self.inference_iterator) is None
             self.is_first_iteration = True
 
@@ -54,10 +55,10 @@ class RLModel:
                     assert 0
 
         vals = [(
-            val.reshape(val.shape[0], *hw_shape) if len(val.shape) == 3 else
-            val.reshape(1, *val.shape) if len(val.shape) == 2 else
-            val.reshape(val.shape[0], 1, 1).repeat(hw_shape[0], 1).repeat(hw_shape[1], 2)
-            ).astype(np.float32) for val in vals]
+                    val.reshape(val.shape[0], *hw_shape) if len(val.shape) == 3 else
+                    val.reshape(1, *val.shape) if len(val.shape) == 2 else
+                    val.reshape(val.shape[0], 1, 1).repeat(hw_shape[0], 1).repeat(hw_shape[1], 2)
+                ).astype(np.float32) for val in vals]
         return np.concatenate(vals, 0)
 
     def zero_observation(self):

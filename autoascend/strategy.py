@@ -1,4 +1,4 @@
-from functools import wraps, partial
+from functools import wraps
 
 
 class Strategy:
@@ -53,8 +53,8 @@ class Strategy:
                 assert 0
             yield True
 
-        strategy = self.condition(lambda: not condition()) \
-                       .preempt(agent, [Strategy(f)], continue_after_preemption=False)
+        strategy = self.condition(lambda: not condition()).preempt(agent, [Strategy(f)],
+                                                                   continue_after_preemption=False)
         strategy.config = {'strategy': self.config, 'until': str(condition)}
         return strategy
 
@@ -142,6 +142,7 @@ class Strategy:
 
     def every(self, num_of_iterations):
         current_num = -1
+
         def f():
             nonlocal current_num
             current_num += 1

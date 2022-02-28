@@ -1,5 +1,3 @@
-
-
 import numpy as np
 
 from .maps import maps
@@ -62,4 +60,3 @@ def convert_map(text):
     start = start[0]
     ret[ret == START] = EMPTY
     return SokoMap(start, np.array(ret))
-

@@ -6,7 +6,6 @@ from nle.nethack import actions as A
 
 from . import objects as O
 
-
 ALL_SPELL_NAMES = [
     "force bolt",
     "drain life",
@@ -248,7 +247,7 @@ class Character:
         SKILL_LEVEL_GRAND_MASTER: (3, 3),
     }
     martial_bonus = {
-        SKILL_LEVEL_RESTRICTED: (1, 0),  #  no one has it restricted
+        SKILL_LEVEL_RESTRICTED: (1, 0),  # no one has it restricted
         SKILL_LEVEL_UNSKILLED: (2, 1),
         SKILL_LEVEL_BASIC: (3, 3),
         SKILL_LEVEL_SKILLED: (4, 4),
@@ -329,7 +328,7 @@ class Character:
         self.spell_fail_chance = dict()
 
         # TODO: parse for other spellcaster classes
-        if self.role not in (self.HEALER, ):
+        if self.role not in (self.HEALER,):
             return
 
         with self.agent.atom_operation():
@@ -362,10 +361,12 @@ class Character:
                 to_upgrade = self.select_skill_to_upgrade()
                 old_skill_level = self.skill_levels.copy()
                 letter = self.upgradable_skills[to_upgrade]
+
                 def type_letter():
                     while f'{letter} - ' not in '\n'.join(self.agent.single_popup):
                         yield A.TextCharacters.SPACE
                     yield letter
+
                 self.agent.step(A.Command.ENHANCE, type_letter())
 
                 self.agent.step(A.Command.ENHANCE)
