@@ -272,7 +272,7 @@ def run_simulations(args):
         # assert not q.empty()
 
     try:
-        with Path('/workspace/nh_sim.json').open('r') as f:
+        with args.simulation_results.open('r') as f:
             all_res = json.load(f)
         print('Continue running: ', (len(all_res['seed'])))
     except FileNotFoundError:
@@ -352,7 +352,7 @@ def run_simulations(args):
         print('\n'.join(text) + '\n')
 
         if args.visualize_ends is None:
-            with Path('/workspace/nh_sim.json').open('w') as f:
+            with args.simulation_results.open('w') as f:
                 json.dump(all_res, f)
 
     print('DONE!')
@@ -379,6 +379,8 @@ def parse_args():
                         help="Episode visualization video directory -- valid only with 'simulate' mode")
     parser.add_argument('--profiler', choices=('cProfile', 'pyinstrument', 'none'), default='pyinstrument')
     parser.add_argument('--with-gpu', action='store_true')
+    parser.add_argument('--simulation-results', default='nh_sim.json', type=Path,
+                        help='path to simulation results json. Only for simulation mode')
 
     args = parser.parse_args()
     if args.seed is None:
@@ -403,6 +405,8 @@ def main():
         run_profiling(args)
     elif args.mode == 'run':
         run_single_interactive_game(args)
+    else:
+        assert 0
 
 
 if __name__ == '__main__':

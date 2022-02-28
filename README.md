@@ -1,4 +1,4 @@
-# AutoAscend -- 1st place NetHack bot for [the NetHack Challenge at NeurIPS 2021](https://www.aicrowd.com/challenges/neurips-2021-the-nethack-challenge)
+# AutoAscend -- 1st place NetHack agent for [the NetHack Challenge at NeurIPS 2021](https://www.aicrowd.com/challenges/neurips-2021-the-nethack-challenge)
 
 
 ## Description
@@ -24,7 +24,21 @@ e.g. NLE version supports seeding, tileset is downloaded and hardcoded path in t
 
 
 ## How to run
-    TODO
+`./bin/main.py <MODE> [PARAMS]` is the main entrypoint. It has three modes:
+* `simulate` -- a mode that simulates `--episodes` episodes, and saves results to `--simulation-results` json file.
+    If the file exists at the beginning, it checks which episodes were already simulated not to simulate episode
+    with the same seed twice. The script uses [Ray](https://www.ray.io/) to allow running episodes in parallel,
+    and requires Ray instance to be running (for simpliest setup just run `ray start --head` beforehand).
+    If you're planning to develop the code and add new features make sure that you understand how Ray works,
+    because in some cases it may not update code properly if you don't restart the server.
+* `run` -- a mode that runs a single episode with visualization.
+    The visualization supports custom input to override agent action. Just type any letter to pass this input to the environment.
+    If you type `backspace` key, the agent action will be executed. `delete` key works similary, but fast forward 16 frames.
+    Be aware that using custom input may confuse the agent, which may result in unexpected behavior and exceptions,
+    so you may consider using `--panic-on-error` flag to handle gracefully unexpected errors.
+* `profile` -- a mode that profiles the code. We implemented two profilers (cProfile and pyinstrument)
+    that can be set with `--profiler` flag. In pyinstrument we customly process/fake tracebacks to adjust
+    the summary report to our code to be easier to read and understand (refer to the implementation for details).
 
 
 ## Code structure
