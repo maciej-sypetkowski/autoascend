@@ -1,17 +1,13 @@
 import ctypes
 import datetime
 import os
-import queue
 import multiprocessing
 import traceback
 
 import gym
-import nle
-import numpy as np
-import torch
 
 from .abstract_game import AbstractGame
-from bin.heur import EnvWrapper
+from autoascend.env_wrapper import EnvWrapper
 
 
 class MuZeroConfig:

@@ -4,19 +4,13 @@ from functools import partial, wraps
 from itertools import chain
 
 import cv2
+import matplotlib.pyplot as plt
+import numba as nb
 import numpy as np
 import seaborn as sns
-import matplotlib.pyplot as plt
 import toolz
 
 from .strategy import Strategy
-
-try:
-    import numba as nb
-except ImportError:
-    class nb:
-        b1 = bool
-        njit = lambda *a, **k: (lambda f: f)
 
 
 @nb.njit(cache=True)
@@ -88,8 +82,8 @@ def _isin_mask(elems):
 
 @nb.njit('Tuple((i2,i2,b1[:]))(i2[:])', cache=True)
 def _isin_mask_kernel(elems):
-    mi : i2 = 32767
-    ma : i2 = -32768
+    mi: i2 = 32767
+    ma: i2 = -32768
     for i in range(elems.shape[0]):
         if mi > elems[i]:
             mi = elems[i]
@@ -106,10 +100,10 @@ def isin(array, *elems):
 
     # for memoization
     elems = tuple((
-        e               if isinstance(e, tuple)     else
-        e               if isinstance(e, frozenset) else
-        tuple(e)        if isinstance(e, list)      else
-        frozenset(e)    if isinstance(e, set)       else
+        e if isinstance(e, tuple) else
+        e if isinstance(e, frozenset) else
+        tuple(e) if isinstance(e, list) else
+        frozenset(e) if isinstance(e, set) else
         e
         for e in elems))
 
@@ -158,10 +152,12 @@ def adjacent(p1, p2):
 def calc_dps(to_hit, damage):
     return damage * min(20, max(0, (to_hit - 1))) / 20
 
+
 @Strategy.wrap
 def assert_strategy(error=None):
     yield True
     assert 0, error
+
 
 def copy_result(func):
     @wraps(func)
@@ -172,6 +168,7 @@ def copy_result(func):
         if isinstance(ret, tuple):
             return tuple((x.copy() if isinstance(x, list) else x for x in ret))
         return ret.copy()
+
     return f
 
 
@@ -181,8 +178,8 @@ def dilate(mask, radius=1, with_diagonal=True):
         kernel = np.ones((d, d), dtype=np.uint8)
     else:
         kernel = np.zeros((d, d), dtype=np.uint8)
-        kernel[radius : radius + 1, :] = 1
-        kernel[:, radius : radius + 1] = 1
+        kernel[radius: radius + 1, :] = 1
+        kernel[:, radius: radius + 1] = 1
     return cv2.dilate(mask.astype(np.uint8), kernel).astype(bool)
 
 
@@ -192,8 +189,9 @@ def slice_with_padding(array, a1, a2, b1, b2, pad_value=0):
     off_b1 = -b1 if b1 < 0 else 0
     off_a2 = array.shape[0] - a2 if a2 > array.shape[0] else ret.shape[0]
     off_b2 = array.shape[1] - b2 if b2 > array.shape[1] else ret.shape[1]
-    ret[off_a1 : off_a2, off_b1 : off_b2] = array[max(0, a1) : a2, max(0, b1) : b2]
+    ret[off_a1: off_a2, off_b1: off_b2] = array[max(0, a1): a2, max(0, b1): b2]
     return ret
+
 
 def slice_square_with_padding(array, center_y, center_x, radius, pad_value=0):
     return slice_with_padding(array, center_y - radius, center_y + radius + 1,
