@@ -5,8 +5,6 @@ RUN apt-get update
 RUN apt-get install -y build-essential autoconf libtool pkg-config python3-dev python3-pip python3-numpy git flex \
                        bison libbz2-dev xterm gfortran xdot
 
-# RUN pip install numpy=1.21.2 tensorboard=2.6.0 gym==0.19.0 ray==1.8.0 seaborn==0.11.2 nevergrad==0.4.3.post8 \
-#     ray[default] gprof2dot opencv-python toolz pyinstrument==4.0.4 nltk==3.6.2 pillow==8.4.0 redis==3.5.3
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
@@ -42,7 +40,7 @@ RUN cd / && python -c 'import nle ; from glyph2tile import glyph2tile ; \
                        assert isinstance(glyph2tile, list) and len(glyph2tile) == nle.nethack.MAX_GLYPH'
 
 # uncomment to install jupyter vim plugin
-RUN apt update && apt install -y npm
-RUN pip install -U jupyterlab==1.2.14
-RUN jupyter labextension uninstall jupyterlab-jupytext jupyterlab_tensorboard
-RUN jupyter labextension install jupyterlab_vim
+# RUN apt update && apt install -y npm
+# RUN pip install -U jupyterlab==1.2.14
+# RUN jupyter labextension uninstall jupyterlab-jupytext jupyterlab_tensorboard
+# RUN jupyter labextension install jupyterlab_vim

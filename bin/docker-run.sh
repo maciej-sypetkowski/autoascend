@@ -1,9 +1,6 @@
 #!/bin/bash
-if [ $HOSTNAME == "lambda" ]; then
-    devices=1,4,6
-else
-    devices=0
-fi
+devices=0
+# TODO: mounts
 docker run --gpus='"device='$devices'"' --ipc=host --net=host -it --rm \
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
