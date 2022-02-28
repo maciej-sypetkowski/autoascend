@@ -1,0 +1,96 @@
+diff -u a/self_play.py b/self_play.py
+--- a/self_play.py	2022-02-28 20:13:16.761313975 +0100
++++ b/self_play.py	2022-02-26 12:06:11.769504383 +0100
+@@ -8,8 +8,7 @@
+ import models
+ 
+ 
+-@ray.remote
+-class SelfPlay:
++class SelfPlayNoRay:
+     """
+     Class which run in a dedicated thread to play games and save them to the replay-buffer.
+     """
+@@ -107,18 +106,28 @@
+ 
+         self.close_game()
+ 
+-    def play_game(
++    def play_game(self, *args, **kwargs):
++        it = self.play_game_generator(*args, **kwargs)
++        next(it)
++        try:
++            action = it.send((self.game.reset(), None, None, self.game.to_play(), self.game.legal_actions()))
++            while 1:
++                action = it.send((*self.game.step(action), self.game.to_play(), self.game.legal_actions()))
++        except StopIteration as e:
++            return e.value
++
++    def play_game_generator(
+         self, temperature, temperature_threshold, render, opponent, muzero_player
+     ):
+         """
+         Play one game with actions based on the Monte Carlo tree search at each moves.
+         """
+         game_history = GameHistory()
+-        observation = self.game.reset()
++        observation, _, _, to_play, legal_actions = yield None
+         game_history.action_history.append(0)
+         game_history.observation_history.append(observation)
+         game_history.reward_history.append(0)
+-        game_history.to_play_history.append(self.game.to_play())
++        game_history.to_play_history.append(to_play)
+ 
+         done = False
+ 
+@@ -141,12 +150,12 @@
+                 )
+ 
+                 # Choose the action
+-                if opponent == "self" or muzero_player == self.game.to_play():
++                if opponent == "self" or muzero_player == to_play:
+                     root, mcts_info = MCTS(self.config).run(
+                         self.model,
+                         stacked_observations,
+-                        self.game.legal_actions(),
+-                        self.game.to_play(),
++                        legal_actions,
++                        to_play,
+                         True,
+                     )
+                     action = self.select_action(
+@@ -160,14 +169,14 @@
+                     if render:
+                         print(f'Tree depth: {mcts_info["max_tree_depth"]}')
+                         print(
+-                            f"Root value for player {self.game.to_play()}: {root.value():.2f}"
++                            f"Root value for player {to_play}: {root.value():.2f}"
+                         )
+                 else:
+                     action, root = self.select_opponent_action(
+                         opponent, stacked_observations
+                     )
+ 
+-                observation, reward, done = self.game.step(action)
++                observation, reward, done, to_play, legal_actions = yield action
+ 
+                 if render:
+                     print(f"Played action: {self.game.action_to_string(action)}")
+@@ -179,7 +188,7 @@
+                 game_history.action_history.append(action)
+                 game_history.observation_history.append(observation)
+                 game_history.reward_history.append(reward)
+-                game_history.to_play_history.append(self.game.to_play())
++                game_history.to_play_history.append(to_play)
+ 
+         return game_history
+ 
+@@ -245,6 +254,8 @@
+ 
+         return action
+ 
++SelfPlay = ray.remote(SelfPlayNoRay)
++
+ 
+ # Game independent
+ class MCTS:

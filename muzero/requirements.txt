@@ -1,8 +1,0 @@
-opencv-python
-numpy
-torch
-tensorboard
-gym
-ray
-seaborn
-nevergrad

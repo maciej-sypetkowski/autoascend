@@ -16,7 +16,8 @@ You may need to tune it depending on your X11 configuration.
 
 In `Dockerfile`, besides only installing dependencies,
 the [NLE](https://github.com/facebookresearch/nle) library is pulled and slightly modified
-to enable game seeding, glyph to tile mapping is generated, and tileset is downloaded.
+to enable game seeding, glyph to tile mapping is generated, and tileset is downloaded,
+muzero is pulled and custom patch applied (needed only for experimental reinforcement learning workflows).
 
 We encourage using docker, but if you decide that you don't want to use it, be sure to make sure that the environment is compatible,
 e.g. NLE version supports seeding, tileset is downloaded and hardcoded path in the code changed,

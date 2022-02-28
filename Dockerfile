@@ -8,6 +8,10 @@ RUN apt-get install -y build-essential autoconf libtool pkg-config python3-dev p
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+COPY muzero/muzero.patch .
+RUN git clone https://github.com/werner-duvaud/muzero-general /muzero && cd /muzero && git checkout 23a1f691
+RUN patch -d /muzero muzero.patch
+
 RUN git clone https://github.com/facebookresearch/nle.git /nle --recursive \
  && cd /nle && git checkout v0.7.3 \
  && sed '/#define NLE_ALLOW_SEEDING 1/i#define NLE_ALLOW_SEEDING 1' /nle/include/nleobs.h -i \
