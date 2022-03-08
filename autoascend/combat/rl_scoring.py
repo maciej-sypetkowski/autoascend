@@ -26,7 +26,7 @@ def init_fight2_model(agent):
         train=agent.rl_model_to_train == 'fight2',
         training_comm=agent.rl_model_training_comm,
     )
-    with open('/workspace/rl_features_stats.json', 'r') as f:
+    with open('/workspace/muzero/rl_features_stats.json', 'r') as f:
         agent._fight2_features_stats = json.load(f)
 
 

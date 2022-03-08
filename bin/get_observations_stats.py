@@ -1,3 +1,8 @@
+"""
+Script for extracting features stats for featurization for RL experiment.
+Uncomment code fragment in autoascend/combat/rl_scoring.py to generate the observations.txt file.
+"""
+
 import base64
 import json
 import pickle
@@ -6,6 +11,7 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+
 
 with open('/tmp/vis/observations.txt') as f:
     observations = defaultdict(list)
@@ -45,6 +51,7 @@ def plot_df(df_name, df, max_plots_in_row=10):
 
 stats = defaultdict(dict)
 
+
 for k, v in observations.items():
     v = np.array(v)
     print('----------------------', k, v.shape)
@@ -74,5 +81,6 @@ for k, v in observations.items():
     # plot_df(k + ' normalized', pd.DataFrame(v_normalized).sample(10000), 5)
     print()
 
-with open('rl_features_stats.json', 'w') as f:
+
+with open('/workspace/muzero/rl_features_stats.json', 'w') as f:
     json.dump(stats, f, indent=4)

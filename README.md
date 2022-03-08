@@ -4,6 +4,7 @@
 ## Description
 The general overview of the approach can be find [here](https://youtu.be/fVkXE330Bh0?t=4439) (1:14:00 -- 1:21:21).
 For more context about the challenge and NetHack see [the entire video](https://www.youtube.com/watch?v=fVkXE330Bh0).
+Some example episode visualizations are rendered in [this playlist](https://www.youtube.com/playlist?list=PLJ92BrynhLbdQVcz6-bUAeTeUo5i901RQ).
 
 
 ## Environment
@@ -36,7 +37,7 @@ e.g. NLE version supports seeding, tileset is downloaded and hardcoded path in t
     The visualization supports custom input to override agent action. Just type any letter to pass this input to the environment.
     If you type `backspace` key, the agent action will be executed. `delete` key works similary, but fast forward 16 frames.
     Be aware that using custom input may confuse the agent, which may result in unexpected behavior and exceptions,
-    so you may consider using `--panic-on-error` flag to handle gracefully unexpected errors.
+    so you may consider using `--panic-on-error` flag to handle unexpected errors gracefully.
 * `profile` -- a mode that profiles the code. We implemented two profilers (cProfile and pyinstrument)
     that can be set with `--profiler` flag. In pyinstrument we customly process/fake tracebacks to adjust
     the summary report to our code to be easier to read and understand (refer to the implementation for details).
@@ -68,4 +69,4 @@ The main strategy is defined in `autoascend/global_logic.py:GlobalLogic.global_s
 * `autoascend/glyph` -- hardcoded glyphs with their meaning and related helpers.
 * `autoascend/object` -- hardcoded objects with their meaning and related helpers.
 * `autoascend/soko_solver` -- utilities and method for solving sokoban.
-* `autoascend/visualization` -- visualization tool.
+* `autoascend/visualization` -- episode visualization tool.

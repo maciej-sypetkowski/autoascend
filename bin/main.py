@@ -374,7 +374,9 @@ def parse_args():
     parser.add_argument('--panic-on-errors', action='store_true')
     parser.add_argument('--no-plot', action='store_true')
     parser.add_argument('--visualize-ends', type=Path, default=None,
-                        help='Path to json file with dict: seed -> visualization_start_step')
+                        help='Path to json file with dict: seed -> visualization_start_step.'
+                        'THIS IS AN UNMAINTAINED FEATURE.'
+                        'It was used to save some visualizer frames before agent deathto conveniently browse them.')
     parser.add_argument('--output-video-dir', type=Path, default=None,
                         help="Episode visualization video directory -- valid only with 'simulate' mode")
     parser.add_argument('--profiler', choices=('cProfile', 'pyinstrument', 'none'), default='pyinstrument')
