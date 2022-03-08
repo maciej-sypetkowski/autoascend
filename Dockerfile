@@ -43,6 +43,9 @@ RUN python -c 'from pathlib import Path ; text = Path("/nle/src/tile.c").read_te
 RUN cd / && python -c 'import nle ; from glyph2tile import glyph2tile ; \
                        assert isinstance(glyph2tile, list) and len(glyph2tile) == nle.nethack.MAX_GLYPH'
 
+# download tileset
+RUN mkdir /tilesets && wget 'https://nethackwiki.com/mediawiki/images/7/73/3.6.1tiles32.png' -P /tilesets
+
 # uncomment to install jupyter vim plugin
 # RUN apt update && apt install -y npm
 # RUN pip install -U jupyterlab==1.2.14

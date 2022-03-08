@@ -17,7 +17,7 @@ RENDERS_HISTORY_SIZE = 128
 
 class Visualizer:
 
-    def __init__(self, env, tileset_path='/workspace/autoascend/tilesets/3.6.1tiles32.png', tile_size=32,
+    def __init__(self, env, tileset_path='/tilesets/3.6.1tiles32.png', tile_size=32,
                  start_visualize=None, show=False, output_dir=None, frame_skipping=None, output_video_path=None):
         self.env = env
         self.tile_size = tile_size
