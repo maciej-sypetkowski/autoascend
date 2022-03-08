@@ -43,4 +43,29 @@ e.g. NLE version supports seeding, tileset is downloaded and hardcoded path in t
 
 
 ## Code structure
-    TODO
+The base strategy class with description used for defining strategies is defined in `autoascend/strategy.py`.
+Strategy consists of entering condition and agent's behavior. The class contains a few methods for controling the flow
+and combine strategies together using functional interface (e.g. `repeat`, `until`, `preempt`), however strategies
+can be also passed into and run inside other strategies in imperative manner if needed.
+
+The main strategy is defined in `autoascend/global_logic.py:GlobalLogic.global_strategy()`
+
+* `autoascend/global_logic.py` -- contains definitions of the main strategy and other high-level strategies
+    (e.g. altar farming, altar item identification, dipping for the Excalibur)
+* `autoascend/agent.py` -- definition of the agent class. The agent class contains logic for updating the state of the game,
+    wraps NLE actions into atomic actions (e.g. untrap, pray, open_door), more complex actions (e.g. go_to),
+    and defines some low-level stategies.
+* `autoascend/item/item.py` -- an item instance. Contains a list of possible glyphs, a list of possible objects,
+    amount of items, beatitude, information about being equipped, bonuses, etc.
+* `autoascend/item/inventory.py` -- item and inventory handling logic. That included atoms and strategies for
+    handling items taking into account bag's items, arranging items, selecting gear to wear/wield, etc.
+* `autoascend/item/inventory_items.py` -- a class representing items that are in player's inventory.
+* `autoascend/item/item_manager.py` -- a class for managing general information about items in the game.
+    That includes item identification helpers, known glyph to object and object to glyph mapping, content of bags, parsing items.
+* `autoascend/combat` -- combat behavior and helpers.
+* `autoascend/exploration_logic.py` -- exploration specific strategies, including exploration within the level and across levels.
+* `autoascend/env_wrapper.py` -- an NLE environment wrapper. That includes utilities for forking the process and reloading the agent.
+* `autoascend/glyph` -- hardcoded glyphs with their meaning and related helpers.
+* `autoascend/object` -- hardcoded objects with their meaning and related helpers.
+* `autoascend/soko_solver` -- utilities and method for solving sokoban.
+* `autoascend/visualization` -- visualization tool.

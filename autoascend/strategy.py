@@ -2,6 +2,31 @@ from functools import wraps
 
 
 class Strategy:
+    """
+    A class representing strategy together with the condition for entering.
+
+    The internally strategy is defined as a function returning a generator which yields exactly once.
+    The yielded value indicate the condition for entering the strategy. Before the first yield no agent actions
+    should be called!
+
+    For example (pseudocode):
+    ```
+    Strategy.wrap
+    def brutal_fight_strategy(agent, max_distance):
+        # check condition
+        y, x = find_closest_monster()
+        if y == -1:  # no monster on the map
+            yield False
+        if max(abs(y - agent.blstats.y), abs(x - agent.blstats.x)) > max_distance:
+            yield False
+
+        yield True
+        # execute action
+        agent.go_to(y, x, stop_one_before=True)
+        agent.fight(y, x)
+    ```
+    """
+
     @classmethod
     def wrap(cls, func):
         return lambda *a, **k: Strategy(wraps(func)(lambda: func(*a, **k)))
@@ -32,6 +57,7 @@ class Strategy:
         return next(gen)
 
     def condition(self, condition):
+        """ Add additional condition for the strategy """
         def f(self=self, condition=condition):
             if not condition():
                 yield False
@@ -47,6 +73,7 @@ class Strategy:
         return Strategy(f, {'strategy': self.config, 'condition': str(condition)})
 
     def until(self, agent, condition):
+        """ Run strategy until condition """
         def f():
             if not condition():
                 yield False
@@ -59,6 +86,7 @@ class Strategy:
         return strategy
 
     def before(self, strategy):
+        """ Stack sequentially two strategies """
         def f(self=self, strategy=strategy):
             yielded = False
             r1, r2 = None, None
@@ -93,6 +121,7 @@ class Strategy:
         return Strategy(f, {'1': self.config, '2': strategy.config})
 
     def preempt(self, agent, strategies, continue_after_preemption=True):
+        """ Specify other strategies that may preempt the strategy """
         def f(self=self, agent=agent, strategies=strategies):
             gen = self.strategy()
             condition_passed = False
@@ -117,6 +146,7 @@ class Strategy:
         return Strategy(f, {'strategy': self.config, 'preempt': [s.config for s in strategies]})
 
     def repeat(self):
+        """ Repeat strategy until the condition is true """
         def f(self=self):
             yielded = False
             val = None
@@ -141,6 +171,10 @@ class Strategy:
         return Strategy(f, {'repeat': self.config})
 
     def every(self, num_of_iterations):
+        """
+        Check the condition only every `num_of_iterations` iterations. Otherwise assume false.
+        Used for execution time optimization.
+        """
         current_num = -1
 
         def f():
