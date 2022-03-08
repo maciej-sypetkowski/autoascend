@@ -5,8 +5,8 @@ class Strategy:
     """
     A class representing strategy together with the condition for entering.
 
-    The internally strategy is defined as a function returning a generator which yields exactly once.
-    The yielded value indicate the condition for entering the strategy. Before the first yield no agent actions
+    A strategy is defined as a function returning a generator which yields exactly once.
+    An yielded value indicate the condition for entering the strategy. Before the first yield no agent actions
     should be called!
 
     For example (pseudocode):
@@ -57,7 +57,7 @@ class Strategy:
         return next(gen)
 
     def condition(self, condition):
-        """ Add additional condition for the strategy """
+        """ Add additional condition for entering the strategy """
         def f(self=self, condition=condition):
             if not condition():
                 yield False
@@ -73,7 +73,7 @@ class Strategy:
         return Strategy(f, {'strategy': self.config, 'condition': str(condition)})
 
     def until(self, agent, condition):
-        """ Run strategy until condition """
+        """ Run the strategy until condition """
         def f():
             if not condition():
                 yield False
