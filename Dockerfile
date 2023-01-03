@@ -13,7 +13,7 @@ RUN git clone https://github.com/werner-duvaud/muzero-general /muzero && cd /muz
 RUN patch -d /muzero muzero.patch
 
 RUN git clone https://github.com/facebookresearch/nle.git /nle --recursive \
- && cd /nle && git checkout v0.7.3 \
+ && cd /nle && git checkout v0.9.0 \
  && sed '/#define NLE_ALLOW_SEEDING 1/i#define NLE_ALLOW_SEEDING 1' /nle/include/nleobs.h -i \
  && sed '/self\.env\.set_initial_seeds = f/d' /nle/nle/env/tasks.py -i \
  && sed '/self\.env\.set_current_seeds = f/d' /nle/nle/env/tasks.py -i \
